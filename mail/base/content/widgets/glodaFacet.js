@@ -1524,12 +1524,22 @@
 
       const subject = this.subject;
       // -- eventify
+      // Left click previews beside the results; middle click still opens
+      // the conversation in its own tab.
       subject.onclick = event => {
-        FacetContext.showConversationInTab(this, event.button == 1);
+        if (event.button == 1) {
+          FacetContext.showConversationInTab(this, true);
+        } else {
+          FacetContext.showMessageInPreview(this);
+        }
       };
       subject.onkeypress = event => {
         if (Event.keyCode == event.DOM_VK_RETURN) {
-          FacetContext.showConversationInTab(this, event.shiftKey);
+          if (event.shiftKey) {
+            FacetContext.showConversationInTab(this, false);
+          } else {
+            FacetContext.showMessageInPreview(this);
+          }
         }
       };
 

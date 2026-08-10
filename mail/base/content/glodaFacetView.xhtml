@@ -25,6 +25,7 @@
       type="text/css"
     />
     <!-- Custom elements -->
+    <script defer="defer" src="chrome://messenger/content/pane-splitter.js"></script>
     <script src="chrome://messenger/content/glodaFacet.js"></script>
     <!-- Global Context -->
     <script src="chrome://messenger/content/glodaFacetView.js"></script>
@@ -132,6 +133,18 @@
             &glodaFacetView.pageMore.label;
           </button>
         </div>
+      </div>
+      <!-- Preview pane: clicking a result shows it here rather than
+         - opening a tab, so the timeline and facets stay on screen. -->
+      <hr is="pane-splitter"
+          id="facetPreviewSplitter"
+          resize-direction="horizontal"
+          resize-id="facetPreview"
+          collapse-width="240" />
+      <div id="facetPreview">
+        <xul:browser id="facetMessageBrowser"
+                     src="about:message"
+                     flex="1" />
       </div>
     </div>
   </body>

@@ -700,3 +700,44 @@ img.loading {
     transition: all 200ms ease;
   }
 }
+
+/* -- preview pane --
+ *
+ * A third column beside the facets and results, so a result can be read
+ * without losing the timeline and facets by jumping to a tab.
+ */
+
+#facetPreview {
+  inline-size: 40em;
+  min-inline-size: 240px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border-inline-start: 1px solid var(--splitter-color);
+  background-color: var(--layout-background-1);
+}
+
+#facetPreview[hidden] {
+  display: none;
+}
+
+#facetMessageBrowser {
+  flex: 1;
+  min-block-size: 0;
+}
+
+/* Results are clickable rows now, so make that legible. */
+.message-subject-group .message-subject {
+  cursor: pointer;
+}
+
+facet-result-message.selected {
+  background-color: var(--selected-item-color);
+  color: var(--selected-item-text-color);
+}
+
+facet-result-message.selected .message-subject,
+facet-result-message.selected .message-author,
+facet-result-message.selected .message-date {
+  color: inherit;
+}

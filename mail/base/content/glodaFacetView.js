@@ -1031,6 +1031,47 @@ var FacetContext = {
    *   to see in more details.
    * @param {boolean} [aBackground] Whether it should be in the background.
    */
+  /**
+   * Show a result in the preview pane beside the results.
+   *
+   * Opening a tab was the only way to read a result, which meant leaving
+   * the timeline and facets behind to do it. Previewing keeps them on
+   * screen; opening in a tab is still available on middle click.
+   *
+   * @param {MozFacetResultMessage} aResultMessage
+   */
+  showMessageInPreview(aResultMessage) {
+    const message = aResultMessage.message;
+    const uri = message?.folderMessageURI;
+    if (!uri) {
+      // Chat logs and other non-mail results have no message URI; those
+      // still open in their own tab.
+      this.showConversationInTab(aResultMessage, false);
+      return;
+    }
+
+    for (const node of document.querySelectorAll("facet-result-message.selected")) {
+      node.classList.remove("selected");
+    }
+    aResultMessage.classList.add("selected");
+
+    const pane = document.getElementById("facetPreview");
+    const browser = document.getElementById("facetMessageBrowser");
+    pane.hidden = false;
+    document.getElementById("facetPreviewSplitter").hidden = false;
+
+    try {
+      browser.contentWindow.displayMessage(uri);
+    } catch (ex) {
+      // The browser may not have finished loading about:message yet.
+      browser.addEventListener(
+        "load",
+        () => browser.contentWindow.displayMessage(uri),
+        { once: true, capture: true }
+      );
+    }
+  },
+
   showConversationInTab(aResultMessage, aBackground) {
     const tabmail = this.rootWin.document.getElementById("tabmail");
     const message = aResultMessage.message;
