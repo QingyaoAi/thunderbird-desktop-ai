@@ -1,0 +1,320 @@
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+
+#ai-panel-box {
+  min-width: 260px;
+  overflow: hidden;
+}
+
+.ai-panel {
+  display: flex;
+  flex-direction: column;
+  block-size: 100%;
+  min-block-size: 0;
+  background-color: var(--layout-background-1);
+  color: var(--layout-color-1);
+  font-size: 1rem;
+}
+
+/* -- header -- */
+
+.ai-panel-header {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  padding: 6px 6px 6px 12px;
+  border-block-end: 1px solid var(--splitter-color);
+}
+
+.ai-panel-title {
+  flex: 1;
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.ai-panel-icon-button {
+  appearance: none;
+  border: none;
+  border-radius: 3px;
+  background: transparent;
+  color: inherit;
+  padding: 3px 8px;
+  font-size: 0.9rem;
+}
+
+.ai-panel-icon-button:hover {
+  background-color: var(--button-hover-background);
+}
+
+/* -- unconfigured state -- */
+
+.ai-panel-setup {
+  padding: 16px 14px;
+  color: var(--layout-color-2);
+}
+
+.ai-panel-setup p {
+  margin: 0 0 8px;
+}
+
+.ai-panel-setup-detail {
+  font-size: 0.92rem;
+  opacity: 0.85;
+}
+
+/* -- transcript -- */
+
+.ai-panel-transcript {
+  flex: 1;
+  min-block-size: 0;
+  overflow-y: auto;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.ai-turn {
+  display: flex;
+  flex-direction: column;
+}
+
+.ai-turn-body {
+  border-radius: 8px;
+  padding: 8px 10px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  line-height: 1.45;
+}
+
+.ai-turn-user .ai-turn-body {
+  align-self: flex-end;
+  max-inline-size: 85%;
+  background-color: var(--selected-item-color);
+  color: var(--selected-item-text-color);
+}
+
+.ai-turn-assistant .ai-turn-body {
+  background-color: var(--layout-background-2);
+  padding: 0;
+}
+
+.ai-answer {
+  padding: 8px 10px;
+}
+
+/* -- the thinking block --
+ *
+ * Open and quietly animated while the model is reasoning, folded down to a
+ * single line the moment the answer starts. It is deliberately lower
+ * contrast than the answer: it is process, not result.
+ */
+
+.ai-thinking {
+  margin: 0;
+  border-block-end: 1px solid var(--splitter-color);
+  background-color: var(--layout-background-1);
+  border-start-start-radius: 8px;
+  border-start-end-radius: 8px;
+}
+
+.ai-thinking[open] {
+  padding-block-end: 6px;
+}
+
+.ai-thinking-summary {
+  cursor: pointer;
+  padding: 6px 10px;
+  font-size: 0.88rem;
+  color: var(--layout-color-2);
+  list-style-position: inside;
+  user-select: none;
+}
+
+.ai-thinking-summary:hover {
+  color: var(--layout-color-1);
+}
+
+.ai-thinking-summary:focus-visible {
+  outline: 2px solid var(--focus-outline-color);
+  outline-offset: -2px;
+  border-radius: 3px;
+}
+
+/* While reasoning is streaming the label pulses gently, so it reads as
+ * something in progress rather than a static heading. */
+.ai-thinking:not(.ai-thinking-done) .ai-thinking-summary {
+  animation: ai-thinking-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes ai-thinking-pulse {
+  0%, 100% { opacity: 0.55; }
+  50% { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ai-thinking:not(.ai-thinking-done) .ai-thinking-summary {
+    animation: none;
+    opacity: 0.85;
+  }
+}
+
+.ai-thinking-text {
+  padding: 0 10px 4px 10px;
+  font-size: 0.88rem;
+  color: var(--layout-color-2);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-block-size: 14em;
+  overflow-y: auto;
+  line-height: 1.4;
+}
+
+/* -- messages -- */
+
+.ai-error {
+  padding: 8px 10px;
+  color: var(--color-red-60);
+}
+
+.ai-notice {
+  padding: 8px 10px;
+  font-size: 0.9rem;
+  color: var(--layout-color-2);
+  font-style: italic;
+}
+
+/* -- composer -- */
+
+.ai-panel-composer {
+  display: flex;
+  gap: 6px;
+  align-items: flex-end;
+  padding: 8px;
+  border-block-start: 1px solid var(--splitter-color);
+}
+
+.ai-panel-input {
+  flex: 1;
+  resize: none;
+  font: inherit;
+  font-size: 0.95rem;
+  padding: 6px 8px;
+  border: 1px solid var(--input-border-color, var(--splitter-color));
+  border-radius: 4px;
+  background-color: var(--input-bgcolor, var(--layout-background-0));
+  color: inherit;
+  min-block-size: 2.6em;
+  max-block-size: 8em;
+}
+
+.ai-panel-input:focus-visible {
+  outline: 2px solid var(--focus-outline-color);
+  outline-offset: -1px;
+}
+
+.ai-panel-send {
+  appearance: none;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  padding: 6px 12px;
+  font: inherit;
+  background-color: var(--selected-item-color);
+  color: var(--selected-item-text-color);
+}
+
+.ai-panel-send:hover {
+  filter: brightness(1.08);
+}
+
+.ai-panel-stop {
+  background-color: var(--layout-background-3);
+  color: var(--layout-color-1);
+}
+
+/* -- actions -- */
+
+.ai-panel-actions {
+  display: flex;
+  padding: 6px 8px 0;
+}
+
+.ai-panel-action {
+  appearance: none;
+  flex: 1;
+  border: 1px solid var(--splitter-color);
+  border-radius: 4px;
+  background-color: var(--layout-background-2);
+  color: inherit;
+  font: inherit;
+  font-size: 0.9rem;
+  padding: 5px 8px;
+}
+
+.ai-panel-action:hover:not(:disabled) {
+  background-color: var(--layout-background-3);
+}
+
+.ai-panel-action:disabled {
+  opacity: 0.5;
+}
+
+/* -- citations --
+ *
+ * Collapsed by default: the answer is the point, and this is the evidence
+ * behind it. It also serves as the record of exactly how much mail was
+ * sent for this question.
+ */
+
+.ai-sources {
+  margin: 4px 10px 8px;
+  font-size: 0.85rem;
+}
+
+.ai-sources-summary {
+  cursor: pointer;
+  color: var(--layout-color-2);
+  user-select: none;
+}
+
+.ai-sources-summary:hover {
+  color: var(--layout-color-1);
+}
+
+.ai-sources-summary:focus-visible {
+  outline: 2px solid var(--focus-outline-color);
+  outline-offset: 2px;
+  border-radius: 3px;
+}
+
+.ai-sources-list {
+  margin: 4px 0 0;
+  padding-inline-start: 1.1em;
+}
+
+.ai-sources-list li {
+  margin-block-end: 2px;
+}
+
+.ai-sources-list a {
+  color: var(--selected-item-color);
+  text-decoration: none;
+  overflow-wrap: anywhere;
+}
+
+.ai-sources-list a:hover {
+  text-decoration: underline;
+}
+
+.ai-sources-list a[aria-disabled="true"] {
+  color: var(--layout-color-2);
+  pointer-events: none;
+}
+
+.ai-sources-note {
+  margin-block-start: 4px;
+  color: var(--layout-color-2);
+  font-style: italic;
+}

@@ -10,6 +10,8 @@ support-files = [
 
 ["test_accountManagerUtils.js"]
 
+["test_aiConfig.js"]
+
 ["test_alertHook.js"]
 tags = ["notifications"]
 

@@ -879,3 +879,65 @@ tags-format-with-accesskey =
 #   $name (String) - The default or user-defined name of the tag.
 tags-format-without-accesskey =
     .label = { $name }
+
+## AI panel
+
+menu-view-ai-panel =
+    .label = AI Assistant
+    .accesskey = A
+
+ai-panel-title = AI Assistant
+
+ai-panel-close-button =
+    .title = Close the AI panel
+    .aria-label = Close the AI panel
+
+ai-panel-clear-button =
+    .title = Clear this conversation
+    .aria-label = Clear this conversation
+
+ai-panel-input =
+    .placeholder = Ask about your mail…
+    .aria-label = Message to the assistant
+
+ai-panel-send-button =
+    .label = Send
+
+ai-panel-stop-button =
+    .label = Stop
+
+# Shown while the model is reasoning, and on the collapsed block afterwards.
+ai-panel-thinking = Thinking…
+
+ai-panel-stopped = Stopped.
+
+ai-panel-not-configured = No AI provider is set up yet.
+
+ai-panel-setup-hint = Add a provider to ai-config.json in your profile folder, then store its API key. Nothing is sent anywhere until you do.
+
+ai-panel-key-button =
+    .title = Set the API key
+    .aria-label = Set the API key
+
+ai-panel-key-title = AI provider API key
+
+# $provider is the configured provider's label, e.g. "DeepSeek".
+ai-panel-key-prompt = Enter the API key for { $provider }. It is stored with your saved passwords, not in a file.
+
+ai-panel-draft-reply =
+    .label = Draft reply to selected thread
+
+ai-panel-drafting = Reading the thread and drafting a reply…
+
+ai-panel-draft-opened = Draft opened in a compose window for you to review.
+
+# $count is how many of the user's messages were sent as context.
+ai-panel-sources =
+    { $count ->
+        [one] Answered using 1 message from your mail
+       *[other] Answered using { $count } messages from your mail
+    }
+
+ai-panel-sources-truncated = More messages matched than fitted in the context limit.
+
+ai-panel-no-context = No messages in your mail matched that question.

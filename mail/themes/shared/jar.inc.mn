@@ -435,6 +435,7 @@
   skin/classic/messenger/shared/themeableDialog.css           (../shared/mail/themeableDialog.css)
   skin/classic/messenger/threadCardTags.css                   (../shared/mail/threadCardTags.css)
   skin/classic/messenger/shared/threadCard.css                (../shared/mail/threadCard.css)
+  skin/classic/messenger/shared/aiPanel.css                   (../shared/mail/aiPanel.css)
   skin/classic/messenger/shared/threadPane.css                (../shared/mail/threadPane.css)
   skin/classic/messenger/shared/tree-listbox.css              (../shared/mail/tree-listbox.css)
   skin/classic/messenger/shared/panelUI.css                   (../shared/mail/panelUI.css)

@@ -75,3 +75,14 @@ rust/ms_graph_tb/ms_graph_tb_extract/target/
 
 # Ignore Zed editor configuration files.
 .zed/
+
+# AI integration: never commit credentials or local AI configuration.
+# API keys belong in the login manager (see mail/modules/AIConfig.sys.mjs),
+# not in a file. These patterns exist so an accidental local config or a
+# key pasted into a scratch file cannot be committed by mistake.
+ai-config.json
+ai-config.*.json
+*.apikey
+.env
+.env.*
+secrets.json

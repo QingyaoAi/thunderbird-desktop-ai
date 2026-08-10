@@ -9,6 +9,9 @@ MOZ_SRC_FILES += [
 ]
 
 EXTRA_JS_MODULES += [
+    "AIConfig.sys.mjs",
+    "AIMailContext.sys.mjs",
+    "AIProvider.sys.mjs",
     "AttachmentChecker.worker.js",
     "AttachmentInfo.sys.mjs",
     "BrowserWindowTracker.sys.mjs",

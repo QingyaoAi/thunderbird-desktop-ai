@@ -388,6 +388,11 @@
                   command="cmd_toggleThreadPaneHeader"/>
         <menuitem id="menu_showMessage" type="checkbox" label="&showMessageCmd.label;" key="key_toggleMessagePane"
                   accesskey="&showMessageCmd.accesskey;" command="cmd_toggleMessagePane"/>
+        <menuseparator/>
+        <menuitem id="menu_showAIPanel"
+                  type="checkbox"
+                  data-l10n-id="menu-view-ai-panel"
+                  oncommand="AIPanelUI.toggle();"/>
       </menupopup>
     </menu>
     <menu id="menu_FolderViews" label="&folderView.label;" accesskey="&folderView.accesskey;">
