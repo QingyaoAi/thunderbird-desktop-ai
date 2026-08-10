@@ -39,16 +39,24 @@
   margin: 0;
   font-size: 1rem;
   font-weight: 600;
+  /* The pane is narrow and shares its header with three buttons, so the
+   * title has to give way rather than wrap onto a second line. */
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-inline-size: 0;
 }
 
 .ai-panel-icon-button {
   appearance: none;
+  flex: none;
   border: none;
   border-radius: 3px;
   background: transparent;
   color: inherit;
-  padding: 3px 8px;
-  font-size: 0.9rem;
+  padding: 3px 6px;
+  font-size: 0.85rem;
+  white-space: nowrap;
 }
 
 .ai-panel-icon-button:hover {
@@ -64,6 +72,10 @@
 
 .ai-panel-setup p {
   margin: 0 0 8px;
+}
+
+#ai-panel-setup-key {
+  margin-block-start: 4px;
 }
 
 .ai-panel-setup-detail {

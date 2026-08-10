@@ -888,23 +888,19 @@ menu-view-ai-panel =
 
 ai-panel-title = AI Assistant
 
-ai-panel-close-button =
+ai-panel-close-button = Close
     .title = Close the AI panel
-    .aria-label = Close the AI panel
 
-ai-panel-clear-button =
+ai-panel-clear-button = Clear
     .title = Clear this conversation
-    .aria-label = Clear this conversation
 
 ai-panel-input =
     .placeholder = Ask about your mail…
     .aria-label = Message to the assistant
 
-ai-panel-send-button =
-    .label = Send
+ai-panel-send-button = Send
 
-ai-panel-stop-button =
-    .label = Stop
+ai-panel-stop-button = Stop
 
 # Shown while the model is reasoning, and on the collapsed block afterwards.
 ai-panel-thinking = Thinking…
@@ -913,19 +909,19 @@ ai-panel-stopped = Stopped.
 
 ai-panel-not-configured = No AI provider is set up yet.
 
-ai-panel-setup-hint = Add a provider to ai-config.json in your profile folder, then store its API key. Nothing is sent anywhere until you do.
+ai-panel-setup-hint = Your provider is already configured in ai-config.json. Add its API key to start. Nothing is sent anywhere until you do.
 
-ai-panel-key-button =
-    .title = Set the API key
-    .aria-label = Set the API key
+ai-panel-setup-key-button = Set API key…
+
+ai-panel-key-button = Key
+    .title = Set or change the API key
 
 ai-panel-key-title = AI provider API key
 
 # $provider is the configured provider's label, e.g. "DeepSeek".
 ai-panel-key-prompt = Enter the API key for { $provider }. It is stored with your saved passwords, not in a file.
 
-ai-panel-draft-reply =
-    .label = Draft reply to selected thread
+ai-panel-draft-reply = Draft reply to selected thread
 
 ai-panel-drafting = Reading the thread and drafting a reply…
 

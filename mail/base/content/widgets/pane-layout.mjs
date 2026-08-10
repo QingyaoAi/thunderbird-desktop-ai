@@ -34,6 +34,7 @@ class PaneLayout extends HTMLBodyElement {
   static #STORE_MAP = new Map([
     ["folderPaneSplitter", "folderPaneBox"],
     ["messagePaneSplitter", "messagepaneboxwrapper"],
+    ["aiPaneSplitter", "aiPaneBox"],
   ]);
 
   /**
@@ -145,9 +146,15 @@ class PaneLayout extends HTMLBodyElement {
     this.messagePaneSplitter.addEventListener("splitter-expanded", this);
     this.messagePaneSplitter.addEventListener("splitter-resized", this);
 
+    this.aiPaneSplitter = this.querySelector("#aiPaneSplitter");
+    this.aiPaneSplitter?.addEventListener("splitter-resized", this);
+
     this.#setLayout(this.layoutPreference);
     this.#setValues(this.folderPaneSplitter, ["width"]);
     this.#setValues(this.messagePaneSplitter, ["height", "width"]);
+    if (this.aiPaneSplitter) {
+      this.#setValues(this.aiPaneSplitter, ["width"]);
+    }
   }
 
   /**

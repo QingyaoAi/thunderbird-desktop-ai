@@ -83,14 +83,14 @@ body {
       "folders folderPaneSplitter threads aiPaneSplitter ai" minmax(auto, 1fr)
       "folders folderPaneSplitter messagePaneSplitter aiPaneSplitter ai" min-content
       "folders folderPaneSplitter message aiPaneSplitter ai" minmax(auto, var(--messagePaneSplitter-height))
-      / minmax(auto, var(--folderPaneSplitter-width)) min-content minmax(auto, 1fr) min-content minmax(auto, var(--aiPaneSplitter-width));
+      / minmax(auto, var(--folderPaneSplitter-width)) min-content minmax(auto, 1fr) min-content var(--aiPaneSplitter-width);
   }
 
   /* Vertical layout: three columns. */
   &.layout-vertical {
     grid-template:
       "folders folderPaneSplitter threads messagePaneSplitter message aiPaneSplitter ai" auto
-      / minmax(auto, var(--folderPaneSplitter-width)) min-content minmax(auto, 1fr) min-content minmax(auto, var(--messagePaneSplitter-width)) min-content minmax(auto, var(--aiPaneSplitter-width));
+      / minmax(auto, var(--folderPaneSplitter-width)) min-content minmax(auto, 1fr) min-content minmax(auto, var(--messagePaneSplitter-width)) min-content var(--aiPaneSplitter-width);
   }
 
   /* Wide layout: folder tree and thread tree on the top, and message browser on the bottom. */
@@ -99,7 +99,7 @@ body {
       "folders folderPaneSplitter threads aiPaneSplitter ai" minmax(auto, 1fr)
       "messagePaneSplitter messagePaneSplitter messagePaneSplitter aiPaneSplitter ai" min-content
       "message message message aiPaneSplitter ai" minmax(auto, var(--messagePaneSplitter-height))
-      / minmax(auto, var(--folderPaneSplitter-width)) min-content minmax(auto, 1fr) min-content minmax(auto, var(--aiPaneSplitter-width));
+      / minmax(auto, var(--folderPaneSplitter-width)) min-content minmax(auto, 1fr) min-content var(--aiPaneSplitter-width);
   }
 
   /* If Account Central is shown, it overrides the layout setting. */

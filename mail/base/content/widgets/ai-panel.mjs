@@ -46,6 +46,7 @@ export const AIPanel = {
     this.sendButton = document.getElementById("ai-panel-send");
     this.stopButton = document.getElementById("ai-panel-stop");
     this.setupNotice = document.getElementById("ai-panel-setup");
+    this.actions = document.getElementById("ai-panel-actions");
 
     this.form.addEventListener("submit", event => {
       event.preventDefault();
@@ -62,6 +63,9 @@ export const AIPanel = {
       .addEventListener("click", () => AIPanelUI.toggle(false));
     document
       .getElementById("ai-panel-key")
+      .addEventListener("click", () => this.promptForApiKey());
+    document
+      .getElementById("ai-panel-setup-key")
       .addEventListener("click", () => this.promptForApiKey());
     this.draftButton.addEventListener("click", () => this.draftReply());
 
@@ -92,6 +96,7 @@ export const AIPanel = {
     this.setupNotice.hidden = configured;
     this.form.hidden = !configured;
     this.transcript.hidden = !configured;
+    this.actions.hidden = !configured;
     return configured;
   },
 
