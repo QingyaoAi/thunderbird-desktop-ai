@@ -33,6 +33,7 @@
   <link rel="stylesheet" href="chrome://messenger/skin/shared/tree-listbox.css" />
   <link rel="stylesheet" href="chrome://messenger/skin/searchBox.css" />
   <link rel="stylesheet" href="chrome://messenger/skin/about3Pane.css" />
+  <link rel="stylesheet" href="chrome://messenger/skin/shared/aiPanel.css" />
 
   <link rel="localization" href="calendar/calendar.ftl" />
   <link rel="localization" href="messenger/about3Pane.ftl" />
@@ -49,6 +50,7 @@
   <script defer="defer" src="chrome://messenger/content/msgViewNavigation.js"></script>
   <script defer="defer" src="chrome://messenger/content/quickFilterBar.js"></script>
   <script defer="defer" src="chrome://messenger/content/pane-splitter.js"></script>
+  <script type="module" src="chrome://messenger/content/ai-panel-init.mjs"></script>
   <script type="module" src="chrome://messenger/content/tree-listbox.mjs"></script>
   <script type="module" src="chrome://messenger/content/thread-card.mjs"></script>
   <script type="module" src="chrome://messenger/content/thread-row.mjs"></script>
@@ -361,6 +363,11 @@
       resize-with-window="true" />
 #include templates/messagePaneTemplate.inc.xhtml
   <message-pane id="messagePane" class="collapsed-by-splitter"></message-pane>
+  <hr is="pane-splitter" id="aiPaneSplitter"
+      resize-id="aiPane"
+      collapse-width="220"
+      hidden="hidden" />
+#include ai-panel.inc.xhtml
   <xul:browser id="accountCentralBrowser" hidden="hidden"/>
 #include templates/conversationViewTemplate.inc.xhtml
 </body>

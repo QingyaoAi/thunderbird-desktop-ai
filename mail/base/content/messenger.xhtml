@@ -89,7 +89,6 @@
     href="chrome://messenger/skin/calendar/calendarDialog.css"
   />
 
-  <link rel="stylesheet" href="chrome://messenger/skin/shared/aiPanel.css" />
   <link rel="stylesheet" href="chrome://calendar/skin/today-pane.css" />
   <link rel="stylesheet" href="chrome://calendar/skin/calendar-unifinder.css" />
   <link rel="stylesheet" href="chrome://calendar/skin/calendar-task-tree.css" />
@@ -250,7 +249,6 @@
   <script defer="defer" src="chrome://calendar/content/calendar-task-tree-utils.js"></script>
   <script defer="defer" src="chrome://calendar/content/today-pane-agenda.js"></script>
   <script defer="defer" src="chrome://calendar/content/today-pane.js"></script>
-  <script type="module" src="chrome://messenger/content/ai-panel-init.mjs"></script>
 
   <!-- NEEDED FOR TASK VIEW -->
   <script defer="defer" src="chrome://calendar/content/calendar-task-tree-view.js"></script>
@@ -595,7 +593,6 @@
                hidden="hidden"/>
     </tabmail>
 #include ../../../calendar/base/content/calendar-today-pane.inc.xhtml
-#include ai-panel.inc.xhtml
     <vbox id="contentTab" collapsed="collapsed">
       <vbox flex="1" class="contentTabInstance">
         <vbox id="dummycontenttoolbox" class="contentTabToolbox themeable-full">

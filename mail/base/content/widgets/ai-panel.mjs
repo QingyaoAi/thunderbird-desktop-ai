@@ -39,7 +39,7 @@ export const AIPanel = {
     }
     this._initialized = true;
 
-    this.panel = document.getElementById("ai-panel");
+    this.panel = document.getElementById("aiPane");
     this.transcript = document.getElementById("ai-panel-transcript");
     this.form = document.getElementById("ai-panel-composer");
     this.input = document.getElementById("ai-panel-input");
@@ -444,16 +444,13 @@ export const AIPanel = {
    */
   _selectedMessage() {
     try {
-      const tab = window.top.document
-        ?.getElementById("tabmail")
-        ?.currentTabInfo;
-      const about3Pane = tab?.chromeBrowser?.contentWindow;
-      const dbView = about3Pane?.gDBView;
-      if (dbView?.numSelected >= 1) {
-        return dbView.hdrForFirstSelectedMessage;
+      // The pane is inside the mail tab, so this is the same window as the
+      // thread pane -- no reaching across documents needed.
+      if (window.gDBView?.numSelected >= 1) {
+        return window.gDBView.hdrForFirstSelectedMessage;
       }
     } catch {
-      // Not on a mail tab, or nothing selected.
+      // No view yet, or nothing selected.
     }
     return null;
   },
@@ -637,10 +634,10 @@ export const AIPanel = {
  */
 export const AIPanelUI = {
   get box() {
-    return document.getElementById("ai-panel-box");
+    return document.getElementById("aiPane");
   },
   get splitter() {
-    return document.getElementById("ai-panel-splitter");
+    return document.getElementById("aiPaneSplitter");
   },
 
   /**
@@ -653,9 +650,14 @@ export const AIPanelUI = {
     }
     box.hidden = !visible;
     this.splitter.hidden = !visible;
+    // The pane splitter also tracks collapsed state; a pane can be present
+    // but collapsed to zero width, which on screen is indistinguishable
+    // from never having opened.
+    this.splitter.isCollapsed = !visible;
+
     Services.xulStore.setValue(
-      "chrome://messenger/content/messenger.xhtml",
-      "ai-panel-box",
+      "about:3pane",
+      "aiPane",
       "visible",
       String(visible)
     );
@@ -676,8 +678,8 @@ export const AIPanelUI = {
    */
   async restore() {
     const stored = Services.xulStore.getValue(
-      "chrome://messenger/content/messenger.xhtml",
-      "ai-panel-box",
+      "about:3pane",
+      "aiPane",
       "visible"
     );
     const visible = stored === "" ? true : stored == "true";

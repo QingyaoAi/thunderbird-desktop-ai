@@ -1,67 +1,64 @@
 <!-- This Source Code Form is subject to the terms of the Mozilla Public
    - License, v. 2.0. If a copy of the MPL was not distributed with this
-   - file, You can obtain one at http://mozilla.org/MPL/2.0/.  -->
+   - file, You can obtain one at http://mozilla.org/MPL/2.0/.
+   -
+   - The AI pane: the fourth pane of the mail tab, after the message pane.
+   - Its splitter lives alongside the other pane splitters in
+   - about3Pane.xhtml; visibility is driven by that splitter, the same way
+   - the folder and message panes work.  -->
 
-<splitter id="ai-panel-splitter"
-          class="ai-panel-splitter"
-          collapse="after"
-          resizebefore="closest"
-          state="collapsed"
-          hidden="hidden"/>
-<vbox id="ai-panel-box" hidden="hidden" persist="width" width="340">
-  <html:div id="ai-panel" class="ai-panel">
+<div id="aiPane" class="ai-panel" hidden="hidden">
 
-    <html:div class="ai-panel-header">
-      <html:h2 class="ai-panel-title" data-l10n-id="ai-panel-title"></html:h2>
-      <html:button id="ai-panel-key"
-                   class="ai-panel-icon-button"
-                   type="button"
-                   data-l10n-id="ai-panel-key-button"></html:button>
-      <html:button id="ai-panel-clear"
-                   class="ai-panel-icon-button"
-                   type="button"
-                   data-l10n-id="ai-panel-clear-button"></html:button>
-      <html:button id="ai-panel-close"
-                   class="ai-panel-icon-button"
-                   type="button"
-                   data-l10n-id="ai-panel-close-button"></html:button>
-    </html:div>
+  <div class="ai-panel-header">
+    <h2 class="ai-panel-title" data-l10n-id="ai-panel-title"></h2>
+    <button id="ai-panel-key"
+            class="ai-panel-icon-button"
+            type="button"
+            data-l10n-id="ai-panel-key-button"></button>
+    <button id="ai-panel-clear"
+            class="ai-panel-icon-button"
+            type="button"
+            data-l10n-id="ai-panel-clear-button"></button>
+    <button id="ai-panel-close"
+            class="ai-panel-icon-button"
+            type="button"
+            data-l10n-id="ai-panel-close-button"></button>
+  </div>
 
-    <!-- Shown instead of the conversation until a provider and key exist,
-       - so it is obvious nothing is being sent anywhere yet. -->
-    <html:div id="ai-panel-setup" class="ai-panel-setup" hidden="hidden">
-      <html:p data-l10n-id="ai-panel-not-configured"></html:p>
-      <html:p class="ai-panel-setup-detail" data-l10n-id="ai-panel-setup-hint"></html:p>
-    </html:div>
+  <!-- Shown instead of the conversation until a provider and key exist,
+     - so it is obvious nothing is being sent anywhere yet. -->
+  <div id="ai-panel-setup" class="ai-panel-setup" hidden="hidden">
+    <p data-l10n-id="ai-panel-not-configured"></p>
+    <p class="ai-panel-setup-detail" data-l10n-id="ai-panel-setup-hint"></p>
+  </div>
 
-    <html:div id="ai-panel-transcript"
-              class="ai-panel-transcript"
-              role="log"
-              aria-live="polite"></html:div>
+  <div id="ai-panel-transcript"
+       class="ai-panel-transcript"
+       role="log"
+       aria-live="polite"></div>
 
-    <html:div id="ai-panel-actions" class="ai-panel-actions">
-      <html:button id="ai-panel-draft-reply"
-                   class="ai-panel-action"
-                   type="button"
-                   disabled="disabled"
-                   data-l10n-id="ai-panel-draft-reply"></html:button>
-    </html:div>
+  <div id="ai-panel-actions" class="ai-panel-actions">
+    <button id="ai-panel-draft-reply"
+            class="ai-panel-action"
+            type="button"
+            disabled="disabled"
+            data-l10n-id="ai-panel-draft-reply"></button>
+  </div>
 
-    <html:form id="ai-panel-composer" class="ai-panel-composer">
-      <html:textarea id="ai-panel-input"
-                     class="ai-panel-input"
-                     rows="2"
-                     data-l10n-id="ai-panel-input"></html:textarea>
-      <html:button id="ai-panel-send"
-                   class="ai-panel-send"
-                   type="submit"
-                   data-l10n-id="ai-panel-send-button"></html:button>
-      <html:button id="ai-panel-stop"
-                   class="ai-panel-send ai-panel-stop"
-                   type="button"
-                   hidden="hidden"
-                   data-l10n-id="ai-panel-stop-button"></html:button>
-    </html:form>
+  <form id="ai-panel-composer" class="ai-panel-composer">
+    <textarea id="ai-panel-input"
+              class="ai-panel-input"
+              rows="2"
+              data-l10n-id="ai-panel-input"></textarea>
+    <button id="ai-panel-send"
+            class="ai-panel-send"
+            type="submit"
+            data-l10n-id="ai-panel-send-button"></button>
+    <button id="ai-panel-stop"
+            class="ai-panel-send ai-panel-stop"
+            type="button"
+            hidden="hidden"
+            data-l10n-id="ai-panel-stop-button"></button>
+  </form>
 
-  </html:div>
-</vbox>
+</div>

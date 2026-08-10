@@ -75,30 +75,31 @@ body {
   --folderPaneSplitter-width: 18em;
   --messagePaneSplitter-width: 54em;
   --messagePaneSplitter-height: 36em;
+  --aiPaneSplitter-width: 22em;
 
   /* Classic layout: folder tree on the left, thread tree and message browser on the right. */
   &.layout-classic {
     grid-template:
-      "folders folderPaneSplitter threads" minmax(auto, 1fr)
-      "folders folderPaneSplitter messagePaneSplitter" min-content
-      "folders folderPaneSplitter message" minmax(auto, var(--messagePaneSplitter-height))
-      / minmax(auto, var(--folderPaneSplitter-width)) min-content minmax(auto, 1fr);
+      "folders folderPaneSplitter threads aiPaneSplitter ai" minmax(auto, 1fr)
+      "folders folderPaneSplitter messagePaneSplitter aiPaneSplitter ai" min-content
+      "folders folderPaneSplitter message aiPaneSplitter ai" minmax(auto, var(--messagePaneSplitter-height))
+      / minmax(auto, var(--folderPaneSplitter-width)) min-content minmax(auto, 1fr) min-content minmax(auto, var(--aiPaneSplitter-width));
   }
 
   /* Vertical layout: three columns. */
   &.layout-vertical {
     grid-template:
-      "folders folderPaneSplitter threads messagePaneSplitter message" auto
-      / minmax(auto, var(--folderPaneSplitter-width)) min-content minmax(auto, 1fr) min-content minmax(auto, var(--messagePaneSplitter-width));
+      "folders folderPaneSplitter threads messagePaneSplitter message aiPaneSplitter ai" auto
+      / minmax(auto, var(--folderPaneSplitter-width)) min-content minmax(auto, 1fr) min-content minmax(auto, var(--messagePaneSplitter-width)) min-content minmax(auto, var(--aiPaneSplitter-width));
   }
 
   /* Wide layout: folder tree and thread tree on the top, and message browser on the bottom. */
   &.layout-wide {
     grid-template:
-      "folders folderPaneSplitter threads" minmax(auto, 1fr)
-      "messagePaneSplitter messagePaneSplitter messagePaneSplitter" min-content
-      "message message message" minmax(auto, var(--messagePaneSplitter-height))
-      / minmax(auto, var(--folderPaneSplitter-width)) min-content minmax(auto, 1fr);
+      "folders folderPaneSplitter threads aiPaneSplitter ai" minmax(auto, 1fr)
+      "messagePaneSplitter messagePaneSplitter messagePaneSplitter aiPaneSplitter ai" min-content
+      "message message message aiPaneSplitter ai" minmax(auto, var(--messagePaneSplitter-height))
+      / minmax(auto, var(--folderPaneSplitter-width)) min-content minmax(auto, 1fr) min-content minmax(auto, var(--aiPaneSplitter-width));
   }
 
   /* If Account Central is shown, it overrides the layout setting. */
@@ -108,7 +109,7 @@ body {
       / minmax(auto, var(--folderPaneSplitter-width)) min-content minmax(auto, 1fr);
   }
 
-  &.account-central :is(#threadPane, #messagePaneSplitter, #messagePane, ) {
+  &.account-central :is(#threadPane, #messagePaneSplitter, #messagePane, #aiPaneSplitter, #aiPane) {
     display: none;
   }
 
@@ -167,10 +168,23 @@ body {
   contain: strict;
 }
 
+#aiPaneSplitter {
+  grid-area: aiPaneSplitter;
+}
+
+#aiPane {
+  grid-area: ai;
+}
+
 #accountCentralBrowser {
   grid-area: account-central;
   box-sizing: border-box;
   min-inline-size: 400px;
+}
+
+#aiPane[hidden],
+#aiPaneSplitter[hidden] {
+  display: none;
 }
 
 :is(#messagePane, #folderPane).collapsed-by-splitter {
