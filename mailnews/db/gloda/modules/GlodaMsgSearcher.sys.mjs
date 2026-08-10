@@ -16,6 +16,27 @@ var FUZZSCORE_TIMESTAMP_FACTOR = 1000 * 1000 * 60 * 60 * 24 * 7;
 
 var RANK_USAGE = "glodaRank(matchinfo(messagesText), 1.0, 2.0, 2.0, 1.5, 1.5)";
 
+/**
+ * User-facing field prefixes for multi-field search (e.g. "subject:budget",
+ * 'from:"Jane Doe"'), mapped to the messagesText FTS3 column the term is
+ * then restricted to. Every column is searched anyway for an unscoped
+ * term; this just lets a query target one explicitly. Only these
+ * whitelisted names are treated as field prefixes, so an incidental colon
+ * elsewhere in a query (a time like "10:30", a URL) is left alone.
+ */
+var FIELD_ALIASES = {
+  body: "body",
+  subject: "subject",
+  attachment: "attachmentNames",
+  attachments: "attachmentNames",
+  from: "author",
+  author: "author",
+  to: "recipients",
+  cc: "recipients",
+  recipient: "recipients",
+  recipients: "recipients",
+};
+
 var DASCORE =
   "(((" +
   RANK_USAGE +
@@ -220,6 +241,9 @@ GlodaMsgSearcher.prototype = {
 
   /**
    * Parse the string into terms/phrases by finding matching double-quotes.
+   * Each returned term is `{ text, field }`, where `field` is the
+   * messagesText column (see FIELD_ALIASES) that a "field:" prefix
+   * restricted the term to, or null for a normal unscoped term.
    */
   parseSearchString(aSearchString) {
     aSearchString = aSearchString.trim();
@@ -230,13 +254,25 @@ GlodaMsgSearcher.prototype = {
      *
      * In the future this might have other helper logic; it did once before.
      */
-    function addTerm(aTerm) {
+    function addTerm(aTerm, aField) {
       if (aTerm) {
-        terms.push(aTerm);
+        terms.push({ text: aTerm, field: aField || null });
       }
     }
 
     while (aSearchString) {
+      // Pull off a recognized "field:" prefix first, so that both
+      // "subject:budget" and 'from:"Jane Doe"' work.
+      let field = null;
+      const fieldMatch = /^([A-Za-z]+):(\S.*)?$/s.exec(aSearchString);
+      if (fieldMatch) {
+        const alias = fieldMatch[1].toLowerCase();
+        if (Object.hasOwn(FIELD_ALIASES, alias)) {
+          field = FIELD_ALIASES[alias];
+          aSearchString = fieldMatch[2] || "";
+        }
+      }
+
       if (aSearchString.startsWith('"')) {
         const endIndex = aSearchString.indexOf(aSearchString[0], 1);
         // eat the quote if it has no friend
@@ -280,22 +316,26 @@ GlodaMsgSearcher.prototype = {
         fulltextQueryString += this.andTerms ? " " : " OR ";
       }
 
+      // A "field:" prefix restricts the term to one FTS3 column.
+      const text = term.text;
+      const fieldPrefix = term.field ? term.field + ":" : "";
+
       // Put our term in quotes.  This is needed for the tokenizer to be able
       //  to do useful things.  The exception is people clever enough to use
       //  NEAR.
-      if (/^NEAR(\/\d+)?$/.test(term)) {
-        fulltextQueryString += term;
-      } else if (term.length == 1 && term.charCodeAt(0) >= 0x2000) {
+      if (/^NEAR(\/\d+)?$/.test(text)) {
+        fulltextQueryString += text;
+      } else if (text.length == 1 && text.charCodeAt(0) >= 0x2000) {
         // This is a single-character CJK search query, so add a wildcard.
         // Our tokenizer treats anything at/above 0x2000 as CJK for now.
-        fulltextQueryString += term + "*";
+        fulltextQueryString += fieldPrefix + text + "*";
       } else if (
-        (term.length == 2 &&
-          term.charCodeAt(0) >= 0x2000 &&
-          term.charCodeAt(1) >= 0x2000) ||
-        term.length >= 3
+        (text.length == 2 &&
+          text.charCodeAt(0) >= 0x2000 &&
+          text.charCodeAt(1) >= 0x2000) ||
+        text.length >= 3
       ) {
-        fulltextQueryString += '"' + term + '"';
+        fulltextQueryString += fieldPrefix + '"' + text + '"';
       }
     }
 

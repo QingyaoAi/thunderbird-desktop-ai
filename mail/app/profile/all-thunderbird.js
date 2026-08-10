@@ -701,9 +701,14 @@ pref("gloda.facetview.hidetimeline", true);
 pref("gloda.facetview.sortby", 2);
 
 // Whether to open global search results as a table list view instead of the
-// faceted search view. Defaults to false (facet view). When true, results open
-// directly in a table list, equivalent to clicking "Show results as list".
-pref("gloda.show_as_list_by_default", false);
+// faceted search view. When true, results open directly in a table list,
+// equivalent to clicking "Show results as list".
+// Defaulted to true so search results open in the regular 3-pane message
+// list, which means clicking a result previews the message in the reading
+// pane just like it does in a normal folder. (The trade-off is that the
+// faceted results page's filter sidebar isn't shown; the facet view is
+// still reachable by turning this off in Settings > General.)
+pref("gloda.show_as_list_by_default", true);
 
 // Enable gloda by default!
 pref("mailnews.database.global.indexer.enabled", true);
@@ -912,8 +917,11 @@ pref("mail.uidensity", 1);
 
 // Font size control for the entire Thunderbird UI. The value represents the
 // pixel value which will be applied as inline style to the root element of the
-// page (e.g.: 14 = font-size: 14px)
-pref("mail.uifontsize", 0);
+// page (e.g.: 14 = font-size: 14px). 0 means "use the OS default size";
+// defaulting to a fixed 16px instead makes the UI (menus, sidebar, message
+// list) noticeably larger out of the box. Still fully adjustable via
+// View > Zoom / the app menu font-size controls, or Settings > General.
+pref("mail.uifontsize", 16);
 
 // Sanitize dialog window
 pref("privacy.cpd.history", true);

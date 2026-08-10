@@ -159,6 +159,10 @@ class nsMsgDBView : public nsIMsgDBView,
                         nsAString& aValue);
   nsresult FetchDate(nsIMsgDBHdr* aHdr, nsAString& aDateString,
                      bool rcvDate = false);
+  // The formatting half of FetchDate, split out so a raw timestamp (e.g. a
+  // thread's newestMsgDate, which isn't tied to any one nsIMsgDBHdr) can be
+  // formatted the same way without needing a header to pull it from.
+  nsresult FormatDate(PRTime aDateOfMsg, nsAString& aDateString);
   nsresult FetchStatus(uint32_t aFlags, nsAString& aStatusString);
   nsresult FetchSize(nsIMsgDBHdr* aHdr, nsAString& aSizeString);
   nsresult FetchPriority(nsIMsgDBHdr* aHdr, nsAString& aPriorityString);

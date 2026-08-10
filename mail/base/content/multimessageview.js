@@ -612,18 +612,30 @@ class ThreadSummarizer {
     }
     const ignoredCount = aMessages.trueLength - summarizedMessages.length;
 
-    // Summarize the selected messages.
+    // The heading should keep the conversation's original subject, so grab
+    // it from the oldest message before the display sort below reorders
+    // things (otherwise it would come from the newest reply, i.e. "Re: ...").
     let subject = null;
+    for (const msgHdr of summarizedMessages) {
+      if (subject == null || msgHdr.date < subject.date) {
+        subject = { date: msgHdr.date, text: msgHdr.mime2DecodedSubject };
+      }
+    }
+    subject = subject?.text ?? null;
+
+    // Show the newest message first, matching the thread pane's
+    // newest-first ordering. Note this also means that if the thread is
+    // long enough to hit kMaxSummarizedMessages below, it is the oldest
+    // messages that get dropped rather than the most recent ones.
+    summarizedMessages.sort((a, b) => b.date - a.date);
+
+    // Summarize the selected messages.
     let maxCountExceeded = false;
     for (const [i, msgHdr] of summarizedMessages.entries()) {
       if (i == this.kMaxSummarizedMessages) {
         summarizedMessages.length = i;
         maxCountExceeded = true;
         break;
-      }
-
-      if (subject == null) {
-        subject = msgHdr.mime2DecodedSubject;
       }
 
       const msgNode = this.context.makeSummaryItem([msgHdr], {

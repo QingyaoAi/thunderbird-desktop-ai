@@ -560,7 +560,6 @@ nsresult nsMsgDBView::FetchSubject(nsIMsgDBHdr* aMsgHdr, uint32_t aFlags,
 nsresult nsMsgDBView::FetchDate(nsIMsgDBHdr* aHdr, nsAString& aDateString,
                                 bool rcvDate) {
   PRTime dateOfMsg;
-  PRTime dateOfMsgLocal;
   uint32_t rcvDateSecs;
   nsresult rv;
 
@@ -572,6 +571,13 @@ nsresult nsMsgDBView::FetchDate(nsIMsgDBHdr* aHdr, nsAString& aDateString,
 
   if (!rcvDate || rcvDateSecs == 0) rv = aHdr->GetDate(&dateOfMsg);
   NS_ENSURE_SUCCESS(rv, rv);
+
+  return FormatDate(dateOfMsg, aDateString);
+}
+
+nsresult nsMsgDBView::FormatDate(PRTime dateOfMsg, nsAString& aDateString) {
+  PRTime dateOfMsgLocal;
+  nsresult rv = NS_OK;
 
   PRTime currentTime = PR_Now();
   PRExplodedTime explodedCurrentTime;
@@ -1813,7 +1819,28 @@ nsMsgDBView::CellTextForColumn(int32_t aRow, const nsAString& aColumnName,
         rv = FetchDate(msgHdr, aValue, true);
       break;
     case 'd':
-      if (aColumnName.EqualsLiteral("dateCol")) rv = FetchDate(msgHdr, aValue);
+      if (aColumnName.EqualsLiteral("dateCol")) {
+        // A collapsed thread row stands in for the whole conversation, not
+        // just its (possibly long-ago) root message, so show when the
+        // thread was last active -- the newest message's date -- rather
+        // than the root's. Expanded rows still show each message's own
+        // real date, same as before.
+        uint32_t newestMsgDateSecs = 0;
+        if ((m_flags[aRow] & MSG_VIEW_FLAG_ISTHREAD) &&
+            (m_flags[aRow] & nsMsgMessageFlags::Elided)) {
+          rv = GetThreadContainingIndex(aRow, getter_AddRefs(thread));
+          if (NS_SUCCEEDED(rv) && thread) {
+            thread->GetNewestMsgDate(&newestMsgDateSecs);
+          }
+        }
+        if (newestMsgDateSecs) {
+          PRTime newestMsgDate;
+          Seconds2PRTime(newestMsgDateSecs, &newestMsgDate);
+          rv = FormatDate(newestMsgDate, aValue);
+        } else {
+          rv = FetchDate(msgHdr, aValue);
+        }
+      }
       break;
     case 'c':
       if (aColumnName.EqualsLiteral("correspondentCol")) {
@@ -4819,66 +4846,128 @@ nsresult nsMsgDBView::ListIdsInThread(nsIMsgThread* threadHdr,
   numChildren--;
   InsertEmptyRows(viewIndex, numChildren);
 
-  // ### need to rework this when we implemented threading in group views.
-  if (m_viewFlags & nsMsgViewFlagsType::kThreadedDisplay &&
-      !(m_viewFlags & nsMsgViewFlagsType::kGroupBySort)) {
-    nsMsgKey parentKey = m_keys[startOfThreadViewIndex];
-    // If the thread is bigger than the hdr cache, expanding the thread
-    // can be slow. Increasing the hdr cache size will help a fair amount.
-    uint32_t hdrCacheSize;
-    m_db->GetMsgHdrCacheSize(&hdrCacheSize);
-    if (numChildren > hdrCacheSize) m_db->SetMsgHdrCacheSize(numChildren);
+  // Every message in the thread, newest first, regardless of reply
+  // structure -- not nested/indented under whichever message it happens to
+  // be a reply to. We used to call ListIdsInThreadOrder() here (for
+  // kThreadedDisplay) to lay the thread out as a nested tree, walked
+  // depth-first with each message immediately followed by its own replies.
+  // That nesting means a message's position in the list is dominated by
+  // where its *parent* falls, not by its own date: a whole sub-thread can
+  // be recent while its parent (and hence the sub-thread's position in the
+  // list) is old, so the list as shown doesn't read as newest-to-oldest
+  // top-to-bottom. Flattening -- every message at the same level, sorted
+  // purely by date -- gives a genuinely chronological reading at the cost
+  // of no longer being able to collapse an individual reply's sub-thread
+  // independently of the whole thread.
+  const bool showIgnored = m_viewFlags & nsMsgViewFlagsType::kShowIgnored;
 
-    // If this fails, *pNumListed will be 0, and we'll fall back to just
-    // enumerating the messages in the thread below.
-    rv = ListIdsInThreadOrder(threadHdr, parentKey, 1, &viewIndex, pNumListed);
-    if (numChildren > hdrCacheSize) m_db->SetMsgHdrCacheSize(hdrCacheSize);
-  }
-
-  if (!*pNumListed) {
-    uint32_t ignoredHeaders = 0;
-    // If we're not threaded, just list em out in db order.
-    for (i = 1; i <= numChildren; i++) {
-      nsCOMPtr<nsIMsgDBHdr> msgHdr;
-      threadHdr->GetChildHdrAt(i, getter_AddRefs(msgHdr));
-
-      if (msgHdr != nullptr) {
-        if (!(m_viewFlags & nsMsgViewFlagsType::kShowIgnored)) {
-          bool killed;
-          msgHdr->GetIsKilled(&killed);
-          if (killed) {
-            ignoredHeaders++;
-            continue;
-          }
-        }
-
-        nsMsgKey msgKey;
-        uint32_t msgFlags, newFlags;
-        msgHdr->GetMessageKey(&msgKey);
-        msgHdr->GetFlags(&msgFlags);
-        AdjustReadFlag(msgHdr, &msgFlags);
-        SetMsgHdrAt(msgHdr, viewIndex, msgKey, msgFlags & ~MSG_VIEW_FLAGS, 1);
-        // Here, we're either flat, or we're grouped - in either case,
-        // level is 1. Turn off thread or elided bit if they got turned on
-        // (maybe from new only view?).
-        if (i > 0)
-          msgHdr->AndFlags(
-              ~(MSG_VIEW_FLAG_ISTHREAD | nsMsgMessageFlags::Elided), &newFlags);
-
-        (*pNumListed)++;
-        viewIndex++;
+  // First pass: collect the thread's messages, and (when ignored subthreads
+  // are being hidden) the keys of every killed message, including the root
+  // at index 0 -- it is not listed itself, but a reply to it still has to
+  // be recognized as part of a killed subthread.
+  nsTArray<nsCOMPtr<nsIMsgDBHdr>> allHdrs;
+  nsTArray<nsMsgKey> killedKeys;
+  for (i = 0; i <= numChildren; i++) {
+    nsCOMPtr<nsIMsgDBHdr> msgHdr;
+    threadHdr->GetChildHdrAt(i, getter_AddRefs(msgHdr));
+    if (!msgHdr) {
+      continue;
+    }
+    if (!showIgnored) {
+      bool killed = false;
+      msgHdr->GetIsKilled(&killed);
+      if (killed) {
+        nsMsgKey killedKey;
+        msgHdr->GetMessageKey(&killedKey);
+        killedKeys.AppendElement(killedKey);
       }
     }
-
-    if (ignoredHeaders + *pNumListed < numChildren) {
-      MOZ_ASSERT_UNREACHABLE("thread corrupt in db");
-      // If we've listed fewer messages than are in the thread, then the db
-      // is corrupt, and we should invalidate it.
-      // We'll use this rv to indicate there's something wrong with the db
-      // though for now it probably won't get paid attention to.
-      m_db->SetSummaryValid(false);
-      rv = NS_MSG_ERROR_FOLDER_SUMMARY_OUT_OF_DATE;
+    if (i > 0) {
+      allHdrs.AppendElement(msgHdr);
     }
+  }
+
+  uint32_t ignoredHeaders = 0;
+  nsTArray<nsCOMPtr<nsIMsgDBHdr>> children;
+  for (nsIMsgDBHdr* msgHdr : allHdrs) {
+    // "Ignore Subthread" has to hide the killed message *and everything
+    // below it*. The old depth-first walk got that for free by never
+    // recursing into a killed message's children; listing the thread flat
+    // means we have to check each message's ancestry explicitly instead.
+    if (!showIgnored && !killedKeys.IsEmpty()) {
+      bool inKilledSubthread = false;
+      nsCOMPtr<nsIMsgDBHdr> curHdr = msgHdr;
+      nsMsgKey curKey;
+      curHdr->GetMessageKey(&curKey);
+      while (curHdr) {
+        if (killedKeys.Contains(curKey)) {
+          inKilledSubthread = true;
+          break;
+        }
+        nsMsgKey parentKey;
+        curHdr->GetThreadParent(&parentKey);
+        // Stop at the root, and defend against a self-parenting loop from
+        // a corrupt db.
+        if (parentKey == nsMsgKey_None || parentKey == curKey) {
+          break;
+        }
+        nsCOMPtr<nsIMsgDBHdr> parentHdr;
+        if (NS_FAILED(m_db->GetMsgHdrForKey(parentKey,
+                                            getter_AddRefs(parentHdr))) ||
+            !parentHdr) {
+          break;
+        }
+        curHdr = parentHdr;
+        curKey = parentKey;
+      }
+      if (inKilledSubthread) {
+        ignoredHeaders++;
+        continue;
+      }
+    }
+    children.AppendElement(msgHdr);
+  }
+
+  // Only reorder for the threaded message list. Grouped-by-sort views also
+  // come through here, but they build their own grouping/ordering on top of
+  // this listing, so they must keep receiving the messages in plain
+  // database order the way they always have.
+  if (m_viewFlags & nsMsgViewFlagsType::kThreadedDisplay &&
+      !(m_viewFlags & nsMsgViewFlagsType::kGroupBySort)) {
+    std::sort(
+        children.begin(), children.end(),
+        [](const nsCOMPtr<nsIMsgDBHdr>& a, const nsCOMPtr<nsIMsgDBHdr>& b) {
+          PRTime dateA = 0, dateB = 0;
+          a->GetDate(&dateA);
+          b->GetDate(&dateB);
+          return dateA > dateB;
+        });
+  }
+
+  for (nsIMsgDBHdr* msgHdr : children) {
+    nsMsgKey msgKey;
+    uint32_t msgFlags, newFlags;
+    msgHdr->GetMessageKey(&msgKey);
+    msgHdr->GetFlags(&msgFlags);
+    AdjustReadFlag(msgHdr, &msgFlags);
+    SetMsgHdrAt(msgHdr, viewIndex, msgKey, msgFlags & ~MSG_VIEW_FLAGS, 1);
+    // Here, we're either flat, or we're grouped - in either case,
+    // level is 1. Turn off thread or elided bit if they got turned on
+    // (maybe from new only view?).
+    msgHdr->AndFlags(~(MSG_VIEW_FLAG_ISTHREAD | nsMsgMessageFlags::Elided),
+                     &newFlags);
+    (*pNumListed)++;
+    viewIndex++;
+  }
+
+  if (ignoredHeaders + *pNumListed < numChildren) {
+    MOZ_ASSERT_UNREACHABLE("thread corrupt in db");
+    // If we've listed fewer messages than are in the thread, then the db
+    // is corrupt, and we should invalidate it.
+    // We'll use this rv to indicate there's something wrong with the db
+    // though for now it probably won't get paid attention to.
+    m_db->SetSummaryValid(false);
+    rv = NS_MSG_ERROR_FOLDER_SUMMARY_OUT_OF_DATE;
   }
 
   // We may have added too many elements (i.e., subthreads were cut).

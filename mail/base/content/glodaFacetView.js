@@ -72,7 +72,10 @@ const QueryExplanation = {
       if (iTerm) {
         spanify(criteriaText, "explanation-fulltext-criteria");
       }
-      spanify(term, "explanation-fulltext-term");
+      // Terms are { text, field }; show the field prefix the user typed
+      // (e.g. "subject:budget") when this term was scoped to one column.
+      const label = term.field ? term.field + ":" + term.text : term.text;
+      spanify(label, "explanation-fulltext-term");
     }
   },
   setQuery(msgQuery) {

@@ -5211,6 +5211,14 @@ var threadPane = {
     const currentFontSize = UIFontSize.size;
     // subject line-height * this.rowCount * current font-size.
     const cardRowConstant = Math.round(1.5 * this.rowCount * currentFontSize);
+    // Extra height for the card's body-preview row (see thread-card.mjs /
+    // ".preview" in threadCard.css): a single ellipsized line at ~0.85x the
+    // UI font size and 1.3 line-height. This has to be tracked explicitly
+    // here, same as the other rows above, because ROW_HEIGHT is what the
+    // virtualized list uses to size each row's slot -- if it doesn't
+    // account for this row, the preview's actual rendered content
+    // overflows whatever slot height gets computed without it.
+    const previewRowHeight = Math.round(1.3 * 0.85 * currentFontSize);
     let rowHeight = Math.ceil(currentFontSize * 1.4);
     let lineGap;
     let densityPaddingConstant;
@@ -5221,21 +5229,33 @@ var threadPane = {
         lineGap = 1;
         densityPaddingConstant = 3; // card padding-block + 2 * row padding-block
         cardRowHeight =
-          cardRowConstant + lineGap * this.rowCount + densityPaddingConstant;
+          cardRowConstant +
+          lineGap * this.rowCount +
+          densityPaddingConstant +
+          previewRowHeight +
+          lineGap;
         break;
       case UIDensity.MODE_TOUCH:
         rowHeight = rowHeight + 13;
         lineGap = 6;
         densityPaddingConstant = 12; // card padding-block + 2 * row padding-block
         cardRowHeight =
-          cardRowConstant + lineGap * this.rowCount + densityPaddingConstant;
+          cardRowConstant +
+          lineGap * this.rowCount +
+          densityPaddingConstant +
+          previewRowHeight +
+          lineGap;
         break;
       default:
         rowHeight = rowHeight + 7;
         lineGap = 3;
         densityPaddingConstant = 7; // card padding-block + 2 * row padding-block
         cardRowHeight =
-          cardRowConstant + lineGap * this.rowCount + densityPaddingConstant;
+          cardRowConstant +
+          lineGap * this.rowCount +
+          densityPaddingConstant +
+          previewRowHeight +
+          lineGap;
         break;
     }
     cardClass.ROW_HEIGHT = Math.max(cardRowHeight, 40);
