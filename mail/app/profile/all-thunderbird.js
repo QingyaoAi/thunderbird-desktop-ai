@@ -776,6 +776,14 @@ pref("font.name-list.monospace.x-western", "Menlo, Monaco");
 // platforms rather than picked arbitrarily.
 pref("font.size.variable.x-western", 17);
 pref("font.size.monospace.x-western", 14);
+// The size actually used depends on the message's charset, which the MIME
+// emitter maps to a language group before looking up font.size.*.<group>
+// (see GetMailNewsFont in mimemoz2.cpp). UTF-8 mail lands on x-unicode, not
+// x-western, and that group was still on the small macOS defaults -- so
+// raising x-western alone left most real mail rendering at 12px. Keep the
+// two groups in step.
+pref("font.size.variable.x-unicode", 17);
+pref("font.size.monospace.x-unicode", 14);
 
 pref("font.name.sans-serif.x-cyrillic", "Lucida Grande");
 pref("font.name.monospace.x-cyrillic", "Menlo");

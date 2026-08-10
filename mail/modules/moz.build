@@ -46,6 +46,7 @@ EXTRA_JS_MODULES += [
     "SessionStoreManager.sys.mjs",
     "ShortcutsManager.sys.mjs",
     "SmartMailboxUtils.sys.mjs",
+    "StarTagSync.sys.mjs",
     "SummaryFrameManager.sys.mjs",
     "TagUtils.sys.mjs",
     "TaskbarProgress.sys.mjs",

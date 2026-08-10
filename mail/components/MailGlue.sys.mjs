@@ -67,6 +67,7 @@ ChromeUtils.defineLazyGetter(lazy, "windowsAlertsService", () => {
 
 if (AppConstants.MOZ_UPDATER) {
   ChromeUtils.defineESModuleGetters(lazy, {
+    StarTagSync: "resource:///modules/StarTagSync.sys.mjs",
     UpdateListener: "resource://gre/modules/UpdateListener.sys.mjs",
   });
   XPCOMUtils.defineLazyServiceGetters(lazy, {
@@ -945,6 +946,13 @@ MailGlue.prototype = {
         condition: AppConstants.MOZ_UPDATER,
         task: () => {
           lazy.UpdateListener.maybeShowUnsupportedNotification();
+        },
+      },
+      {
+        // Keeps the star and the Important tag in step. On idle because
+        // the first run walks every folder to reconcile existing mail.
+        task: () => {
+          lazy.StarTagSync.start();
         },
       },
       {

@@ -107,6 +107,16 @@ var glodaFacetTabType = {
     // nothing to do; we are not multiplexed
   },
   getBrowser(aTab) {
+    // Zoom, Find and printing should act on whatever is being read. Once the
+    // preview is open that is the message, not the facets and timeline around
+    // it -- and the preview is a nested browser, which does not inherit the
+    // outer browser's zoom, so without this Cmd+ would scale the search
+    // chrome and leave the message text exactly as it was.
+    const preview =
+      aTab.browser?.contentDocument?.getElementById("facetMessageBrowser");
+    if (preview && !preview.closest("#facetPreview")?.hidden) {
+      return preview;
+    }
     return aTab.browser;
   },
 };
