@@ -189,6 +189,9 @@ function parseOpenAIResponse(data) {
   }
   return {
     text: message.content,
+    // Surfaced so a truncated reply can be told apart from a genuinely
+    // empty one: "length" means the output budget ran out.
+    finishReason: data?.choices?.[0]?.finish_reason ?? null,
     // Reasoning models return their scratch work separately. It is not part
     // of the answer, but it is worth keeping for debugging.
     reasoning: message.reasoning_content ?? null,
@@ -236,6 +239,7 @@ function parseAnthropicResponse(data) {
   return {
     text,
     reasoning,
+    finishReason: data?.stop_reason ?? null,
     usage: {
       inputTokens: data?.usage?.input_tokens ?? null,
       outputTokens: data?.usage?.output_tokens ?? null,

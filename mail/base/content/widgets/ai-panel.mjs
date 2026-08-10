@@ -24,6 +24,22 @@ ChromeUtils.defineESModuleGetters(lazy, {
 /** Keeps the transcript from growing without bound in a long session. */
 const MAX_TURNS = 40;
 
+/**
+ * How many times a question may be searched for before answering with
+ * whatever was found. Each extra round costs a request and a wait, so this
+ * is deliberately small.
+ */
+const MAX_RETRIEVAL_ROUNDS = 3;
+
+/**
+ * Output budget for the small helper calls that write and judge search
+ * queries. The replies are a few words, but a reasoning model reasons
+ * first and that reasoning comes out of the same budget -- measured at
+ * 840 to 2000 tokens for these prompts, so anything tighter truncates the
+ * reply before it begins and the query comes back empty.
+ */
+const SIDE_CALL_MAX_TOKENS = 2048;
+
 export const AIPanel = {
   /** @type {?AbortController} Non-null while a request is in flight. */
   _abort: null,
@@ -342,7 +358,7 @@ export const AIPanel = {
    */
   async _buildGroundedPrompt(question, answerBody) {
     const config = await lazy.AIConfig.read();
-    const context = await lazy.AIMailContext.gather(question, config.context);
+    const context = await this._retrieve(question, answerBody, config);
 
     if (!context.sources.length) {
       // Nothing found: say so rather than letting the model invent an
@@ -358,7 +374,12 @@ export const AIPanel = {
       };
     }
 
-    this._renderSources(answerBody, context.sources, context.truncated);
+    this._renderSources(
+      answerBody,
+      context.sources,
+      context.truncated,
+      context.queries.join(" → ")
+    );
 
     return {
       system: lazy.AIMailContext.systemPrompt(context.sources.length),
@@ -367,16 +388,154 @@ export const AIPanel = {
   },
 
   /**
-   * Show which messages were sent as context, as clickable citations.
+   * Search for context, reformulating if the first attempt falls short.
    *
-   * This doubles as the privacy indicator: the number of messages here is
-   * exactly what left the machine for this question.
+   * One search rarely settles it: the first query is a guess made before
+   * seeing any mail, and what comes back is the best clue about what to
+   * search for instead. So after each round the model judges what was
+   * found and can propose a better query, up to MAX_RETRIEVAL_ROUNDS.
+   * Results are pooled across rounds, so a later round adds to the
+   * evidence rather than replacing it.
    *
-   * @param {HTMLElement} parent
-   * @param {object[]} sources
-   * @param {boolean} truncated
+   * @param {string} question
+   * @param {HTMLElement} answerBody - For the progress notice.
+   * @param {object} config
+   * @returns {Promise<{prompt: string, sources: object[], truncated: boolean, queries: string[]}>}
    */
-  _renderSources(parent, sources, truncated) {
+  async _retrieve(question, answerBody, config) {
+    const status = this._notice("ai-panel-searching");
+    answerBody.appendChild(status);
+
+    const queries = [];
+    const pooled = [];
+    const seenIds = new Set();
+    let query = await this._formulateSearchQuery(question);
+
+    for (let round = 1; round <= MAX_RETRIEVAL_ROUNDS; round++) {
+      const effective = query || question;
+      const { messages, usedQuery } = await lazy.AIMailContext.searchMessages(
+        effective,
+        config.context
+      );
+      queries.push(usedQuery);
+
+      for (const message of messages) {
+        if (!seenIds.has(message.id)) {
+          seenIds.add(message.id);
+          pooled.push(message);
+        }
+      }
+
+      if (round == MAX_RETRIEVAL_ROUNDS) {
+        break;
+      }
+
+      // Judge what we have using only senders and subjects, which is
+      // enough to spot irrelevance without resending every body.
+      const interim = lazy.AIMailContext.buildContext(pooled, config.context);
+      const next = await this._assessRetrieval(question, interim.sources, queries);
+      if (!next) {
+        break;
+      }
+      document.l10n.setAttributes(status, "ai-panel-searching-again", {
+        query: next,
+      });
+      query = next;
+    }
+
+    status.remove();
+    return {
+      ...lazy.AIMailContext.buildContext(pooled, config.context),
+      queries,
+    };
+  },
+
+  /**
+   * Ask whether what was found is enough, and if not, for a better query.
+   *
+   * @param {string} question
+   * @param {object[]} sources
+   * @param {string[]} triedQueries
+   * @returns {Promise<?string>} A new query, or null to stop searching.
+   */
+  async _assessRetrieval(question, sources, triedQueries) {
+    try {
+      const options = await lazy.AIConfig.requestOptions();
+      const prompt = lazy.AIMailContext.assessPrompt(
+        question,
+        sources,
+        triedQueries
+      );
+      const result = await lazy.AIProvider.chat({
+        ...options,
+        system: prompt.system,
+        messages: [{ role: "user", content: prompt.content }],
+        maxTokens: SIDE_CALL_MAX_TOKENS,
+        signal: this._abort?.signal,
+      });
+
+      const reply = lazy.AIMailContext.cleanSearchQuery(result.text);
+      if (!reply || /^enough$/i.test(reply)) {
+        return null;
+      }
+      // A repeat would just search the same thing again.
+      const normalized = reply.toLowerCase();
+      if (triedQueries.some(q => q.toLowerCase().startsWith(normalized))) {
+        return null;
+      }
+      return reply;
+    } catch (ex) {
+      if (ex?.name == "AbortError") {
+        throw ex;
+      }
+      console.warn("Could not assess retrieval, stopping search:", ex);
+      return null;
+    }
+  },
+
+  /**
+   * Ask the model for a mail search query.
+   *
+   * Kept deliberately cheap and non-fatal: it is a small request, and if
+   * anything goes wrong the caller falls back to keyword extraction rather
+   * than failing the question.
+   *
+   * @param {string} question
+   * @returns {Promise<?string>} The query, or null to use the fallback.
+   */
+  async _formulateSearchQuery(question) {
+    try {
+      const options = await lazy.AIConfig.requestOptions();
+      const prompt = lazy.AIMailContext.searchQueryPrompt(question);
+      const result = await lazy.AIProvider.chat({
+        ...options,
+        system: prompt.system,
+        messages: [{ role: "user", content: prompt.content }],
+        // Generous for a handful of words, because reasoning models spend
+        // their output budget thinking first: at 64 the budget ran out
+        // mid-reasoning and the query came back empty every time.
+        maxTokens: SIDE_CALL_MAX_TOKENS,
+        signal: this._abort?.signal,
+      });
+      const query = lazy.AIMailContext.cleanSearchQuery(result.text);
+      if (!query) {
+        console.warn(
+          "The model returned no search query (finished:",
+          result.finishReason,
+          "); falling back to keywords."
+        );
+      }
+      return query || null;
+    } catch (ex) {
+      if (ex?.name == "AbortError") {
+        throw ex;
+      }
+      console.warn("Could not formulate a search query, using keywords:", ex);
+      return null;
+    }
+  },
+
+  _renderSources(parent, sources, truncated, query) {
     const details = document.createElement("details");
     details.className = "ai-sources";
 
@@ -407,6 +566,17 @@ export const AIPanel = {
       list.appendChild(item);
     }
     details.appendChild(list);
+
+    if (query) {
+      // Showing the query makes a bad search diagnosable: the user can see
+      // whether the right thing was looked for before judging the answer.
+      const queryNote = document.createElement("div");
+      queryNote.className = "ai-sources-note";
+      document.l10n.setAttributes(queryNote, "ai-panel-search-query", {
+        query,
+      });
+      details.appendChild(queryNote);
+    }
 
     if (truncated) {
       const note = document.createElement("div");

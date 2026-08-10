@@ -937,3 +937,11 @@ ai-panel-sources =
 ai-panel-sources-truncated = More messages matched than fitted in the context limit.
 
 ai-panel-no-context = No messages in your mail matched that question.
+
+# $query is the mail search query that was used to find context.
+ai-panel-search-query = Searched for: { $query }
+
+ai-panel-searching = Searching your mail…
+
+# $query is the new search query being tried after the first attempt.
+ai-panel-searching-again = Trying another search: { $query }

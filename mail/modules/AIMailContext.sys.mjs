@@ -77,16 +77,16 @@ function searchTermsFor(question) {
  * @param {number} limit - Maximum messages to retrieve.
  * @returns {Promise<object[]>} Gloda message objects, most relevant first.
  */
-function glodaSearch(query, limit) {
+function glodaSearch(query, limit, andTerms = true) {
   return new Promise((resolve, reject) => {
     let collected = [];
-    // The third argument is andTerms: false makes this an OR search, so a
-    // message matching some of the question's keywords still comes back,
-    // ranked by how well it matches. AND would demand every keyword.
+    // andTerms matches Search Messages, which requires every term. That is
+    // the more precise search and the one the user compares this against;
+    // gather() falls back to OR only when AND finds nothing.
     //
     // The searcher's own retrieval limit is a read-only pref-backed getter,
     // so the cap is applied to the ranked results instead of the query.
-    const searcher = new lazy.GlodaMsgSearcher(null, query, false);
+    const searcher = new lazy.GlodaMsgSearcher(null, query, andTerms);
 
     const listener = {
       onItemsAdded(items) {
@@ -167,20 +167,57 @@ export const AIMailContext = {
    *   messages behind it (for citations), and `truncated` says whether the
    *   budget cut anything off.
    */
-  async gather(question, limits = {}) {
-    const maxMessages = limits.maxMessages ?? 12;
-    const maxCharsPerMessage = limits.maxCharsPerMessage ?? 4000;
-    const maxTotalChars = limits.maxTotalChars ?? 60000;
+  async gather(question, limits = {}, searchQuery = null) {
+    const query = searchQuery?.trim() || searchTermsFor(question);
+    const { messages, usedQuery } = await this.searchMessages(query, limits);
+    return {
+      ...this.buildContext(messages, limits),
+      query: usedQuery,
+    };
+  },
 
-    let messages;
+  /**
+   * Search the mail index for one query.
+   *
+   * @param {string} query
+   * @param {object} [limits]
+   * @returns {Promise<{messages: object[], usedQuery: string}>}
+   */
+  async searchMessages(query, limits = {}) {
+    const maxMessages = limits.maxMessages ?? 12;
     try {
-      messages = await glodaSearch(searchTermsFor(question), maxMessages * 2);
+      // Precise first, exactly as Search Messages would do it. Only if that
+      // finds nothing do we loosen to OR, which trades precision for the
+      // chance of finding anything at all.
+      let messages = await glodaSearch(query, maxMessages * 2, true);
+      if (messages.length) {
+        return { messages, usedQuery: query };
+      }
+      messages = await glodaSearch(query, maxMessages * 2, false);
+      return { messages, usedQuery: `${query} (broadened)` };
     } catch (ex) {
       throw new Error(
         `Could not search your mail: ${ex.message}. ` +
           `Global search indexing may be disabled.`
       );
     }
+  },
+
+  /**
+   * Pack messages into a prompt block within the context budget.
+   *
+   * Kept separate from searching so several rounds of retrieval can be
+   * pooled and turned into one context, rather than the last round
+   * discarding what earlier ones found.
+   *
+   * @param {object[]} messages - Gloda messages, most relevant first.
+   * @param {object} [limits]
+   * @returns {{prompt: string, sources: object[], truncated: boolean}}
+   */
+  buildContext(messages, limits = {}) {
+    const maxMessages = limits.maxMessages ?? 12;
+    const maxCharsPerMessage = limits.maxCharsPerMessage ?? 4000;
+    const maxTotalChars = limits.maxTotalChars ?? 60000;
 
     // One entry per conversation: a long thread would otherwise fill the
     // whole budget by itself, crowding out other threads that might hold
@@ -214,7 +251,9 @@ export const AIMailContext = {
       }
 
       const index = sources.length + 1;
-      const date = message.date ? new Date(message.date).toISOString().slice(0, 10) : "unknown date";
+      const date = message.date
+        ? new Date(message.date).toISOString().slice(0, 10)
+        : "unknown date";
       const block =
         `[${index}] From: ${displayName(message.from)}\n` +
         `Date: ${date}\n` +
@@ -237,11 +276,85 @@ export const AIMailContext = {
       });
     }
 
+    return { prompt: blocks.join("\n---\n"), sources, truncated };
+  },
+
+  /**
+   * The prompt that decides whether another round of searching is worth it.
+   *
+   * The model sees what has been found so far -- senders and subjects only,
+   * which is enough to judge relevance without paying to resend every body
+   * -- and either accepts it or writes a better query. Showing it the
+   * queries already tried stops it proposing the same one again.
+   *
+   * @param {string} question
+   * @param {object[]} sources
+   * @param {string[]} triedQueries
+   * @returns {{system: string, content: string}}
+   */
+  assessPrompt(question, sources, triedQueries) {
+    const found = sources.length
+      ? sources.map(x => `- ${x.subject} (from ${x.author})`).join("\n")
+      : "(nothing found)";
     return {
-      prompt: blocks.join("\n---\n"),
-      sources,
-      truncated,
+      system:
+        `Decide if these emails can answer the question. Reply with only ` +
+        `"ENOUGH" if they can, or a different 2-5 keyword search query if ` +
+        `they cannot. Never repeat a query already tried. No explanation.`,
+      content:
+        `Question: ${question}\n\n` +
+        `Tried: ${triedQueries.join(" | ")}\n\n` +
+        `Found:\n${found}\n\nENOUGH or new query:`,
     };
+  },
+
+  /**
+   * The prompt that turns a question into a mail search query.
+   *
+   * Search Messages matches literal words in mail, so a question asked in
+   * natural language ("who told me about the deadline?") searches badly:
+   * the words that carry the question carry no signal, and the words that
+   * would appear in the mail are often not in the question at all. Asking
+   * the model to write the query first is the same thing a person does
+   * before typing into the search box.
+   *
+   * @param {string} question
+   * @returns {{system: string, content: string}}
+   */
+  searchQueryPrompt(question) {
+    return {
+      system:
+        `Turn the question into an email search query. Reply with only the ` +
+        `query: 2-5 keywords that would literally appear in the emails. ` +
+        `You may prefix one term with subject:, from:, to:, or body:. ` +
+        `No explanation.`,
+      content: `Question: ${question}\n\nSearch query:`,
+    };
+  },
+
+  /**
+   * Clean up whatever the model returned into something searchable.
+   *
+   * Models like to be helpful, so this strips the wrappers they add: code
+   * fences, a leading "Search query:", trailing full stops.
+   *
+   * @param {string} text
+   * @returns {string}
+   */
+  cleanSearchQuery(text) {
+    let query = (text ?? "").trim();
+    query = query.replace(/^```[a-z]*\s*/i, "").replace(/```$/, "");
+    query = query.replace(/^(search\s+)?query\s*:\s*/i, "");
+    query = query.split(/\r?\n/)[0].trim();
+    query = query.replace(/[.\s]+$/, "");
+    // Some replies come back as "a, b, c"; the search wants plain terms.
+    query = query.replace(/\s*,\s*/g, " ");
+    // A model that wrapped the whole query in quotes meant it as one
+    // phrase only if there is nothing else alongside it.
+    if (/^"[^"]+"$/.test(query) && !query.slice(1, -1).includes('"')) {
+      return query;
+    }
+    return query.replace(/^["'`]+|["'`]+$/g, "").trim();
   },
 
   /**
