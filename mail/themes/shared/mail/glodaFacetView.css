@@ -50,7 +50,11 @@ body {
 }
 
 #main-column {
-  flex: 1;
+  /* Capped rather than flex: 1. #data-column below limits the actual
+   * content to 60em, so any width beyond that became an empty strip
+   * between the results and the preview pane. */
+  flex: 0 1 62em;
+  min-inline-size: 0;
   padding-inline-start: 1em;
   min-block-size: 100vh;
 }
@@ -708,8 +712,10 @@ img.loading {
  */
 
 #facetPreview {
-  inline-size: 40em;
-  min-inline-size: 240px;
+  /* Takes the width the splitter was dragged to, and absorbs whatever is
+   * left over so no gap can open up beside the results. */
+  flex: 1 1 var(--facetPreviewSplitter-width, 46em);
+  min-inline-size: 320px;
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -726,8 +732,8 @@ img.loading {
   min-block-size: 0;
 }
 
-/* Results are clickable rows now, so make that legible. */
-.message-subject-group .message-subject {
+/* The whole result is clickable, not just its subject. */
+facet-result-message {
   cursor: pointer;
 }
 

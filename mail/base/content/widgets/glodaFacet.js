@@ -1448,6 +1448,20 @@
     }
 
     connectedCallback() {
+      // The whole result acts as one target: clicking the sender, the
+      // date or the snippet previews the message, the same as clicking
+      // its subject. Anything genuinely interactive inside -- the star,
+      // links, buttons -- keeps its own behaviour.
+      this.addEventListener("click", event => {
+        if (
+          event.button != 0 ||
+          event.target.closest("a, button, .message-star, .message-tag")
+        ) {
+          return;
+        }
+        FacetContext.showMessageInPreview(this);
+      });
+
       const messageHeader = document.createElement("div");
 
       const messageLine = document.createElement("div");
