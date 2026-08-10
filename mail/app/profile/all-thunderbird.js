@@ -770,8 +770,12 @@ pref("font.name.sans-serif.x-western", "Lucida Grande");
 pref("font.name.monospace.x-western", "Menlo");
 pref("font.name-list.sans-serif.x-western", "Lucida Grande");
 pref("font.name-list.monospace.x-western", "Menlo, Monaco");
-pref("font.size.variable.x-western", 15);
-pref("font.size.monospace.x-western", 12);
+// Message body text. These were 15/12 on macOS against 17/14 everywhere
+// else, and plain-text mail -- which uses the monospace size -- came out
+// noticeably small in the message and preview panes. Matched to the other
+// platforms rather than picked arbitrarily.
+pref("font.size.variable.x-western", 17);
+pref("font.size.monospace.x-western", 14);
 
 pref("font.name.sans-serif.x-cyrillic", "Lucida Grande");
 pref("font.name.monospace.x-cyrillic", "Menlo");
