@@ -14,10 +14,16 @@
  * send it at all.
  */
 
+// System modules run in the shared system global, which has no window and
+// therefore no setTimeout; Timer.sys.mjs is where it comes from here.
+import { setTimeout, clearTimeout } from "resource://gre/modules/Timer.sys.mjs";
+
 const lazy = {};
 ChromeUtils.defineESModuleGetters(lazy, {
+  Gloda: "resource:///modules/gloda/GlodaPublic.sys.mjs",
   GlodaMsgSearcher: "resource:///modules/gloda/GlodaMsgSearcher.sys.mjs",
   MailServices: "resource:///modules/MailServices.sys.mjs",
+  MsgHdrToMimeMessage: "resource:///modules/gloda/MimeMessage.sys.mjs",
 });
 
 /**
@@ -285,7 +291,7 @@ export const AIMailContext = {
    * @returns {{text: string, latest: nsIMsgDBHdr}} The conversation as text
    *   and the message a reply should respond to.
    */
-  threadForReply(hdr, maxMessages = 10, maxCharsPerMessage = 3000) {
+  async threadForReply(hdr, maxMessages = 10, maxCharsPerMessage = 3000) {
     const thread = hdr.folder.msgDatabase.getThreadContainingMsgHdr(hdr);
     const headers = [];
     for (let i = 0; i < thread.numChildren; i++) {
@@ -301,17 +307,26 @@ export const AIMailContext = {
     const kept = headers.slice(-maxMessages);
     const latest = headers.at(-1) ?? hdr;
 
-    const parts = kept.map(header => {
-      const body = condenseBody(
-        getMessageBodyText(header),
-        maxCharsPerMessage
-      );
-      const date = new Date(header.date / 1000).toISOString().slice(0, 16).replace("T", " ");
+    // Read the bodies in parallel; each is an async message load.
+    const bodies = await Promise.all(
+      kept.map(header => getMessageBodyText(header))
+    );
+
+    const parts = kept.map((header, index) => {
+      const body = condenseBody(bodies[index], maxCharsPerMessage);
+      const date = new Date(header.date / 1000)
+        .toISOString()
+        .slice(0, 16)
+        .replace("T", " ");
+      const recipients = [header.mime2DecodedRecipients, header.ccList]
+        .filter(Boolean)
+        .join(", ");
       return (
         `From: ${header.mime2DecodedAuthor}\n` +
+        (recipients ? `To: ${recipients}\n` : "") +
         `Date: ${date}\n` +
         `Subject: ${header.mime2DecodedSubject}\n\n` +
-        `${body}`
+        `${body || "(no readable text in this message)"}`
       );
     });
 
@@ -320,38 +335,65 @@ export const AIMailContext = {
 };
 
 /**
- * Body text for a message header, from the folder's own store.
+ * Body text for a message, as plain text.
  *
- * Gloda would be nicer, but a thread being replied to is not necessarily
- * indexed yet, and a reply draft has to work on mail that just arrived.
+ * Loading a message is asynchronous. An earlier version of this tried to
+ * read it synchronously through nsISyncStreamListener, which always came
+ * back with nothing -- so every message in a thread reached the model as
+ * headers with an empty body, and replies were written from the subject
+ * line alone.
+ *
+ * Downloads are allowed here, unlike in the message list preview: a reply
+ * cannot be drafted at all without the text, and the user asked for this
+ * one message explicitly.
  *
  * @param {nsIMsgDBHdr} hdr
- * @returns {string}
+ * @returns {Promise<string>} The body, or "" if it could not be read.
  */
 function getMessageBodyText(hdr) {
-  try {
-    const messenger = Cc["@mozilla.org/messenger;1"].createInstance(
-      Ci.nsIMessenger
-    );
-    const uri = hdr.folder.getUriForMsg(hdr);
-    const service = lazy.MailServices.messageServiceFromURI(uri);
-    const stream = Cc["@mozilla.org/network/sync-stream-listener;1"].createInstance(
-      Ci.nsISyncStreamListener
-    );
-    service.streamMessage(uri, stream, null, null, false, "");
-    const size = stream.inputStream.available();
-    const text = messenger.getMsgTextFromStream(
-      stream.inputStream,
-      hdr.charset,
-      size,
-      Math.min(size, 100000),
-      false,
-      true,
-      {}
-    );
-    return text ?? "";
-  } catch (ex) {
-    console.warn("Could not read message body for reply drafting:", ex);
-    return "";
-  }
+  return new Promise(resolve => {
+    // Loading Gloda registers the MIME parsing machinery this relies on.
+    void lazy.Gloda;
+
+    let settled = false;
+    const finish = text => {
+      if (!settled) {
+        settled = true;
+        resolve(text);
+      }
+    };
+
+    // A message that never streams (offline, gone, unreachable server)
+    // must not leave the draft hanging forever.
+    const timer = setTimeout(() => {
+      console.warn("Timed out reading a message body for reply drafting.");
+      finish("");
+    }, 15000);
+
+    try {
+      lazy.MsgHdrToMimeMessage(
+        hdr,
+        null,
+        (messageHeader, mimeMessage) => {
+          clearTimeout(timer);
+          if (!mimeMessage) {
+            finish("");
+            return;
+          }
+          try {
+            finish(mimeMessage.coerceBodyToPlaintext(messageHeader.folder));
+          } catch (ex) {
+            console.warn("Could not convert a message body to text:", ex);
+            finish("");
+          }
+        },
+        true,
+        { saneBodySize: true }
+      );
+    } catch (ex) {
+      clearTimeout(timer);
+      console.warn("Could not read a message body for reply drafting:", ex);
+      finish("");
+    }
+  });
 }

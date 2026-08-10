@@ -488,7 +488,8 @@ export const AIPanel = {
     this._abort = new AbortController();
 
     try {
-      const { text: thread, latest } = lazy.AIMailContext.threadForReply(hdr);
+      const { text: thread, latest } =
+        await lazy.AIMailContext.threadForReply(hdr);
       const identity =
         lazy.MailServices.accounts.getFirstIdentityForServer(hdr.folder.server) ??
         lazy.MailServices.accounts.defaultAccount?.defaultIdentity;
