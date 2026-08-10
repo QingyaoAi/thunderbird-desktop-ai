@@ -1602,3 +1602,26 @@ pref("widget.macos.native-anchored-menus", false);
 
 // The color used to style primary buttons and elements.
 pref("mail.appearance.accentColor", "accent-color");
+
+// Apple Mail's coloured flags.
+//
+// A plain flag in Apple Mail (the red one) is the IMAP \Flagged system
+// flag, which Thunderbird already syncs and shows as the star. Colours are
+// Apple-specific IMAP keywords instead -- $MailFlagBit0/1/2 -- which
+// Thunderbird stores on the message but has no tag for, so they are
+// invisible. Defining tags with those keys makes them show up, and because
+// the tag key is exactly the keyword the server already carries, nothing
+// new is written back to the server.
+//
+// Note the keys are lower case: nsImapMailFolder::HandleCustomFlags
+// lower-cases incoming keywords before storing them.
+//
+// Apple encodes the colour as a bit set, so a colour using two bits shows
+// as two tags here rather than one. The single-bit colours below are the
+// common cases.
+pref("mailnews.tags.$mailflagbit0.tag", "Orange flag");
+pref("mailnews.tags.$mailflagbit0.color", "#FF9500");
+pref("mailnews.tags.$mailflagbit1.tag", "Yellow flag");
+pref("mailnews.tags.$mailflagbit1.color", "#FFCC00");
+pref("mailnews.tags.$mailflagbit2.tag", "Blue flag");
+pref("mailnews.tags.$mailflagbit2.color", "#007AFF");
