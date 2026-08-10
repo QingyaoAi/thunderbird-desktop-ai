@@ -1,4 +1,109 @@
-# Thunderbird
+# Thunderbird (AI fork)
+
+A personal fork of [Thunderbird](https://github.com/thunderbird/thunderbird-desktop)
+that adds an AI assistant to the mail window, alongside some changes to how
+threads, search and the message list behave.
+
+Everything below the "Upstream Thunderbird" heading is unchanged from
+upstream, including the build instructions.
+
+## The AI pane
+
+A fourth pane in the mail tab, next to the message pane. It is shown by
+default and can be resized by dragging, or closed from **View → Layout →
+AI Assistant**.
+
+**Ask about your mail.** A question is answered from your own messages.
+The model writes a search query first (a question makes a poor query on
+its own), searches with Thunderbird's own full-text index, and may search
+a second time if the first attempt looks thin. Whole conversations are
+retrieved rather than single messages, so the exchange can be read in
+context. Answers cite the conversations they came from, and clicking a
+citation opens the message.
+
+**Draft a reply.** With a thread selected, one click reads the whole
+thread and opens a normal compose window with a proposed reply in it. It
+never sends anything: the draft is there to be edited.
+
+**Reasoning is shown while it happens.** Models that think before
+answering stream that thinking into the panel, which folds itself away
+when the answer starts. The search reports each step as it runs, so a
+slow question shows what it is doing.
+
+### Configuring a provider
+
+Settings live in `ai-config.json` in your profile folder, written with
+defaults on first run:
+
+```json
+{
+  "activeProfile": "default",
+  "profiles": {
+    "default": {
+      "label": "My provider",
+      "format": "openai",
+      "baseUrl": "https://api.example.com",
+      "model": "your-model",
+      "maxTokens": 2048
+    }
+  },
+  "context": {
+    "maxMessages": 12,
+    "maxThreads": 6,
+    "maxCharsPerMessage": 2500,
+    "maxTotalChars": 60000
+  }
+}
+```
+
+`format` is `openai` or `anthropic` and describes the endpoint's request
+shape, not the vendor. Any endpoint speaking either shape works, including
+a local one, which keeps your mail on your machine.
+
+The API key is **not** in this file. Click the key button in the panel
+header and it is stored in Thunderbird's login manager, encrypted at rest
+and covered by your primary password. `ai-config.json` is gitignored, and
+a pre-commit hook rejects anything that looks like an API key.
+
+### Privacy
+
+Retrieved message text is sent to whichever endpoint you configure. The
+panel stays inert until a provider and key exist, so nothing is sent
+before you set one up, and each answer lists exactly which conversations
+were used. Point `baseUrl` at a local model if you would rather nothing
+left the machine.
+
+## Other changes
+
+- **VIP folders.** Mark senders as VIPs (right-click a message → *Add
+  Sender to VIPs*) to get a folder per person plus a combined one, in the
+  same spirit as macOS Mail. Enable via the folder pane's **Folder Modes**
+  menu.
+- **Message previews.** Each row in the message list shows a line of body
+  text.
+- **Threads read newest-first**, flattened by date rather than nested by
+  reply structure, and a collapsed thread shows the newest message's date
+  rather than the thread's first.
+- **Field-scoped search.** `subject:`, `from:`, `to:`, `cc:`, `body:` and
+  `attachment:` prefixes work in Search Messages.
+- **Search results open in the message list**, so clicking a result
+  previews it in the reading pane.
+- Default UI font size of 16px.
+
+## Building
+
+Identical to upstream: this repository is the `comm/` directory of a
+[Firefox checkout](https://github.com/mozilla-firefox/firefox). See
+[Building Thunderbird](https://developer.thunderbird.net/thunderbird-development/building-thunderbird).
+
+The AI code is deliberately in new files (`mail/modules/AI*.sys.mjs`,
+`mail/base/content/widgets/ai-panel*`) with only small edits to existing
+ones, to keep merging from upstream manageable.
+
+---
+
+# Upstream Thunderbird
+
 Thunderbird is a powerful and customizable open source email client with many users. It is based on the same platform that Firefox uses.
 
 ## Getting Started
