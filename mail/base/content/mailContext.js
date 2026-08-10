@@ -31,6 +31,7 @@ ChromeUtils.defineESModuleGetters(this, {
   PhishingDetector: "resource:///modules/PhishingDetector.sys.mjs",
   SearchService: "moz-src:///toolkit/components/search/SearchService.sys.mjs",
   TagUtils: "resource:///modules/TagUtils.sys.mjs",
+  VipAddresses: "resource:///modules/SmartMailboxUtils.sys.mjs",
 });
 
 window.addEventListener(
@@ -420,6 +421,22 @@ var mailContextMenu = {
       this._initMessageTags();
     }
 
+    // VIP sender toggle. Only meaningful for a single real message, since
+    // it acts on that message's author.
+    const vipAddress =
+      !isDummyMessage && !onSpecialItem && numSelectedMessages == 1
+        ? this._getSenderAddress(message)
+        : null;
+    showItem("mailContext-vipSender", !!vipAddress);
+    if (vipAddress) {
+      document.l10n.setAttributes(
+        document.getElementById("mailContext-vipSender"),
+        VipAddresses.has(vipAddress)
+          ? "mail-context-vip-remove"
+          : "mail-context-vip-add"
+      );
+    }
+
     checkItem("mailContext-markFlagged", message?.isFlagged);
 
     // Disable move if we can't delete message(s) from this folder.
@@ -608,6 +625,20 @@ var mailContextMenu = {
       case "mailContext-addemail":
         top.addEmail(this.context.linkURL);
         break;
+      case "mailContext-vipSender": {
+        const message = gDBView?.hdrForFirstSelectedMessage;
+        const address = this._getSenderAddress(message);
+        if (address) {
+          if (VipAddresses.has(address)) {
+            VipAddresses.remove(address);
+          } else {
+            // Name the VIP's folder after the sender's display name when
+            // the message has one, falling back to the address.
+            VipAddresses.add(address, this._getSenderName(message));
+          }
+        }
+        break;
+      }
       case "mailContext-composeemailto":
         top.composeEmailTo(
           this.context.linkURL,
@@ -744,6 +775,49 @@ var mailContextMenu = {
    *
    * @see InitMessageTags()
    */
+  /**
+   * The bare email address of a message's author, for VIP purposes.
+   *
+   * @param {?nsIMsgDBHdr} message
+   * @returns {?string} The address, or null if it can't be determined.
+   */
+  _getSenderAddress(message) {
+    return this._parseSender(message)?.email || null;
+  },
+
+  /**
+   * The display name of a message's author, if it has one.
+   *
+   * @param {?nsIMsgDBHdr} message
+   * @returns {?string}
+   */
+  _getSenderName(message) {
+    const mailbox = this._parseSender(message);
+    return mailbox?.name?.trim() || null;
+  },
+
+  /**
+   * Parse a message's From header into its first mailbox.
+   *
+   * @param {?nsIMsgDBHdr} message
+   * @returns {?msgIAddressObject}
+   */
+  _parseSender(message) {
+    if (!message?.author) {
+      return null;
+    }
+    try {
+      const [mailbox] = MailServices.headerParser.parseEncodedHeader(
+        message.author,
+        null
+      );
+      return mailbox || null;
+    } catch (ex) {
+      console.warn("Could not parse message author for VIP action", ex);
+      return null;
+    }
+  },
+
   _initMessageTags() {
     const parent = document.getElementById("mailContext-tagpopup");
     // Remove any existing non-static items (clear tags list before rebuilding it).

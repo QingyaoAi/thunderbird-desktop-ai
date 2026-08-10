@@ -246,6 +246,8 @@ folder-pane-mode-header-smart = Unified Folders
 
 folder-pane-mode-header-tags = Tags
 
+folder-pane-mode-header-vip = VIP
+
 folder-pane-mode-context-button =
   .title = Folder mode options
 

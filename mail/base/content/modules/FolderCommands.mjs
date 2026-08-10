@@ -10,6 +10,7 @@ const lazy = {};
 ChromeUtils.defineESModuleGetters(lazy, {
   FolderUtils: "resource:///modules/FolderUtils.sys.mjs",
   repairMbox: "resource:///modules/MboxRepair.sys.mjs",
+  VipAddresses: "resource:///modules/SmartMailboxUtils.sys.mjs",
   VirtualFolderHelper: "resource:///modules/VirtualFolderWrapper.sys.mjs",
 });
 ChromeUtils.defineESModuleGetters(
@@ -136,6 +137,26 @@ function renameFolder(folder) {
   function renameCallback(newName, uri) {
     if (uri != folder.URI) {
       console.error("got back a different folder to rename!");
+    }
+
+    // A VIP folder is a virtual folder identified by its URI: both its own
+    // search definition and the entry in virtualFolders.dat refer to it.
+    // Renaming it for real changes that URI, which disconnects it from its
+    // search, and the folder then shows no messages at all. So for these,
+    // record the new name against the VIP instead; that updates the
+    // folder's display name in place and leaves the search intact.
+    if (folder.URI.includes("/vip/")) {
+      const address = lazy.VipAddresses.addressForFolderKey(
+        folder.URI.split("/").pop()
+      );
+      if (address) {
+        lazy.VipAddresses.setName(address, newName);
+      } else {
+        // The combined "All VIPs" folder, which has no address behind it.
+        // Renaming it would break it the same way, so leave it alone.
+        console.warn("Refusing to rename the combined VIP folder.");
+      }
+      return;
     }
 
     // Actually do the rename.

@@ -63,6 +63,7 @@ ChromeUtils.defineESModuleGetters(this, {
   MailE10SUtils: "resource:///modules/MailE10SUtils.sys.mjs",
   MailUtils: "resource:///modules/MailUtils.sys.mjs",
   SmartMailboxUtils: "resource:///modules/SmartMailboxUtils.sys.mjs",
+  VipAddresses: "resource:///modules/SmartMailboxUtils.sys.mjs",
   TagUtils: "resource:///modules/TagUtils.sys.mjs",
   UIDensity: "resource:///modules/UIDensity.sys.mjs",
   UIFontSize: "resource:///modules/UIFontSize.sys.mjs",
@@ -1672,6 +1673,77 @@ var folderPane = {
         }
       },
     },
+
+    vip: {
+      name: "vip",
+      active: false,
+      canBeCompact: false,
+
+      init() {
+        this._smartMailbox = SmartMailboxUtils.getSmartMailbox();
+        this._rebuild();
+        // The VIP list lives in a pref, so watch it rather than waiting for
+        // a folder event; adding/removing a VIP has to update the pane.
+        this._prefObserver = () => this._rebuild();
+        Services.prefs.addObserver("mail.vip.addresses", this._prefObserver);
+      },
+
+      /**
+       * Rebuild the rows from the current VIP list. Called on init and
+       * whenever the VIP pref changes.
+       */
+      _rebuild() {
+        if (!this.containerList) {
+          // Mode isn't set up (or was torn down); nothing to update. Note
+          // this can't test isConnected: init() runs before the container
+          // is appended to the folder tree, so the first build would be
+          // skipped. Deactivation is handled by destroy() removing the
+          // pref observer.
+          return;
+        }
+        // verify() reconciles the virtual folders with the pref, creating
+        // folders for new VIPs and deleting those no longer on the list.
+        this._smartMailbox = SmartMailboxUtils.getSmartMailbox();
+
+        while (this.containerList.hasChildNodes()) {
+          this.containerList.lastChild.remove();
+        }
+
+        const allFolder = this._smartMailbox.getAllVipFolder();
+        if (allFolder) {
+          this.containerList.appendChild(
+            folderPane._createVipRow(this.name, allFolder)
+          );
+        }
+        for (const entry of VipAddresses.getEntries()) {
+          const folder = this._smartMailbox.getVipFolder(
+            entry.address,
+            entry.name
+          );
+          if (folder) {
+            this.containerList.appendChild(
+              folderPane._createVipRow(this.name, folder)
+            );
+          } else {
+            console.warn(
+              `Could not create VIP folder for <${entry.address}>; it will ` +
+                `not appear in the folder pane.`
+            );
+          }
+        }
+        MailServices.accounts.saveVirtualFolders();
+      },
+
+      destroy() {
+        if (this._prefObserver) {
+          Services.prefs.removeObserver(
+            "mail.vip.addresses",
+            this._prefObserver
+          );
+          this._prefObserver = null;
+        }
+      },
+    },
   },
 
   /**
@@ -2221,6 +2293,16 @@ var folderPane = {
     }
 
     if (!active) {
+      // Give the mode a chance to release anything it registered in init()
+      // (observers and the like), otherwise it keeps running against a
+      // container that is no longer in the document.
+      if (typeof mode.destroy == "function") {
+        try {
+          mode.destroy();
+        } catch (e) {
+          console.warn(`Error destroying ${mode.name} mode.`, e);
+        }
+      }
       mode.container.remove();
       delete mode.container;
       mode.active = false;
@@ -2353,6 +2435,20 @@ var folderPane = {
     row.setFolder(folder);
     row.dataset.tagKey = tag.key;
     row.icon.style.setProperty("--icon-color", tag.color);
+    return row;
+  },
+
+  /**
+   * Create a row for one of the VIP virtual folders.
+   *
+   * @param {string} modeName
+   * @param {nsIMsgFolder} folder
+   * @returns {FolderTreeRow}
+   */
+  _createVipRow(modeName, folder) {
+    const row = document.createElement("li", { is: "folder-tree-row" });
+    row.modeName = modeName;
+    row.setFolder(folder);
     return row;
   },
 
@@ -6428,6 +6524,19 @@ var folderListener = {
       // the folder but we are not notified about the descendants.
       for (const f of folder.descendants) {
         folderPane.addFolder(f.parent, f);
+      }
+
+      // Renaming a VIP's folder is how a VIP gets renamed, so record the
+      // new name against the address. Without this the name would be lost
+      // whenever the folder is recreated (e.g. after removing and re-adding
+      // that VIP).
+      if (folder.URI.includes("/vip/")) {
+        const address = VipAddresses.addressForFolderKey(
+          folder.URI.split("/").pop()
+        );
+        if (address) {
+          VipAddresses.setName(address, folder.name);
+        }
       }
     }
   },

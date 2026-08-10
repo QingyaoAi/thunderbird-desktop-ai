@@ -710,6 +710,11 @@ pref("gloda.facetview.sortby", 2);
 // still reachable by turning this off in Settings > General.)
 pref("gloda.show_as_list_by_default", true);
 
+// Comma separated list of email addresses treated as VIPs. The folder pane's
+// "VIP" mode shows a virtual folder per address here, plus one gathering mail
+// from all of them. Managed from the message list's context menu.
+pref("mail.vip.addresses", "");
+
 // Enable gloda by default!
 pref("mailnews.database.global.indexer.enabled", true);
 // Limit the number of gloda message results

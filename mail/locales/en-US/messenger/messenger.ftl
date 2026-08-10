@@ -161,6 +161,10 @@ show-tags-folders-label =
     .label = Tags
     .accesskey = T
 
+show-vip-folders-label =
+    .label = VIP
+    .accesskey = V
+
 folder-toolbar-toggle-folder-compact-view =
     .label = Compact View
     .accesskey = C
@@ -845,6 +849,16 @@ tags-label-5 = Later
 tags-add-new =
     .label = New Tag…
     .accesskey = N
+
+# Adds the sender of the selected message to the VIP list, which the folder
+# pane's VIP mode groups mail by.
+mail-context-vip-add =
+    .label = Add Sender to VIPs
+    .accesskey = V
+
+mail-context-vip-remove =
+    .label = Remove Sender from VIPs
+    .accesskey = V
 
 tags-manage =
     .label = Manage Tags…
