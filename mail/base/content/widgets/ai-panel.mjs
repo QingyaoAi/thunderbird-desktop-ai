@@ -469,7 +469,7 @@ export const AIPanel = {
       // Judge what we have using only senders and subjects, which is
       // enough to spot irrelevance without resending every body.
       progress.step("ai-search-step-checking");
-      const interim = lazy.AIMailContext.buildContext(pooled, config.context);
+      const interim = await lazy.AIMailContext.buildContext(pooled, config.context);
       const next = await this._assessRetrieval(question, interim.sources, queries);
       if (!next) {
         progress.step("ai-search-step-enough");
@@ -481,7 +481,7 @@ export const AIPanel = {
     progress.step("ai-search-step-reading", { count: pooled.length });
     progress.finish();
     return {
-      ...lazy.AIMailContext.buildContext(pooled, config.context),
+      ...(await lazy.AIMailContext.buildContext(pooled, config.context)),
       queries,
     };
   },
@@ -622,7 +622,7 @@ export const AIPanel = {
 
     const summary = document.createElement("summary");
     summary.className = "ai-sources-summary";
-    document.l10n.setAttributes(summary, "ai-panel-sources", {
+    document.l10n.setAttributes(summary, "ai-panel-sources-threads", {
       count: sources.length,
     });
     details.appendChild(summary);
@@ -633,7 +633,9 @@ export const AIPanel = {
       const item = document.createElement("li");
       const link = document.createElement("a");
       link.href = "#";
-      link.textContent = `[${source.index}] ${source.subject} — ${source.author}`;
+      link.textContent = source.messageCount > 1
+        ? `[${source.index}] ${source.subject} — ${source.author} (${source.messageCount} messages)`
+        : `[${source.index}] ${source.subject} — ${source.author}`;
       link.title = source.subject;
       if (source.uri) {
         link.addEventListener("click", event => {

@@ -108,6 +108,50 @@ function glodaSearch(query, limit, andTerms = true) {
 }
 
 /**
+ * Every message in a conversation, oldest first.
+ *
+ * A search hit points at one message, but the message that matched is
+ * rarely the whole story -- the answer is often in the reply after it, or
+ * in the question it was answering. Pulling the conversation gives both
+ * the model and the reader the actual exchange.
+ *
+ * @param {object} conversation - A gloda conversation.
+ * @returns {Promise<object[]>} Its messages, or [] if they cannot be read.
+ */
+function conversationMessages(conversation) {
+  return new Promise(resolve => {
+    let collected = [];
+    let settled = false;
+    const finish = messages => {
+      if (!settled) {
+        settled = true;
+        resolve(messages);
+      }
+    };
+    // Never let one unresponsive conversation stall the whole answer.
+    const timer = setTimeout(() => finish(collected), 10000);
+
+    try {
+      conversation.getMessagesCollection({
+        onItemsAdded(items) {
+          collected = collected.concat(items);
+        },
+        onItemsModified() {},
+        onItemsRemoved() {},
+        onQueryCompleted() {
+          clearTimeout(timer);
+          finish(collected);
+        },
+      });
+    } catch (ex) {
+      clearTimeout(timer);
+      console.warn("Could not read a conversation:", ex);
+      finish([]);
+    }
+  });
+}
+
+/**
  * Strip a body down to something worth sending: no quoted replies, no
  * signature, no runs of blank lines. Quoted text is the single biggest
  * source of wasted context in mail, since every reply repeats the thread.
@@ -171,7 +215,7 @@ export const AIMailContext = {
     const query = searchQuery?.trim() || searchTermsFor(question);
     const { messages, usedQuery } = await this.searchMessages(query, limits);
     return {
-      ...this.buildContext(messages, limits),
+      ...(await this.buildContext(messages, limits)),
       query: usedQuery,
     };
   },
@@ -214,69 +258,105 @@ export const AIMailContext = {
    * @param {object} [limits]
    * @returns {{prompt: string, sources: object[], truncated: boolean}}
    */
-  buildContext(messages, limits = {}) {
-    const maxMessages = limits.maxMessages ?? 12;
-    const maxCharsPerMessage = limits.maxCharsPerMessage ?? 4000;
+  async buildContext(messages, limits = {}) {
+    const maxThreads = limits.maxThreads ?? 6;
+    const maxCharsPerMessage = limits.maxCharsPerMessage ?? 2500;
     const maxTotalChars = limits.maxTotalChars ?? 60000;
 
-    // One entry per conversation: a long thread would otherwise fill the
-    // whole budget by itself, crowding out other threads that might hold
-    // the actual answer.
-    const seenConversations = new Set();
-    const chosen = [];
+    // Group the hits by conversation, keeping the order the search ranked
+    // them in, so the best-matching thread is assembled first.
+    const threads = [];
+    const byConversation = new Map();
     for (const message of messages) {
-      const conversationId = message.conversationID ?? message.id;
-      if (seenConversations.has(conversationId)) {
-        continue;
+      const id = message.conversationID ?? `msg-${message.id}`;
+      let entry = byConversation.get(id);
+      if (!entry) {
+        entry = { id, conversation: message.conversation, hits: [] };
+        byConversation.set(id, entry);
+        threads.push(entry);
       }
-      seenConversations.add(conversationId);
-      chosen.push(message);
-      if (chosen.length >= maxMessages) {
-        break;
-      }
+      entry.hits.push(message);
     }
 
+    const chosen = threads.slice(0, maxThreads);
     const sources = [];
     const blocks = [];
     let totalChars = 0;
-    let truncated = messages.length > chosen.length;
+    let truncated = threads.length > chosen.length;
 
-    for (const message of chosen) {
-      const body = condenseBody(
-        message.indexedBodyText ?? "",
-        maxCharsPerMessage
-      );
-      if (!body) {
+    for (const entry of chosen) {
+      // The whole exchange when it can be read, otherwise just the hits.
+      let thread = entry.conversation
+        ? await conversationMessages(entry.conversation)
+        : [];
+      if (!thread.length) {
+        thread = entry.hits;
+      }
+      thread = thread
+        .slice()
+        .sort((a, b) => (a.date ?? 0) - (b.date ?? 0));
+
+      const parts = [];
+      for (const message of thread) {
+        const body = condenseBody(
+          message.indexedBodyText ?? "",
+          maxCharsPerMessage
+        );
+        const date = message.date
+          ? new Date(message.date).toISOString().slice(0, 16).replace("T", " ")
+          : "unknown date";
+        parts.push(
+          `From: ${displayName(message.from)}  (${date})\n` +
+            `${body || "(no readable text)"}`
+        );
+      }
+      if (!parts.length) {
         continue;
       }
 
       const index = sources.length + 1;
-      const date = message.date
-        ? new Date(message.date).toISOString().slice(0, 10)
-        : "unknown date";
+      const subject =
+        thread[0]?.subject || entry.hits[0]?.subject || "(no subject)";
       const block =
-        `[${index}] From: ${displayName(message.from)}\n` +
-        `Date: ${date}\n` +
-        `Subject: ${message.subject || "(no subject)"}\n` +
-        `${body}\n`;
+        `[${index}] Thread: ${subject} (${parts.length} message` +
+        `${parts.length == 1 ? "" : "s"})\n\n` +
+        parts.join("\n\n  --  \n\n") +
+        `\n`;
 
-      if (totalChars + block.length > maxTotalChars) {
+      // Always include the first thread, even if it is over budget on its
+      // own: an answer from a truncated thread beats no answer at all.
+      if (totalChars + block.length > maxTotalChars && blocks.length) {
         truncated = true;
         break;
       }
       totalChars += block.length;
       blocks.push(block);
 
+      // Cite the thread, linking to the message that actually matched.
+      const participants = [
+        ...new Set(thread.map(m => displayName(m.from))),
+      ];
       sources.push({
         index,
-        subject: message.subject || "(no subject)",
-        author: displayName(message.from),
-        date: message.date ?? null,
-        uri: message.folderMessageURI ?? null,
+        subject,
+        author:
+          participants.length > 2
+            ? `${participants[0]} and ${participants.length - 1} others`
+            : participants.join(", "),
+        date: thread.at(-1)?.date ?? null,
+        messageCount: parts.length,
+        uri:
+          entry.hits[0]?.folderMessageURI ??
+          thread.at(-1)?.folderMessageURI ??
+          null,
       });
     }
 
-    return { prompt: blocks.join("\n---\n"), sources, truncated };
+    return {
+      prompt: blocks.join("\n===\n\n"),
+      sources,
+      truncated,
+    };
   },
 
   /**
@@ -370,7 +450,9 @@ export const AIMailContext = {
   systemPrompt(sourceCount) {
     return (
       `You answer questions about the user's email. You have been given ` +
-      `${sourceCount} message(s) from their mailbox, each numbered.\n\n` +
+      `${sourceCount} conversation(s) from their mailbox, each numbered. ` +
+      `A conversation contains every message in that thread in order, so ` +
+      `read the exchange as a whole rather than any one message.\n\n` +
       `Rules:\n` +
       `- Answer only from the messages provided. Do not use outside ` +
       `knowledge about the user's affairs.\n` +
@@ -391,7 +473,7 @@ export const AIMailContext = {
   userPrompt(question, contextBlock) {
     return (
       `Question: ${question}\n\n` +
-      `Messages from my mailbox:\n\n${contextBlock}`
+      `Conversations from my mailbox:\n\n${contextBlock}`
     );
   },
 

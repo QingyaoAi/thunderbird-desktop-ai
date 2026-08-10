@@ -970,3 +970,10 @@ ai-search-step-reading =
         [one] Reading 1 message…
        *[other] Reading { $count } messages…
     }
+
+# $count is how many conversations were used to answer.
+ai-panel-sources-threads =
+    { $count ->
+        [one] Answered using 1 conversation from your mail
+       *[other] Answered using { $count } conversations from your mail
+    }

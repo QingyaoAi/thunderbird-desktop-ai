@@ -54,8 +54,13 @@ const DEFAULT_CONFIG = {
   // How much mail a single question may pull in as context. Trades cost and
   // latency against recall; see AIMailContext.
   context: {
+    // Retrieval works in threads: maxMessages caps how many search hits are
+    // considered, maxThreads how many whole conversations are actually
+    // read. Per-message is lower than it was, because a thread now
+    // contributes every message rather than one.
     maxMessages: 12,
-    maxCharsPerMessage: 4000,
+    maxThreads: 6,
+    maxCharsPerMessage: 2500,
     maxTotalChars: 60000,
   },
 };
