@@ -945,3 +945,28 @@ ai-panel-searching = Searching your mail…
 
 # $query is the new search query being tried after the first attempt.
 ai-panel-searching-again = Trying another search: { $query }
+
+ai-search-step-formulating = Working out what to search for…
+
+# $query is the mail search query being run.
+ai-search-step-searching = Searching for “{ $query }”
+
+# $count is how many new messages this search turned up.
+ai-search-step-found =
+    { $count ->
+        [one] Found 1 message
+       *[other] Found { $count } messages
+    }
+
+ai-search-step-none = No matches for that
+
+ai-search-step-checking = Checking whether that's enough…
+
+ai-search-step-enough = That should be enough
+
+# $count is how many messages are being read to answer the question.
+ai-search-step-reading =
+    { $count ->
+        [one] Reading 1 message…
+       *[other] Reading { $count } messages…
+    }

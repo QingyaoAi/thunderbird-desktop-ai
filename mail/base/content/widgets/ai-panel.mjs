@@ -26,10 +26,29 @@ const MAX_TURNS = 40;
 
 /**
  * How many times a question may be searched for before answering with
- * whatever was found. Each extra round costs a request and a wait, so this
- * is deliberately small.
+ * whatever was found. Each extra round costs two requests and a visible
+ * wait, so this stays small: one reformulation is where most of the
+ * benefit is.
  */
-const MAX_RETRIEVAL_ROUNDS = 3;
+const MAX_RETRIEVAL_ROUNDS = 2;
+
+/**
+ * Whether a question is already shaped like a search query -- a few words,
+ * no question mark, no interrogative opening. Such input is better used
+ * as-is than paraphrased by a model.
+ *
+ * @param {string} question
+ * @returns {boolean}
+ */
+function isKeywordLike(question) {
+  const text = question.trim();
+  if (text.includes("?") || text.split(/\s+/).length > 5) {
+    return false;
+  }
+  return !/^(who|what|when|where|which|why|how|did|do|does|is|are|was|were|can|could|should|would|tell|show|find|summar)/i.test(
+    text
+  );
+}
 
 /**
  * Output budget for the small helper calls that write and judge search
@@ -403,28 +422,45 @@ export const AIPanel = {
    * @returns {Promise<{prompt: string, sources: object[], truncated: boolean, queries: string[]}>}
    */
   async _retrieve(question, answerBody, config) {
-    const status = this._notice("ai-panel-searching");
-    answerBody.appendChild(status);
+    const progress = this._addSearchProgress(answerBody);
 
     const queries = [];
     const pooled = [];
     const seenIds = new Set();
-    let query = await this._formulateSearchQuery(question);
+
+    // A question that is already keyword-shaped ("budget meeting") is its
+    // own best query; asking the model to rewrite it costs a round trip
+    // and several seconds for no gain.
+    let query;
+    if (isKeywordLike(question)) {
+      query = question.trim();
+    } else {
+      progress.step("ai-search-step-formulating");
+      query = await this._formulateSearchQuery(question);
+    }
 
     for (let round = 1; round <= MAX_RETRIEVAL_ROUNDS; round++) {
       const effective = query || question;
+      progress.step("ai-search-step-searching", { query: effective });
+
       const { messages, usedQuery } = await lazy.AIMailContext.searchMessages(
         effective,
         config.context
       );
       queries.push(usedQuery);
 
+      let added = 0;
       for (const message of messages) {
         if (!seenIds.has(message.id)) {
           seenIds.add(message.id);
           pooled.push(message);
+          added++;
         }
       }
+      progress.step(
+        added ? "ai-search-step-found" : "ai-search-step-none",
+        { count: added }
+      );
 
       if (round == MAX_RETRIEVAL_ROUNDS) {
         break;
@@ -432,18 +468,18 @@ export const AIPanel = {
 
       // Judge what we have using only senders and subjects, which is
       // enough to spot irrelevance without resending every body.
+      progress.step("ai-search-step-checking");
       const interim = lazy.AIMailContext.buildContext(pooled, config.context);
       const next = await this._assessRetrieval(question, interim.sources, queries);
       if (!next) {
+        progress.step("ai-search-step-enough");
         break;
       }
-      document.l10n.setAttributes(status, "ai-panel-searching-again", {
-        query: next,
-      });
       query = next;
     }
 
-    status.remove();
+    progress.step("ai-search-step-reading", { count: pooled.length });
+    progress.finish();
     return {
       ...lazy.AIMailContext.buildContext(pooled, config.context),
       queries,
@@ -491,6 +527,51 @@ export const AIPanel = {
       console.warn("Could not assess retrieval, stopping search:", ex);
       return null;
     }
+  },
+
+  /**
+   * A live list of what the search is doing.
+   *
+   * Retrieval can take a while -- a query has to be written, sometimes
+   * more than once, and each step is a request -- and a single unchanging
+   * "Searching..." gives no sign of whether anything is happening. Each
+   * step appears as it starts, the newest pulsing, so the wait is legible.
+   *
+   * @param {HTMLElement} parent
+   * @returns {{step: Function, finish: Function}}
+   */
+  _addSearchProgress(parent) {
+    const box = document.createElement("div");
+    box.className = "ai-search-progress";
+
+    const list = document.createElement("ul");
+    list.className = "ai-search-steps";
+    box.appendChild(list);
+    parent.appendChild(box);
+
+    const follow = () => {
+      if (this._isAtEnd()) {
+        this._scrollToEnd();
+      }
+    };
+    follow();
+
+    return {
+      step: (l10nId, args) => {
+        list.lastElementChild?.classList.remove("current");
+        const item = document.createElement("li");
+        item.className = "ai-search-step current";
+        document.l10n.setAttributes(item, l10nId, args);
+        list.appendChild(item);
+        follow();
+        return item;
+      },
+      finish: () => {
+        // The citations that follow record which queries were used, so the
+        // step list has done its job once the answer starts.
+        box.remove();
+      },
+    };
   },
 
   /**

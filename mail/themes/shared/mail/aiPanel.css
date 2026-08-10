@@ -337,3 +337,54 @@
   color: var(--layout-color-2);
   font-style: italic;
 }
+
+/* -- search progress --
+ *
+ * Shown while retrieval runs and removed when the answer starts. Steps
+ * accumulate so the wait reads as progress rather than a stalled label;
+ * the newest one pulses, matching the thinking block above it.
+ */
+
+.ai-search-progress {
+  padding: 8px 10px;
+}
+
+.ai-search-steps {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.ai-search-step {
+  font-size: 0.85rem;
+  color: var(--layout-color-2);
+  padding-inline-start: 14px;
+  position: relative;
+  overflow-wrap: anywhere;
+}
+
+/* Completed steps keep a tick; the running one gets a marker that pulses. */
+.ai-search-step::before {
+  content: "✓";
+  position: absolute;
+  inset-inline-start: 0;
+  opacity: 0.6;
+}
+
+.ai-search-step.current {
+  color: var(--layout-color-1);
+}
+
+.ai-search-step.current::before {
+  content: "›";
+  animation: ai-thinking-pulse 1.6s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ai-search-step.current::before {
+    animation: none;
+  }
+}
