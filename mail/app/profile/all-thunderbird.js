@@ -703,12 +703,12 @@ pref("gloda.facetview.sortby", 2);
 // Whether to open global search results as a table list view instead of the
 // faceted search view. When true, results open directly in a table list,
 // equivalent to clicking "Show results as list".
-// Defaulted to true so search results open in the regular 3-pane message
-// list, which means clicking a result previews the message in the reading
-// pane just like it does in a normal folder. (The trade-off is that the
-// faceted results page's filter sidebar isn't shown; the facet view is
-// still reachable by turning this off in Settings > General.)
-pref("gloda.show_as_list_by_default", true);
+// Left at false so search results open in the faceted view, which is the
+// only place the timeline and the sender/folder/date facets exist. The
+// list view -- where clicking a result previews it in the reading pane --
+// is one click away via "Show results as list" on that page, and can be
+// made the default again by flipping this to true.
+pref("gloda.show_as_list_by_default", false);
 
 // Comma separated list of email addresses treated as VIPs. The folder pane's
 // "VIP" mode shows a virtual folder per address here, plus one gathering mail
