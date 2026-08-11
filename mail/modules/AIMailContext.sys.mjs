@@ -296,7 +296,11 @@ export const AIMailContext = {
         .slice()
         .sort((a, b) => (a.date ?? 0) - (b.date ?? 0));
 
+      const index = sources.length + 1;
       const parts = [];
+      // Each message carries its own reference, so an answer can point at
+      // the one it came from rather than at the conversation as a whole.
+      const messages = [];
       for (const message of thread) {
         const body = condenseBody(
           message.indexedBodyText ?? "",
@@ -305,16 +309,21 @@ export const AIMailContext = {
         const date = message.date
           ? new Date(message.date).toISOString().slice(0, 16).replace("T", " ")
           : "unknown date";
+        const ref = `${index}.${parts.length + 1}`;
         parts.push(
-          `From: ${displayName(message.from)}  (${date})\n` +
+          `[${ref}] From: ${displayName(message.from)}  (${date})\n` +
             `${body || "(no readable text)"}`
         );
+        messages.push({
+          ref,
+          from: displayName(message.from),
+          date: message.date ?? null,
+          uri: message.folderMessageURI ?? null,
+        });
       }
       if (!parts.length) {
         continue;
       }
-
-      const index = sources.length + 1;
       const subject =
         thread[0]?.subject || entry.hits[0]?.subject || "(no subject)";
       const block =
@@ -345,6 +354,7 @@ export const AIMailContext = {
             : participants.join(", "),
         date: thread.at(-1)?.date ?? null,
         messageCount: parts.length,
+        messages,
         uri:
           entry.hits[0]?.folderMessageURI ??
           thread.at(-1)?.folderMessageURI ??
@@ -456,7 +466,10 @@ export const AIMailContext = {
       `Rules:\n` +
       `- Answer only from the messages provided. Do not use outside ` +
       `knowledge about the user's affairs.\n` +
-      `- Cite the messages you used as [1], [2], and so on, inline.\n` +
+      `- Cite what you used inline. Each conversation is numbered [1], [2], ` +
+      `and each message within one is numbered [1.1], [1.2] and so on. ` +
+      `Prefer the message-level reference, so the exact message you took ` +
+      `the answer from can be opened.\n` +
       `- If the provided messages do not contain the answer, say so ` +
       `plainly and suggest what to search for instead. Never guess.\n` +
       `- Be concise. Quote exact wording only when it matters.`

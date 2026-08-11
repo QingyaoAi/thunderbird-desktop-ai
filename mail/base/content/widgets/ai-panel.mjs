@@ -361,15 +361,36 @@ export const AIPanel = {
     if (!sources?.length) {
       return;
     }
-    const byIndex = new Map(sources.map(source => [source.index, source]));
+    // "2" is a conversation, "2.3" the third message in it. The model is
+    // asked for the message-level form, so that following a citation opens
+    // the message the answer actually came from; the thread-level form is
+    // still understood, since that is what it falls back to.
+    const targets = new Map();
+    for (const source of sources) {
+      if (source.uri) {
+        targets.set(String(source.index), {
+          uri: source.uri,
+          subject: source.subject,
+        });
+      }
+      for (const message of source.messages ?? []) {
+        if (message.uri) {
+          targets.set(message.ref, {
+            uri: message.uri,
+            subject: source.subject,
+          });
+        }
+      }
+    }
+
     linkifyCitations(
       container,
       document,
-      number => byIndex.get(number)?.uri,
-      number => {
-        const source = byIndex.get(number);
-        if (source?.uri) {
-          this._showMessage(source.uri, source.subject);
+      ref => targets.has(ref),
+      ref => {
+        const target = targets.get(ref);
+        if (target) {
+          this._showMessage(target.uri, target.subject);
         }
       }
     );

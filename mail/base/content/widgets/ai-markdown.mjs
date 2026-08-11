@@ -345,16 +345,18 @@ function renderList(parent, lines, start, doc) {
 }
 
 /**
- * Turn "[1]" style citations in rendered output into links.
+ * Turn "[1]" and "[1.2]" style citations in rendered output into links.
  *
  * Runs over the DOM after rendering rather than over the source, so a
  * bracket inside a code span or an existing link is left alone.
  *
  * @param {Node} root - Rendered output to scan.
  * @param {Document} doc
- * @param {function(number): boolean} isKnown - Whether a citation number has
- *   a source behind it. Unknown numbers are left as text.
- * @param {function(number, MouseEvent)} onActivate - Called with the number.
+ * @param {function(string): boolean} isKnown - Whether a reference has mail
+ *   behind it. A reference is "2" for a conversation or "2.3" for a message
+ *   within one. Unknown references are left as text.
+ * @param {function(string, MouseEvent)} onActivate - Called with the
+ *   reference that was clicked.
  */
 export function linkifyCitations(root, doc, isKnown, onActivate) {
   const walker = doc.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
@@ -363,7 +365,7 @@ export function linkifyCitations(root, doc, isKnown, onActivate) {
       if (node.parentElement?.closest("code, pre, a")) {
         return NodeFilter.FILTER_REJECT;
       }
-      return /\[\d+\]/.test(node.nodeValue)
+      return /\[\d+(?:\.\d+)?\]/.test(node.nodeValue)
         ? NodeFilter.FILTER_ACCEPT
         : NodeFilter.FILTER_REJECT;
     },
@@ -378,8 +380,8 @@ export function linkifyCitations(root, doc, isKnown, onActivate) {
     const parts = doc.createDocumentFragment();
     const text = node.nodeValue;
     let last = 0;
-    for (const match of text.matchAll(/\[(\d+)\]/g)) {
-      const number = Number(match[1]);
+    for (const match of text.matchAll(/\[(\d+(?:\.\d+)?)\]/g)) {
+      const number = match[1];
       if (!isKnown(number)) {
         continue;
       }
