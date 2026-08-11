@@ -32,8 +32,30 @@
     ></script>
     <script>
       // <![CDATA[
+      // Zoom used to apply to the whole search page, and Gecko remembers a
+      // zoom level per site -- so a page zoomed by an earlier build stays
+      // zoomed. Enlarging only the message inside a page that is still at
+      // 130% leaves the preview laid out against the wrong size, which is
+      // how the message ends up clipped or off-screen. The page is pinned at
+      // 100% and only the message is ever scaled.
+      window.addEventListener("load", () => {
+        const outer = document.getElementById("browser");
+        if (outer) {
+          outer.fullZoom = 1;
+          outer.textZoom = 1;
+        }
+      });
+
       function getBrowser() {
         const outer = document.getElementById("browser");
+        // Every zoom command comes through here, so this is also where a
+        // page left inflated gets put back. The load handler alone is not
+        // enough: it does not run when the inner page reloads, and a stored
+        // zoom can be restored after it has already run.
+        if (outer && (outer.fullZoom !== 1 || outer.textZoom !== 1)) {
+          outer.fullZoom = 1;
+          outer.textZoom = 1;
+        }
         // Zoom acts on whatever this returns. Once the preview is open the
         // thing being read is the message inside it, not the facets and
         // timeline around it, so zooming the whole page scales the search
@@ -43,16 +65,19 @@
         const preview = outer?.contentDocument?.getElementById(
           "facetMessageBrowser"
         );
-        if (preview && !preview.closest("#facetPreview")?.hidden) {
-          // The preview is an about:message, which puts the message body in
-          // a browser of its own and arranges the header, buttons and
-          // attachment list around it. Zooming the whole thing scales that
-          // furniture along with the text. This is the browser the message
-          // pane's own zoom commands act on, so it behaves the same here.
-          const body = preview.contentWindow?.getMessagePaneBrowser?.();
-          return body || preview;
+        // The preview is an about:message, which puts the message body in a
+        // browser of its own and arranges the header, buttons and attachment
+        // list around it. Zooming the whole thing scales that furniture along
+        // with the text. This is the browser the message pane's own zoom
+        // commands act on, so it behaves the same here.
+        const body = preview?.contentWindow?.getMessagePaneBrowser?.();
+        if (body) {
+          return body;
         }
-        return outer;
+        // With no message to scale, zoom has nothing to do -- returning the
+        // page would scale the facets and timeline, which is the behaviour
+        // being removed. The hidden preview browser absorbs it harmlessly.
+        return preview || outer;
       }
       // ]]>
     </script>
