@@ -491,7 +491,11 @@
  * line of the sentence it sits in.
  */
 
-.ai-citation {
+/* Scoped as well as bare, so this outranks `.ai-answer a` above -- which is
+ * more specific than a lone class and would otherwise paint the number the
+ * same colour as this badge's background, leaving a blank blue box. */
+a.ai-citation,
+.ai-answer a.ai-citation {
   display: inline-block;
   margin-inline: 1px;
   padding-inline: 3px;
@@ -504,12 +508,14 @@
   background-color: var(--selected-item-color);
 }
 
-.ai-citation:hover {
+a.ai-citation:hover,
+.ai-answer a.ai-citation:hover {
   filter: brightness(1.15);
   text-decoration: none;
 }
 
-.ai-citation:focus-visible {
+a.ai-citation:focus-visible,
+.ai-answer a.ai-citation:focus-visible {
   outline: 2px solid var(--focus-outline-color);
   outline-offset: 1px;
 }
