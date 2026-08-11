@@ -16,8 +16,11 @@
  * to date incrementally from tag, arrival and deletion notifications -- no
  * repeated scanning, and no search per tag.
  *
- * Counts cover real folders only. Virtual folders hold no messages of their
- * own and would double-count the ones they point at.
+ * The set of folders counted matches the one a tag folder actually searches
+ * when opened -- everything except Trash, Junk, Outbox and virtual folders,
+ * ancestors included (see DBViewWrapper's handling of a "*" search scope).
+ * Counting anything else would put a number on the row that disagrees with
+ * the list you get when you click it.
  */
 
 const lazy = {};
@@ -35,6 +38,29 @@ const SCAN_CHUNK = 500;
 
 /** Notifications are coalesced over this long, in ms. */
 const NOTIFY_DELAY = 250;
+
+/**
+ * Folders a tag search does not look in. Trash and Junk hold mail the user
+ * has already dismissed, Outbox holds mail that has not been sent yet, and a
+ * virtual folder holds nothing of its own -- counting one would tally the
+ * messages it points at a second time.
+ */
+const UNCOUNTED_FOLDER_FLAGS =
+  Ci.nsMsgFolderFlags.Trash |
+  Ci.nsMsgFolderFlags.Junk |
+  Ci.nsMsgFolderFlags.Queue |
+  Ci.nsMsgFolderFlags.Virtual;
+
+/**
+ * Whether messages in a folder count towards the tag totals.
+ *
+ * @param {?nsIMsgFolder} folder
+ * @returns {boolean}
+ */
+function isCounted(folder) {
+  // Ancestors are checked too, so a subfolder of Trash is skipped as well.
+  return Boolean(folder) && !folder.isSpecialFolder(UNCOUNTED_FOLDER_FLAGS, true);
+}
 
 /**
  * The tag keys in a keywords string.
@@ -176,7 +202,7 @@ export const TagMessageCounts = {
         }
 
         for (const folder of folders) {
-          if (folder.getFlag(Ci.nsMsgFolderFlags.Virtual)) {
+          if (!isCounted(folder)) {
             continue;
           }
 
@@ -221,7 +247,7 @@ export const TagMessageCounts = {
   // -- staying current -----------------------------------------------------
 
   msgPropertyChanged(msg, property, oldValue, newValue) {
-    if (property != "keywords") {
+    if (property != "keywords" || !isCounted(msg?.folder)) {
       return;
     }
     const before = new Set(keywordsToKeys(oldValue));
@@ -239,6 +265,9 @@ export const TagMessageCounts = {
   },
 
   msgAdded(msg) {
+    if (!isCounted(msg?.folder)) {
+      return;
+    }
     // Mail arriving from the server can already carry keywords, which is how
     // a tag applied on another device shows up here.
     for (const key of keywordsToKeys(msg.getStringProperty("keywords"))) {
@@ -248,6 +277,9 @@ export const TagMessageCounts = {
 
   msgsDeleted(messages) {
     for (const msg of messages) {
+      if (!isCounted(msg?.folder)) {
+        continue;
+      }
       for (const key of keywordsToKeys(msg.getStringProperty("keywords"))) {
         this._bump(key, -1);
       }

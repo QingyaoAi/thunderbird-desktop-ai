@@ -505,7 +505,7 @@ class SmartMailbox {
     const addresses = VipAddresses.get();
     const searchStr = addresses.length
       ? addresses.map(a => `OR (from,contains,${a})`).join(" ")
-      : "AND (from,contains, no-vips )";
+      : "AND (from,contains,@no-vips.invalid)";
     return this.#createVipFolder(
       ALL_VIP_FOLDER_KEY,
       messengerBundle.GetStringFromName("vipFolderName"),
