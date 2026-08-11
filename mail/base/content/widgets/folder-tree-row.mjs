@@ -166,6 +166,14 @@ class FolderTreeRow extends HTMLLIElement {
   }
 
   set unreadCount(value) {
+    // A tag row carries one number: how many messages have the tag. The
+    // unread count that would sit beside it is read from the virtual folder,
+    // which knows nothing until its search has been run -- so it shows up on
+    // whichever tag happens to have been opened and on no other, which reads
+    // as something odd about the mail rather than about the folder pane.
+    if (this.dataset.tagKey) {
+      value = 0;
+    }
     if (this.#unreadCount == value) {
       return;
     }
