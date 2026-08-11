@@ -134,6 +134,7 @@ messenger.jar:
     content/messenger/thread-card-tags.mjs          (content/widgets/treeview/thread-card-tags.mjs)
     content/messenger/thread-card.mjs               (content/widgets/treeview/thread-card.mjs)
     content/messenger/ai-pane-status.js              (content/ai-pane-status.js)
+    content/messenger/ai-markdown.mjs                (content/widgets/ai-markdown.mjs)
     content/messenger/ai-panel.mjs                  (content/widgets/ai-panel.mjs)
     content/messenger/ai-panel-init.mjs             (content/widgets/ai-panel-init.mjs)
     content/messenger/thread-row.mjs                (content/widgets/treeview/thread-row.mjs)

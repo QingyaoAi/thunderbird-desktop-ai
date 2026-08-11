@@ -13,6 +13,11 @@
  * gone from the flow if you don't.
  */
 
+import {
+  renderMarkdown,
+  linkifyCitations,
+} from "chrome://messenger/content/ai-markdown.mjs";
+
 const lazy = {};
 ChromeUtils.defineESModuleGetters(lazy, {
   AIConfig: "resource:///modules/AIConfig.sys.mjs",
@@ -243,6 +248,12 @@ export const AIPanel = {
     const answerBody = this._addTurn("assistant");
     let thinking = null;
     let answerText = null;
+    // The Markdown is rendered from the whole answer each time, so the raw
+    // text has to be kept: a fragment on its own is not parseable, and a
+    // list or code fence only becomes one once its later lines arrive.
+    let answerRaw = "";
+    let lastRender = 0;
+    let sources = [];
 
     this._setBusy(true);
     this._abort = new AbortController();
@@ -254,6 +265,7 @@ export const AIPanel = {
       // grounded: re-searching for every follow-up would send the mailbox
       // repeatedly, and the earlier context is still in the transcript.
       const grounded = await this._buildGroundedPrompt(question, answerBody);
+      sources = grounded.sources ?? [];
       const sendMessages = [
         ...this._messages.slice(0, -1),
         { role: "user", content: grounded.content },
@@ -291,13 +303,27 @@ export const AIPanel = {
             answerText.className = "ai-answer";
             answerBody.appendChild(answerText);
           }
+          answerRaw += fragment;
+          // Re-rendering on every fragment would re-parse the whole answer
+          // dozens of times a second for no visible gain.
+          const now = Date.now();
+          if (now - lastRender < 80) {
+            return;
+          }
+          lastRender = now;
           const follow = this._isAtEnd();
-          answerText.textContent += fragment;
+          this._renderAnswer(answerText, answerRaw, sources);
           if (follow) {
             this._scrollToEnd();
           }
         },
       });
+
+      if (answerText) {
+        // The throttle above may have skipped the final fragment, and only
+        // now is the Markdown complete enough to render properly.
+        this._renderAnswer(answerText, answerRaw, sources);
+      }
 
       if (result.text) {
         this._messages.push({ role: "assistant", content: result.text });
@@ -319,6 +345,60 @@ export const AIPanel = {
       this._abort = null;
       this._setBusy(false);
       this.input.focus();
+    }
+  },
+
+  /**
+   * Render an answer as Markdown, with its citations linked.
+   *
+   * @param {HTMLElement} container - Element to render into; emptied first.
+   * @param {string} raw - The answer so far, as Markdown.
+   * @param {object[]} sources - Cited threads, keyed by their index.
+   */
+  _renderAnswer(container, raw, sources) {
+    container.replaceChildren(renderMarkdown(raw, document));
+
+    if (!sources?.length) {
+      return;
+    }
+    const byIndex = new Map(sources.map(source => [source.index, source]));
+    linkifyCitations(
+      container,
+      document,
+      number => byIndex.get(number)?.uri,
+      number => {
+        const source = byIndex.get(number);
+        if (source?.uri) {
+          this._showMessage(source.uri, source.subject);
+        }
+      }
+    );
+  },
+
+  /**
+   * Show a cited message in the message pane.
+   *
+   * Not a new tab: the citation is being followed while reading an answer,
+   * and the point is to see what it refers to without losing the thread of
+   * the conversation. selectMessage switches folder and clears any quick
+   * filter in the way, and the message pane follows the selection.
+   *
+   * @param {string} uri
+   * @param {string} [subject] - For the error message, if it cannot be shown.
+   */
+  _showMessage(uri, subject) {
+    try {
+      const hdr = lazy.MailServices
+        .messageServiceFromURI(uri)
+        .messageURIToMsgHdr(uri);
+      if (typeof window.selectMessage == "function") {
+        window.selectMessage(hdr);
+        return;
+      }
+      // Not in the mail tab -- fall back to opening it outright.
+      this._openMessage(uri);
+    } catch (ex) {
+      console.warn(`Could not show the cited message${subject ? ` "${subject}"` : ""}:`, ex);
     }
   },
 
@@ -373,7 +453,9 @@ export const AIPanel = {
    *
    * @param {string} question
    * @param {HTMLElement} answerBody - Where to attach the sources list.
-   * @returns {Promise<{system: string, content: string}>} The prompt pieces.
+   * @returns {Promise<{system: string, content: string, sources: object[]}>}
+   *   The prompt pieces, plus the threads behind them so that citations
+   *   in the answer can be linked back to the mail they came from.
    */
   async _buildGroundedPrompt(question, answerBody) {
     const config = await lazy.AIConfig.read();
@@ -390,6 +472,7 @@ export const AIPanel = {
           "nothing matching was found and suggest better search terms. " +
           "Do not invent contents of their mail.",
         content: question,
+        sources: [],
       };
     }
 
@@ -403,6 +486,7 @@ export const AIPanel = {
     return {
       system: lazy.AIMailContext.systemPrompt(context.sources.length),
       content: lazy.AIMailContext.userPrompt(question, context.prompt),
+      sources: context.sources,
     };
   },
 
@@ -640,7 +724,7 @@ export const AIPanel = {
       if (source.uri) {
         link.addEventListener("click", event => {
           event.preventDefault();
-          this._openMessage(source.uri);
+          this._showMessage(source.uri, source.subject);
         });
       } else {
         link.setAttribute("aria-disabled", "true");

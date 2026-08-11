@@ -388,3 +388,128 @@
     animation: none;
   }
 }
+
+/* -- rendered answers --
+ *
+ * Answers arrive as Markdown and are rendered rather than shown raw, so the
+ * usual block elements need sizing for a narrow pane. Margins are tightened
+ * throughout: default spacing is set for a page, and this column is a few
+ * inches wide.
+ */
+
+.ai-answer {
+  /* The turn body sets pre-wrap for user text, which would double every
+   * gap once the answer is real markup. */
+  white-space: normal;
+}
+
+.ai-answer > :first-child {
+  margin-block-start: 0;
+}
+
+.ai-answer > :last-child {
+  margin-block-end: 0;
+}
+
+.ai-answer p {
+  margin-block: 0 0.7em;
+  line-height: 1.45;
+}
+
+.ai-answer :is(h3, h4, h5, h6) {
+  margin-block: 0.9em 0.35em;
+  font-size: 1em;
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+.ai-answer h3 {
+  font-size: 1.08em;
+}
+
+.ai-answer :is(ul, ol) {
+  margin-block: 0 0.7em;
+  padding-inline-start: 1.4em;
+}
+
+.ai-answer li {
+  margin-block-end: 0.25em;
+}
+
+/* Nested lists sit tight against their parent item. */
+.ai-answer li > :is(ul, ol) {
+  margin-block: 0.25em 0;
+}
+
+.ai-answer code {
+  font-family: monospace;
+  font-size: 0.9em;
+  padding: 0.1em 0.3em;
+  border-radius: 3px;
+  background-color: var(--layout-background-3);
+  overflow-wrap: anywhere;
+}
+
+.ai-answer pre {
+  margin-block: 0 0.7em;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background-color: var(--layout-background-3);
+  overflow-x: auto;
+}
+
+.ai-answer pre code {
+  padding: 0;
+  background: none;
+  overflow-wrap: normal;
+  white-space: pre;
+}
+
+.ai-answer blockquote {
+  margin-block: 0 0.7em;
+  margin-inline: 0;
+  padding-inline-start: 10px;
+  border-inline-start: 2px solid var(--splitter-color);
+  color: var(--layout-color-2);
+}
+
+.ai-answer hr {
+  margin-block: 0.9em;
+  border: none;
+  border-block-start: 1px solid var(--splitter-color);
+}
+
+.ai-answer a {
+  color: var(--selected-item-color);
+  overflow-wrap: anywhere;
+}
+
+/* -- citations --
+ *
+ * A citation is a reference the reader may want to follow, so it is marked
+ * as one: small, raised, and clearly clickable, without breaking up the
+ * line of the sentence it sits in.
+ */
+
+.ai-citation {
+  display: inline-block;
+  margin-inline: 1px;
+  padding-inline: 3px;
+  border-radius: 3px;
+  font-size: 0.8em;
+  font-weight: 600;
+  vertical-align: 1px;
+  text-decoration: none;
+  color: var(--selected-item-text-color);
+  background-color: var(--selected-item-color);
+}
+
+.ai-citation:hover {
+  filter: brightness(1.15);
+  text-decoration: none;
+}
+
+.ai-citation:focus-visible {
+  outline: 2px solid var(--focus-outline-color);
+  outline-offset: 1px;
+}
