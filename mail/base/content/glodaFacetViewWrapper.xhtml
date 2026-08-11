@@ -44,7 +44,13 @@
           "facetMessageBrowser"
         );
         if (preview && !preview.closest("#facetPreview")?.hidden) {
-          return preview;
+          // The preview is an about:message, which puts the message body in
+          // a browser of its own and arranges the header, buttons and
+          // attachment list around it. Zooming the whole thing scales that
+          // furniture along with the text. This is the browser the message
+          // pane's own zoom commands act on, so it behaves the same here.
+          const body = preview.contentWindow?.getMessagePaneBrowser?.();
+          return body || preview;
         }
         return outer;
       }
