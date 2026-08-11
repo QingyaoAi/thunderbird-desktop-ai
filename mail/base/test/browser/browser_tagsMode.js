@@ -20,6 +20,11 @@ const DEFAULT_TAGS = new Map([
   ["$label3", { label: "Personal", color: "#009900" }],
   ["$label4", { label: "To Do", color: "#3333FF" }],
   ["$label5", { label: "Later", color: "#993399" }],
+  // Shipped so that Apple Mail's coloured flags, which arrive over IMAP as
+  // these keywords, have somewhere to land.
+  ["$mailflagbit0", { label: "Orange flag", color: "#FF9500" }],
+  ["$mailflagbit1", { label: "Yellow flag", color: "#FFCC00" }],
+  ["$mailflagbit2", { label: "Blue flag", color: "#007AFF" }],
 ]);
 
 add_setup(async function () {
@@ -116,7 +121,7 @@ add_task(async function testFolderTree() {
   // Add two custom tags and check they are shown.
   MailServices.tags.addTagForKey("testkey", "testLabel", "#000000", "");
   await TestUtils.waitForCondition(
-    () => MailServices.tags.getAllTags().length == 6,
+    () => MailServices.tags.getAllTags().length == DEFAULT_TAGS.size + 1,
     "waiting for tag to be created"
   );
   expectedTags.set("testkey", { label: "testLabel", color: "#000000" });
@@ -124,7 +129,7 @@ add_task(async function testFolderTree() {
 
   MailServices.tags.addTagForKey("anotherkey!", "anotherLabel", "#333333", "");
   await TestUtils.waitForCondition(
-    () => MailServices.tags.getAllTags().length == 7,
+    () => MailServices.tags.getAllTags().length == DEFAULT_TAGS.size + 2,
     "waiting for tag to be created"
   );
   expectedTags.set("anotherkey!", { label: "anotherLabel", color: "#333333" });
@@ -133,7 +138,7 @@ add_task(async function testFolderTree() {
   // Delete the first custom tag and check it is removed.
   MailServices.tags.deleteKey("testkey");
   await TestUtils.waitForCondition(
-    () => MailServices.tags.getAllTags().length == 6,
+    () => MailServices.tags.getAllTags().length == DEFAULT_TAGS.size + 1,
     "waiting for tag to be removed"
   );
   expectedTags.delete("testkey");
@@ -147,7 +152,7 @@ add_task(async function testFolderTree() {
   // Delete the second custom tag.
   MailServices.tags.deleteKey("anotherkey!");
   await TestUtils.waitForCondition(
-    () => MailServices.tags.getAllTags().length == 5,
+    () => MailServices.tags.getAllTags().length == DEFAULT_TAGS.size,
     "waiting for tag to be removed"
   );
   expectedTags.delete("anotherkey!");

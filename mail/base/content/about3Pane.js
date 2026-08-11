@@ -1805,6 +1805,7 @@ var folderPane = {
     Services.obs.addObserver(this, "folder-properties-changed");
     Services.obs.addObserver(this, "folder-needs-repair");
     Services.obs.addObserver(this, "folder-strings-changed");
+    Services.obs.addObserver(this, "tag-message-counts-changed");
     Services.obs.addObserver(this, "server-connection-succeeded");
 
     folderTree.addEventListener("auxclick", this);
@@ -1880,6 +1881,7 @@ var folderPane = {
     Services.obs.removeObserver(this, "folder-properties-changed");
     Services.obs.removeObserver(this, "folder-needs-repair");
     Services.obs.removeObserver(this, "folder-strings-changed");
+    Services.obs.removeObserver(this, "tag-message-counts-changed");
     Services.obs.removeObserver(this, "server-connection-succeeded");
   },
 
@@ -1983,6 +1985,17 @@ var folderPane = {
           row.updateFolderNames();
         }
         break;
+      case "tag-message-counts-changed": {
+        // `data` names the one tag that changed, or is null when several
+        // did (or when a full recount finished).
+        const selector = data
+          ? `li[data-tag-key="${CSS.escape(data)}"]`
+          : "li[data-tag-key]";
+        for (const row of folderTree.querySelectorAll(selector)) {
+          row.updateTotalMessageCount();
+        }
+        break;
+      }
       case "server-connection-succeeded": {
         let server;
         try {
@@ -2432,8 +2445,13 @@ var folderPane = {
   _createTagRow(modeName, folder, tag) {
     const row = document.createElement("li", { is: "folder-tree-row" });
     row.modeName = modeName;
-    row.setFolder(folder);
+    // Set before setFolder, which decides whether to show the count badge
+    // and needs to know this is a tag row to get that right.
     row.dataset.tagKey = tag.key;
+    row.setFolder(folder);
+    // setFolder took the count from the virtual folder, which reads 0 until
+    // its search has been run. Replace it with the real number.
+    row.updateTotalMessageCount();
     row.icon.style.setProperty("--icon-color", tag.color);
     return row;
   },

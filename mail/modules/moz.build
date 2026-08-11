@@ -48,6 +48,7 @@ EXTRA_JS_MODULES += [
     "SmartMailboxUtils.sys.mjs",
     "StarTagSync.sys.mjs",
     "SummaryFrameManager.sys.mjs",
+    "TagMessageCounts.sys.mjs",
     "TagUtils.sys.mjs",
     "TaskbarProgress.sys.mjs",
     "TBDistCustomizer.sys.mjs",

@@ -42,6 +42,8 @@ ChromeUtils.defineESModuleGetters(lazy, {
   LightweightThemeConsumer:
     "resource://gre/modules/LightweightThemeConsumer.sys.mjs",
   MailMigrator: "resource:///modules/MailMigrator.sys.mjs",
+  StarTagSync: "resource:///modules/StarTagSync.sys.mjs",
+  TagMessageCounts: "resource:///modules/TagMessageCounts.sys.mjs",
   MailNotificationManager:
     "resource:///modules/MailNotificationManager.sys.mjs",
   MailServices: "resource:///modules/MailServices.sys.mjs",
@@ -67,7 +69,6 @@ ChromeUtils.defineLazyGetter(lazy, "windowsAlertsService", () => {
 
 if (AppConstants.MOZ_UPDATER) {
   ChromeUtils.defineESModuleGetters(lazy, {
-    StarTagSync: "resource:///modules/StarTagSync.sys.mjs",
     UpdateListener: "resource://gre/modules/UpdateListener.sys.mjs",
   });
   XPCOMUtils.defineLazyServiceGetters(lazy, {
@@ -953,6 +954,14 @@ MailGlue.prototype = {
         // the first run walks every folder to reconcile existing mail.
         task: () => {
           lazy.StarTagSync.start();
+        },
+      },
+      {
+        // Counts messages per tag for the folder pane. On idle because the
+        // first run walks every folder; after that it stays current from
+        // notifications.
+        task: () => {
+          lazy.TagMessageCounts.start();
         },
       },
       {

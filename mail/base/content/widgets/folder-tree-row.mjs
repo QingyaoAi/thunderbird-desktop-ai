@@ -9,6 +9,7 @@ ChromeUtils.defineESModuleGetters(lazy, {
   FolderTreeProperties: "resource:///modules/FolderTreeProperties.sys.mjs",
   FolderUtils: "resource:///modules/FolderUtils.sys.mjs",
   MailServices: "resource:///modules/MailServices.sys.mjs",
+  TagMessageCounts: "resource:///modules/TagMessageCounts.sys.mjs",
   XULStoreUtils: "resource:///modules/XULStoreUtils.sys.mjs",
 });
 
@@ -194,10 +195,12 @@ class FolderTreeRow extends HTMLLIElement {
     this.classList.toggle("total", value > 0);
     this.#updateTextNode(this.totalCountLabel, value);
 
-    this.totalCountLabel.hidden = !lazy.XULStoreUtils.isItemVisible(
-      "messenger",
-      "totalMsgCount"
-    );
+    // A tag row exists to answer "how many are tagged this way", so its
+    // count is the point of the row rather than extra detail, and it shows
+    // whether or not total counts are switched on for ordinary folders.
+    this.totalCountLabel.hidden =
+      !this.dataset.tagKey &&
+      !lazy.XULStoreUtils.isItemVisible("messenger", "totalMsgCount");
     this.#scheduleAriaLabelUpdate();
   }
 
@@ -371,6 +374,13 @@ class FolderTreeRow extends HTMLLIElement {
   }
 
   updateTotalMessageCount() {
+    if (this.dataset.tagKey) {
+      // Tag rows are virtual folders, which only know their size once their
+      // search has been run -- i.e. once opened. Counting the keyword is
+      // what makes the number right before that first click.
+      this.totalCount = lazy.TagMessageCounts.get(this.dataset.tagKey);
+      return;
+    }
     const folder = lazy.MailServices.folderLookup.getFolderForURL(this.uri);
     this.totalCount = folder.getTotalMessages(
       this.classList.contains("collapsed")
