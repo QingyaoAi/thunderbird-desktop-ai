@@ -46,6 +46,59 @@
         }
       });
 
+      // Zoom here scales text only, and steps through fixed levels.
+      //
+      // Full zoom scales the layout as well as the type, and the preview is
+      // narrow: an HTML message built on a fixed-width table becomes wider
+      // than the pane, and its text is pushed out of sight rather than made
+      // bigger -- which looks like the message vanishing, and in the dark
+      // theme leaves nothing but empty background. Text zoom leaves widths
+      // alone, so the message stays where it is and only the type grows,
+      // which is the actual intent of enlarging a message.
+      const MESSAGE_ZOOM_STEPS = [
+        0.5, 0.67, 0.8, 0.9, 1, 1.1, 1.2, 1.33, 1.5, 1.7, 2, 2.4, 3,
+      ];
+
+      function messageZoomStep(direction) {
+        const browser = getBrowser();
+        if (!browser) {
+          return;
+        }
+        // Any full zoom left on this browser -- by an earlier build, or by
+        // the message pane elsewhere -- would keep the layout inflated
+        // underneath the text zoom, so clear it.
+        if (browser.fullZoom !== 1) {
+          browser.fullZoom = 1;
+        }
+        const current = browser.textZoom || 1;
+        let index = MESSAGE_ZOOM_STEPS.findIndex(
+          step => Math.abs(step - current) < 0.01
+        );
+        if (index == -1) {
+          // Landed between steps: start from the nearest one.
+          index = MESSAGE_ZOOM_STEPS.reduce(
+            (best, step, i) =>
+              Math.abs(step - current) < Math.abs(MESSAGE_ZOOM_STEPS[best] - current)
+                ? i
+                : best,
+            0
+          );
+        }
+        const next = Math.min(
+          Math.max(index + direction, 0),
+          MESSAGE_ZOOM_STEPS.length - 1
+        );
+        browser.textZoom = MESSAGE_ZOOM_STEPS[next];
+      }
+
+      function messageZoomReset() {
+        const browser = getBrowser();
+        if (browser) {
+          browser.textZoom = 1;
+          browser.fullZoom = 1;
+        }
+      }
+
       function getBrowser() {
         const outer = document.getElementById("browser");
         // Every zoom command comes through here, so this is also where a
@@ -86,9 +139,9 @@
     xmlns="http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul"
   >
     <commandset id="selectEditMenuItems">
-      <command id="cmd_fullZoomReduce" oncommand="ZoomManager.reduce()" />
-      <command id="cmd_fullZoomEnlarge" oncommand="ZoomManager.enlarge()" />
-      <command id="cmd_fullZoomReset" oncommand="ZoomManager.reset()" />
+      <command id="cmd_fullZoomReduce" oncommand="messageZoomStep(-1)" />
+      <command id="cmd_fullZoomEnlarge" oncommand="messageZoomStep(1)" />
+      <command id="cmd_fullZoomReset" oncommand="messageZoomReset()" />
     </commandset>
     <keyset>
       <!--move to locale-->
