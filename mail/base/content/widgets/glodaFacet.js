@@ -1462,6 +1462,18 @@
         FacetContext.showMessageInPreview(this);
       });
 
+      // Double click opens the message in its own window, so a result can
+      // be kept open while the search stays put.
+      this.addEventListener("dblclick", event => {
+        if (
+          event.button != 0 ||
+          event.target.closest("a, button, .message-star, .message-tag")
+        ) {
+          return;
+        }
+        FacetContext.showMessageInWindow(this);
+      });
+
       const messageHeader = document.createElement("div");
 
       const messageLine = document.createElement("div");

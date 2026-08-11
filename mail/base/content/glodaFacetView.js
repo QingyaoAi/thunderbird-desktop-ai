@@ -18,6 +18,9 @@ var { MailServices } = ChromeUtils.importESModule(
 var { TagUtils } = ChromeUtils.importESModule(
   "resource:///modules/TagUtils.sys.mjs"
 );
+var { MailUtils } = ChromeUtils.importESModule(
+  "resource:///modules/MailUtils.sys.mjs"
+);
 var { Gloda } = ChromeUtils.importESModule(
   "resource:///modules/gloda/GlodaPublic.sys.mjs"
 );
@@ -1070,6 +1073,26 @@ var FacetContext = {
         { once: true, capture: true }
       );
     }
+  },
+
+  /**
+   * Open a result in its own message window.
+   *
+   * Bound to double click, which otherwise did nothing beyond previewing
+   * the result twice: the preview is for reading in passing, a window is
+   * for keeping a message open while carrying on with the search.
+   *
+   * @param {MozFacetResultMessage} aResultMessage
+   */
+  showMessageInWindow(aResultMessage) {
+    const msgHdr = aResultMessage.message?.folderMessage;
+    if (!msgHdr) {
+      // Chat logs and other non-mail results have no message header of
+      // their own; those still open in a tab.
+      this.showConversationInTab(aResultMessage, false);
+      return;
+    }
+    MailUtils.openMessageInNewWindow(msgHdr);
   },
 
   showConversationInTab(aResultMessage, aBackground) {

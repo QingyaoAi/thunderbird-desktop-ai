@@ -33,7 +33,20 @@
     <script>
       // <![CDATA[
       function getBrowser() {
-        return document.getElementById("browser");
+        const outer = document.getElementById("browser");
+        // Zoom acts on whatever this returns. Once the preview is open the
+        // thing being read is the message inside it, not the facets and
+        // timeline around it, so zooming the whole page scales the search
+        // furniture along with the text the reader is actually trying to
+        // enlarge. The preview is its own browser, so it can be zoomed on
+        // its own.
+        const preview = outer?.contentDocument?.getElementById(
+          "facetMessageBrowser"
+        );
+        if (preview && !preview.closest("#facetPreview")?.hidden) {
+          return preview;
+        }
+        return outer;
       }
       // ]]>
     </script>
