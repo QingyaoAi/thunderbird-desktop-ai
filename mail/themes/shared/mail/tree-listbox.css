@@ -760,9 +760,17 @@ th.column-dragging {
 
   /* The hairline sits on the row, not the card, so it spans the full width
    * the way a list separator should. Inset rather than a border to avoid
-   * adding to the row's height. */
+   * adding to the row's height.
+   *
+   * Fixed colours rather than a mix of currentColor: text colour varies from
+   * row to row -- unread is brighter than read -- which made the separator
+   * vary with it. The dark value is the higher of the two because a light
+   * line on a dark background reads fainter than the reverse at equal alpha.
+   */
+  --thread-row-separator: light-dark(rgba(0, 0, 0, 0.12), rgba(255, 255, 255, 0.20));
+
   & .card-layout:not(:last-of-type) > td {
-    box-shadow: inset 0 -1px 0 color-mix(in srgb, currentColor 10%, transparent);
+    box-shadow: inset 0 -1px 0 var(--thread-row-separator);
   }
 
   /* A selected row is a single filled shape, so the separator under it would
