@@ -709,3 +709,52 @@ conversation-view {
   > .account-indicator {
   display: inline-flex;
 }
+
+/* ---------------------------------------------------------------------------
+ * Quieter folder counts.
+ *
+ * The stock counts are filled pills, which give a number the same visual
+ * weight as the folder name beside it -- in a pane with a count on nearly
+ * every row, that reads as noise. Mail.app sets counts as plain figures in
+ * the margin, present when wanted and ignorable otherwise. Only the colours
+ * change here: the badge keeps its box so nothing shifts.
+ * ------------------------------------------------------------------------ */
+
+#folderTree {
+  --folderpane-count-quiet: color-mix(in srgb, currentColor 55%, transparent);
+
+  & .folder-count-badge {
+    font-weight: normal;
+    /* Pills need a minimum width to stay round; bare numbers do not, and
+     * without this a single digit sits oddly far from the folder name. */
+    min-inline-size: 0;
+    padding-inline: 2px;
+    margin-inline-end: 4px;
+    background-color: transparent;
+    color: var(--folderpane-count-quiet);
+  }
+
+  /* Unread is the one count worth noticing, so it keeps full contrast and
+   * weight while losing the pill. */
+  & .unread > .container > .unread-count {
+    background-color: transparent;
+    color: inherit;
+    font-weight: 600;
+  }
+
+  /* A collapsed folder whose unread mail is in its children is drawn as an
+   * outlined pill upstream. With no fill to outline it becomes a stray ring,
+   * so it is drawn like any other unread count instead. */
+  & .unread.children.collapsed:has(ul > .unread) > .container > .unread-count,
+  & .new-messages.unread.children.collapsed:has(ul > .new-messages) > .container > .unread-count {
+    border: none;
+    padding-block: 0;
+    background-color: transparent;
+    color: inherit;
+  }
+
+  & .new-messages > .container > .unread-count {
+    background-color: transparent;
+    color: var(--folderpane-unread-new-count-background);
+  }
+}

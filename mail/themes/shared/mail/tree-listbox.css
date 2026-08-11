@@ -730,3 +730,44 @@ th.column-dragging {
   opacity: 0.7;
   z-index: 2;
 }
+
+/* ---------------------------------------------------------------------------
+ * Message rows without the box.
+ *
+ * Each row is drawn as a bordered, filled card, so a full list reads as a
+ * stack of boxes and the eye has to cross a border to get to every message.
+ * Mail.app separates rows with a hairline and lets the text do the work.
+ * The border is kept at 1px and merely made transparent, so nothing reflows
+ * and selection can bring it back.
+ * ------------------------------------------------------------------------ */
+
+#threadTree[rows="thread-card"] {
+  /* Room to breathe, which is most of what makes Mail.app's list readable. */
+  --card-container-padding-block: 5px;
+
+  & .card-layout > td {
+    padding-inline: 6px;
+  }
+
+  & .card-layout > td > .card-container {
+    border-color: transparent;
+    border-radius: 6px;
+  }
+
+  & .card-layout:not(.selected, :hover) > td > .card-container {
+    background-color: transparent;
+  }
+
+  /* The hairline sits on the row, not the card, so it spans the full width
+   * the way a list separator should. Inset rather than a border to avoid
+   * adding to the row's height. */
+  & .card-layout:not(:last-of-type) > td {
+    box-shadow: inset 0 -1px 0 color-mix(in srgb, currentColor 10%, transparent);
+  }
+
+  /* A selected row is a single filled shape, so the separator under it would
+   * cut across the fill. */
+  & .card-layout.selected > td {
+    box-shadow: none;
+  }
+}
