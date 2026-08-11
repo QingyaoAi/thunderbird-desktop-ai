@@ -886,6 +886,10 @@ menu-view-ai-panel =
     .label = AI Assistant
     .accesskey = A
 
+ai-pane-status-button =
+    .label = AI Assistant
+    .tooltiptext = Show or hide the AI pane
+
 ai-panel-title = AI Assistant
 
 ai-panel-close-button = Close

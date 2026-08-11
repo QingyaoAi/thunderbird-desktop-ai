@@ -921,6 +921,14 @@ export const AIPanelUI = {
       String(visible)
     );
 
+    // The status bar button in the containing window mirrors this state, and
+    // the pane can be closed from its own header without going near it.
+    Services.obs.notifyObservers(
+      null,
+      "ai-pane-visibility-changed",
+      String(visible)
+    );
+
     if (visible) {
       await AIPanel.init();
       AIPanel.input?.focus();
@@ -944,6 +952,15 @@ export const AIPanelUI = {
     const visible = stored === "" ? true : stored == "true";
     if (visible) {
       await this.toggle(true);
+      return;
     }
+    // Staying closed is not a change, so nothing would be announced -- but
+    // the window's status button binds before this document exists and has
+    // no other way to learn that there is now a pane for it to act on.
+    Services.obs.notifyObservers(
+      null,
+      "ai-pane-visibility-changed",
+      String(visible)
+    );
   },
 };

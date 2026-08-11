@@ -146,6 +146,7 @@
   <script defer="defer" src="chrome://messenger/content/glodaFacetTab.js"></script>
   <script defer="defer" src="chrome://messenger/content/glodaListTab.js"></script>
   <script defer="defer" src="chrome://messenger/content/searchBar.js"></script>
+  <script defer="defer" src="chrome://messenger/content/ai-pane-status.js"></script>
   <script defer="defer" src="chrome://messenger/content/mail3PaneWindowCommands.js"></script>
   <script defer="defer" src="chrome://global/content/contentAreaUtils.js"></script>
   <script defer="defer" src="chrome://messenger/content/browserPopups.js"></script>
@@ -684,6 +685,12 @@
                onclick="openInvitationsDialog()"
                onkeypress="if (event.key == 'Enter') { openInvitationsDialog(); }"/>
       </hbox>
+    </hbox>
+    <hbox id="ai-pane-status-panel" class="statusbarpanel" pack="center">
+      <toolbarbutton id="ai-pane-status-button"
+                     type="checkbox"
+                     data-l10n-id="ai-pane-status-button"
+                     oncommand="AIPaneStatus.toggle();"/>
     </hbox>
 #include ../../../calendar/base/content/calendar-status-bar.inc.xhtml
   </hbox>
