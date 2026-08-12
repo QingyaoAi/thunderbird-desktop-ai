@@ -395,8 +395,11 @@ const Methods = {
       for (const folder of server.rootFolder.descendants) {
         folders.push({
           uri: folder.URI,
-          name: folder.prettyName,
-          account: server.prettyName,
+          // Coerced, because an undefined value is dropped from the JSON
+          // altogether rather than sent as null -- so a folder with no
+          // pretty name arrived with no name field at all.
+          name: String(folder.prettyName ?? folder.name ?? ""),
+          account: String(server.prettyName ?? ""),
           messages: folder.getTotalMessages(false),
           unread: folder.getNumUnread(false),
         });
@@ -465,6 +468,35 @@ const Methods = {
     await IOUtils.write(file.path, new TextEncoder().encode(source));
 
     await new Promise((resolve, reject) => {
+      let settled = false;
+      const finish = (fn, value) => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        try {
+          file.remove(false);
+        } catch (ex) {
+          // Already gone, or never written.
+        }
+        fn(value);
+      };
+
+      // Saving to an IMAP folder is a round trip to the server, which can
+      // hang for as long as the connection does. Better to say so than to
+      // leave the caller waiting on a socket that will never answer.
+      const deadline = lazy.setTimeout(
+        () =>
+          finish(
+            reject,
+            new Error(
+              "the draft was not confirmed saved within 45 seconds; the " +
+                "server may still be working on it"
+            )
+          ),
+        45000
+      );
+
       lazy.MailServices.copy.copyFileMessage(
         file,
         draftsFolder,
@@ -473,16 +505,25 @@ const Methods = {
         0,
         "",
         {
-          OnStartCopy() {},
-          OnProgress() {},
-          SetMessageKey() {},
-          GetMessageId() {},
-          OnStopCopy(status) {
-            file.remove(false);
+          // Without this XPConnect cannot hand the callbacks back to us, so
+          // OnStopCopy never arrives and the request hangs until it is timed
+          // out at the far end.
+          QueryInterface: ChromeUtils.generateQI(["nsIMsgCopyServiceListener"]),
+          onStartCopy() {},
+          onProgress() {},
+          setMessageKey() {},
+          getMessageId() {
+            return "";
+          },
+          onStopCopy(status) {
+            lazy.clearTimeout(deadline);
             if (Components.isSuccessCode(status)) {
-              resolve();
+              finish(resolve);
             } else {
-              reject(new Error(`could not save the draft (${status})`));
+              finish(
+                reject,
+                new Error(`could not save the draft (status ${status})`)
+              );
             }
           },
         },
