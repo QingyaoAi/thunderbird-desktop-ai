@@ -232,12 +232,14 @@ a {
 #messageList > li {
   cursor: pointer;
   border-radius: 6px;
-  transition: background-color 120ms ease, box-shadow 120ms ease;
+  transition: background-color 120ms ease;
 }
 
+/* Fill only, no outline. The unread dot is deliberately placed outside the
+ * row's box (inset-inline-start: -6px), so a border drawn on that edge runs
+ * straight through it. The fill stays inside the box and clears the dot. */
 #messageList > li:hover {
-  background-color: color-mix(in srgb, var(--selected-item-color, AccentColor) 10%, transparent);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--selected-item-color, AccentColor) 70%, transparent);
+  background-color: color-mix(in srgb, var(--selected-item-color, AccentColor) 14%, transparent);
 }
 
 @media (prefers-reduced-motion: reduce) {
