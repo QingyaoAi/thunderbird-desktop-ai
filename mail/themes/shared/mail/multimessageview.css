@@ -220,15 +220,6 @@ a {
   user-select: none;
 }
 
-/* The whole row opens the message (see multimessageview.js), so it should
- * behave like a row in the message list: pointer across all of it, and the
- * same hover treatment, so it reads as one target rather than as text that
- * happens to respond in places.
- *
- * The accent fill and border are written out with the same formula the thread
- * pane uses rather than borrowed through its variables, which are defined for
- * the tree widget and not for this document.
- */
 /* The whole row opens the message (see multimessageview.js), and it takes
  * the highlight the message list uses so it reads as one target.
  *
@@ -236,33 +227,36 @@ a {
  * link, and the rest of the message pane does not switch to a hand either.
  */
 #messageList > li {
-  transition: background-color 120ms ease, box-shadow 120ms ease;
+  /* Makes the row a stacking context, so the highlight below can sit behind
+   * the row's own content without falling behind the pane's background --
+   * which is what happens to a negative z-index child otherwise. */
+  isolation: isolate;
 }
 
-/* Painted with a spread shadow as well as a background, so the highlight
- * reaches past the row's own edges. The unread dot hangs outside the row
- * (inset-inline-start: -6px), and a fill drawn only to the edge either cuts
- * through the dot or has to stop short of it; extending outward instead puts
- * the dot inside the highlight, where it belongs. */
-#messageList > li:hover {
+/* The highlight is its own layer so its edges are set independently of the
+ * row's box: wider, so the unread dot hanging off the inline start sits
+ * inside it, and stopping short of the bottom so the divider between rows
+ * stays visible rather than being covered or crossed. */
+#messageList > li::after {
+  content: "";
+  position: absolute;
+  inset: 0 -8px 9px -8px;
+  z-index: -1;
   border-radius: 4px;
+  background-color: transparent;
+  transition: background-color 120ms ease;
+  pointer-events: none;
+}
+
+#messageList > li:hover::after {
   background-color: color-mix(in srgb, var(--selected-item-color, AccentColor) 14%, transparent);
-  /* Two copies of the row's own box, shifted left and right rather than a
-   * spread, which would grow the highlight in every direction -- vertically
-   * that swallowed the divider below the row. This widens it only, far
-   * enough that the unread dot hanging off the inline start sits inside. */
-  box-shadow:
-    -8px 0 0 0 color-mix(in srgb, var(--selected-item-color, AccentColor) 14%, transparent),
-    8px 0 0 0 color-mix(in srgb, var(--selected-item-color, AccentColor) 14%, transparent);
-  /* The divider is drawn on the row's own bottom edge, so while the row is
-   * highlighted it would run through it. */
-  border-block-end-color: transparent;
 }
 
 @media (prefers-reduced-motion: reduce) {
-  #messageList > li {
+  #messageList > li::after {
     transition: none;
   }
+}
 }
 }
 }
