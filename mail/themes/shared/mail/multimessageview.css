@@ -231,33 +231,25 @@ a {
  */
 #messageList > li {
   cursor: pointer;
-}
-
-/* The highlight is painted as its own layer rather than as the row's
- * background, so it can start clear of the unread dot.
- *
- * The dot hangs outside the row's box (inset-inline-start: -6px) and reaches
- * roughly 10px into it, so anything drawn to the row's own edge -- an
- * outline or a background -- runs through it. This layer begins after the
- * dot and is inset a little at the block edges too, which keeps it from
- * touching the divider below the row. */
-#messageList > li::after {
-  content: "";
-  position: absolute;
-  inset: -2px 0 5px 12px;
-  z-index: -1;
-  border-radius: 6px;
-  background-color: transparent;
   transition: background-color 120ms ease;
-  pointer-events: none;
 }
 
-#messageList > li:hover::after {
+/* The highlight is clipped to the content box rather than drawn to the row's
+ * edges. The unread dot hangs outside the row (inset-inline-start: -6px) and
+ * reaches about ten pixels into it, so a fill drawn to the edge runs through
+ * it; the row's inline-start padding is 12px, so clipping to the content box
+ * starts the fill just past the dot. Clipping rather than a separate layer
+ * because a negative z-index pseudo-element paints behind the pane's own
+ * background and is never seen. */
+#messageList > li:hover {
   background-color: color-mix(in srgb, var(--selected-item-color, AccentColor) 14%, transparent);
+  background-clip: content-box;
+  border-radius: 6px;
 }
 
 @media (prefers-reduced-motion: reduce) {
-  #messageList > li::after {
+  #messageList > li {
     transition: none;
   }
+}
 }
