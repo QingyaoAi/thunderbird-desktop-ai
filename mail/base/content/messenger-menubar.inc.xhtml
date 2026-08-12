@@ -1179,6 +1179,10 @@
               command="cmd_joinChat"/>
 
     <menuseparator id="devToolsSeparator"/>
+    <menuitem id="mailMcpAccess"
+              label="Mail Access for AI…"
+              accesskey="M"
+              oncommand="ChromeUtils.importESModule('resource:///modules/MailMcpServer.sys.mjs').MailMcpUI.manage(window);"/>
     <menuitem id="filtersCmd" label="&filtersCmd2.label;"
               accesskey="&filtersCmd2.accesskey;"
               oncommand="MsgFilters();"/>

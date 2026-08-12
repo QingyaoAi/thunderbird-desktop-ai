@@ -979,3 +979,152 @@ async function handleConnection(transport) {
     }
   }
 }
+
+/**
+ * The Tools menu entry for managing access.
+ *
+ * Deliberately built out of the stock prompts rather than a dialog of its
+ * own: the whole job is four questions, and a token that can be read back
+ * out of a text field is a token that can be copied, which is the one thing
+ * this has to get right.
+ *
+ * Strings are written here rather than in a .ftl file. This is a fork's own
+ * feature and is not translated; putting them in the localisation files
+ * would imply otherwise.
+ */
+export const MailMcpUI = {
+  /**
+   * @param {Window} win - The window to parent the prompts to.
+   */
+  async manage(win) {
+    const title = "Mail access for AI";
+    const enabled = Services.prefs.getBoolPref(ENABLED_PREF, false);
+    const tokens = await MailMcpTokens.list();
+    const port = MailMcpServer.port;
+
+    const status =
+      (enabled
+        ? `Access is ON, listening on 127.0.0.1:${port > 0 ? port : "?"}.`
+        : "Access is OFF. Nothing is listening.") +
+      `\n${tokens.length} password${tokens.length == 1 ? "" : "s"} stored.` +
+      "\n\nAn AI tool needs one of these passwords to read your mail and " +
+      "write drafts. It can never send, move or delete anything.";
+
+    const actions = [
+      enabled ? "Turn access OFF" : "Turn access ON",
+      "Create a new password",
+      "Show stored passwords",
+      "Delete a password",
+      "Delete all passwords",
+    ];
+
+    const chosen = { value: 0 };
+    if (!Services.prompt.select(win, title, status, actions, chosen)) {
+      return;
+    }
+
+    switch (chosen.value) {
+      case 0: {
+        Services.prefs.setBoolPref(ENABLED_PREF, !enabled);
+        MailMcpServer.refresh();
+        const nowOn = Services.prefs.getBoolPref(ENABLED_PREF, false);
+        Services.prompt.alert(
+          win,
+          title,
+          nowOn
+            ? `Access is on, listening on 127.0.0.1:${MailMcpServer.port}. ` +
+                "Only programs on this computer can reach it, and only with " +
+                "a password."
+            : "Access is off. Nothing is listening."
+        );
+        break;
+      }
+
+      case 1: {
+        const label = { value: "" };
+        if (
+          !Services.prompt.prompt(
+            win,
+            title,
+            "What is this password for? (e.g. Claude Desktop)",
+            label,
+            null,
+            {}
+          )
+        ) {
+          return;
+        }
+        const { token } = await MailMcpTokens.create(label.value.trim());
+        try {
+          Cc["@mozilla.org/widget/clipboardhelper;1"]
+            .getService(Ci.nsIClipboardHelper)
+            .copyString(token);
+        } catch (ex) {
+          // Not fatal: it is still on screen to copy by hand.
+        }
+        // Shown in an editable field so it can be selected and copied. This
+        // is the only time it can be read; afterwards only its label is kept.
+        Services.prompt.prompt(
+          win,
+          title,
+          "Here is the password. It has been copied to the clipboard, and " +
+            "cannot be shown again.",
+          { value: token },
+          null,
+          {}
+        );
+        break;
+      }
+
+      case 2: {
+        const text = tokens.length
+          ? tokens
+              .map(t => `${t.label} -- created ${t.created.slice(0, 16).replace("T", " ")}`)
+              .join("\n")
+          : "No passwords stored.";
+        Services.prompt.alert(win, title, text);
+        break;
+      }
+
+      case 3: {
+        if (!tokens.length) {
+          Services.prompt.alert(win, title, "No passwords stored.");
+          return;
+        }
+        const which = { value: 0 };
+        const names = tokens.map(
+          t => `${t.label} (${t.created.slice(0, 10)})`
+        );
+        if (
+          !Services.prompt.select(
+            win,
+            title,
+            "Which password should stop working?",
+            names,
+            which
+          )
+        ) {
+          return;
+        }
+        await MailMcpTokens.revoke(tokens[which.value].id);
+        Services.prompt.alert(win, title, "That password no longer works.");
+        break;
+      }
+
+      case 4: {
+        if (
+          Services.prompt.confirm(
+            win,
+            title,
+            `Delete all ${tokens.length} passwords? Anything using them will ` +
+              "stop working."
+          )
+        ) {
+          await MailMcpTokens.revokeAll();
+          Services.prompt.alert(win, title, "All passwords deleted.");
+        }
+        break;
+      }
+    }
+  },
+};
