@@ -220,8 +220,28 @@ a {
   user-select: none;
 }
 
-/* The whole row opens the message (see multimessageview.js), so the pointer
- * should say so across all of it rather than only over the sender. */
+/* The whole row opens the message (see multimessageview.js), so it should
+ * behave like a row in the message list: pointer across all of it, and the
+ * same hover treatment, so it reads as one target rather than as text that
+ * happens to respond in places.
+ *
+ * The accent fill and border are written out with the same formula the thread
+ * pane uses rather than borrowed through its variables, which are defined for
+ * the tree widget and not for this document.
+ */
 #messageList > li {
   cursor: pointer;
+  border-radius: 6px;
+  transition: background-color 120ms ease, box-shadow 120ms ease;
+}
+
+#messageList > li:hover {
+  background-color: color-mix(in srgb, var(--selected-item-color, AccentColor) 10%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--selected-item-color, AccentColor) 70%, transparent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #messageList > li {
+    transition: none;
+  }
 }
