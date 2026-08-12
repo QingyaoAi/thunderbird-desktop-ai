@@ -173,3 +173,22 @@
 .attachmentcell-size {
   opacity: 0.6;
 }
+
+/* Attachments above the message, not after it.
+ *
+ * The list sat last in the message pane, after a body of any length, so on
+ * anything longer than a screen the attachments were below the fold and the
+ * only hint of them was a thin collapsed bar. Ordering it before the body
+ * puts the files where the header information is -- the part of a message
+ * that is read first -- without moving it into the body, where it would be
+ * subject to the message's own styling.
+ */
+#messagepanebox > #attachmentView {
+  /* Both spellings: the message pane is a XUL box, which Gecko lays out as
+   * flex but which also still honours its own ordinal property. Setting one
+   * without the other risks the reorder silently not applying. */
+  order: -1;
+  -moz-box-ordinal-group: 0;
+  border-block-start: none;
+  border-block-end: 1px solid var(--splitter-color);
+}

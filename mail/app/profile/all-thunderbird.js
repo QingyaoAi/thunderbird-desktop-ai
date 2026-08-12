@@ -395,7 +395,10 @@ pref("mail.ui-rdf.version", 0);
 /////////////////////////////////////////////////////////////////
 // Overrides of the core mailnews.js and composer.js prefs
 /////////////////////////////////////////////////////////////////
-pref("mailnews.attachments.display.start_expanded", false);
+// Attachments start expanded, and sit above the message body rather than
+// below it (see attachmentList.css). Collapsed and below the fold, they were
+// easy to miss entirely on a long message.
+pref("mailnews.attachments.display.start_expanded", true);
 // hidden pref for changing how we present attachments in the message pane
 pref("mail.pane_config.dynamic", 2);
 pref("editor.singleLine.pasteNewlines", 4);  // substitute commas for new lines in single line text boxes
