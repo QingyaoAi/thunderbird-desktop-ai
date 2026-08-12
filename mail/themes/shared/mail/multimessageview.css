@@ -235,12 +235,13 @@ a {
 
 /* The highlight is its own layer so its edges are set independently of the
  * row's box: wider, so the unread dot hanging off the inline start sits
- * inside it, and stopping short of the bottom so the divider between rows
- * stays visible rather than being covered or crossed. */
+ * inside it, and stopping 4px short of the bottom so the divider between
+ * rows stays clear of it -- enough to read as a separate line, without
+ * making the highlight look cramped against the text. */
 #messageList > li::after {
   content: "";
   position: absolute;
-  inset: 0 -8px 9px -8px;
+  inset: -2px -8px 4px -8px;
   z-index: -1;
   border-radius: 4px;
   background-color: transparent;
