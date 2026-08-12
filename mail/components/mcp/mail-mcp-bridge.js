@@ -158,6 +158,15 @@ const TOOLS = [
         unread: { type: "boolean" },
         flagged: { type: "boolean" },
         hasAttachment: { type: "boolean" },
+        headers: {
+          type: "object",
+          description:
+            "Match keywords against any named header, e.g. " +
+            '{"list-id": "ntcir"}. Headers the database already holds are ' +
+            "free; others cost one message read each, so this is applied " +
+            "after the other filters and is bounded.",
+          additionalProperties: { type: "string" },
+        },
         limit: { type: "number", description: "Default 25, maximum 200" },
       },
     },

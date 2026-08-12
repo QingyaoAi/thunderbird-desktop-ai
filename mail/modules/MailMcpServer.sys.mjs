@@ -330,16 +330,16 @@ const Methods = {
       );
     }
 
-    const messages = [];
-    for (const { hdr, snippet } of candidates) {
-      if (!filters.matches(hdr)) {
-        continue;
-      }
-      messages.push({ ...headerToJson(hdr), snippet });
-      if (messages.length >= limit) {
-        break;
-      }
-    }
+    const cheaplyMatched = candidates.filter(({ hdr }) => filters.matches(hdr));
+    const surviving = await filterByHeaders(
+      cheaplyMatched,
+      filters.headers,
+      limit
+    );
+
+    const messages = surviving
+      .slice(0, limit)
+      .map(({ hdr, snippet }) => ({ ...headerToJson(hdr), snippet }));
     return { query, filters: filters.describe, count: messages.length, messages };
   },
 
@@ -506,6 +506,102 @@ const Methods = {
 };
 
 /**
+ * Header fields that are already on nsIMsgDBHdr, so they can be tested
+ * without fetching the message. Anything not here falls back to reading the
+ * message's own headers, which costs a fetch per message.
+ */
+const HEADER_SHORTCUTS = {
+  subject: hdr => hdr.mime2DecodedSubject,
+  from: hdr => hdr.mime2DecodedAuthor,
+  sender: hdr => hdr.mime2DecodedAuthor,
+  to: hdr => hdr.mime2DecodedRecipients,
+  cc: hdr => hdr.ccList,
+  bcc: hdr => hdr.bccList,
+  "message-id": hdr => hdr.messageId,
+  references: hdr => hdr.getStringProperty("references"),
+  keywords: hdr => hdr.getStringProperty("keywords"),
+};
+
+/**
+ * The named header of a message, from the message itself.
+ *
+ * @param {nsIMsgDBHdr} hdr
+ * @param {string} name - Lowercase header name.
+ * @returns {Promise<string>} Empty if the message has no such header.
+ */
+function headerFromMessage(hdr, name) {
+  return new Promise(resolve => {
+    const timer = lazy.setTimeout(() => resolve(""), 10000);
+    try {
+      lazy.MsgHdrToMimeMessage(
+        hdr,
+        null,
+        (returnedHdr, mimeMsg) => {
+          lazy.clearTimeout(timer);
+          const value = mimeMsg?.headers?.[name];
+          resolve(Array.isArray(value) ? value.join(" ") : String(value ?? ""));
+        },
+        true,
+        { partsOnDemand: true, examineEncryptedParts: false }
+      );
+    } catch (ex) {
+      resolve("");
+    }
+  });
+}
+
+/**
+ * Apply the `headers` filter, which matches keywords against any named
+ * header. Runs after the cheap filters and only on what survived them,
+ * because a header not already in the database costs one message fetch to
+ * read -- so this is bounded rather than allowed to walk a whole mailbox.
+ *
+ * @param {Array<{hdr: nsIMsgDBHdr, snippet: string}>} candidates
+ * @param {object} wanted - Header name to keyword.
+ * @param {number} limit - How many results are actually needed.
+ * @returns {Promise<Array>}
+ */
+async function filterByHeaders(candidates, wanted, limit) {
+  const names = Object.keys(wanted);
+  if (!names.length) {
+    return candidates;
+  }
+  const MAX_FETCHES = 300;
+  let fetches = 0;
+  const kept = [];
+
+  for (const candidate of candidates) {
+    let matched = true;
+    for (const name of names) {
+      const needle = String(wanted[name]).toLowerCase();
+      const shortcut = HEADER_SHORTCUTS[name];
+      let value = shortcut ? shortcut(candidate.hdr) ?? "" : null;
+      if (value === null) {
+        if (fetches >= MAX_FETCHES) {
+          // Out of budget: stop rather than quietly returning results that
+          // were never tested against the filter.
+          matched = false;
+          break;
+        }
+        fetches++;
+        value = await headerFromMessage(candidate.hdr, name);
+      }
+      if (!String(value).toLowerCase().includes(needle)) {
+        matched = false;
+        break;
+      }
+    }
+    if (matched) {
+      kept.push(candidate);
+      if (kept.length >= limit) {
+        break;
+      }
+    }
+  }
+  return kept;
+}
+
+/**
  * Turn the filter parameters into something that can test a header.
  *
  * Substring, case-insensitive, on the decoded fields -- so "liu" finds
@@ -564,8 +660,17 @@ function buildFilters(params) {
     }
   }
 
+  // Any header, by name, matched on a keyword: {"list-id": "ntcir"}.
+  const headers = {};
+  for (const [name, value] of Object.entries(params?.headers ?? {})) {
+    if (value !== null && value !== undefined && String(value).trim()) {
+      headers[String(name).toLowerCase()] = String(value);
+    }
+  }
+
   const any = Boolean(
     from || to || subject || tag || after || before || folders.length ||
+      Object.keys(headers).length ||
       unread !== undefined || flagged !== undefined ||
       hasAttachment !== undefined
   );
@@ -573,7 +678,9 @@ function buildFilters(params) {
   return {
     any,
     folders,
+    headers,
     describe: {
+      headers: Object.keys(headers).length ? headers : null,
       from: params?.from ?? null,
       to: params?.to ?? null,
       subject: params?.subject ?? null,
