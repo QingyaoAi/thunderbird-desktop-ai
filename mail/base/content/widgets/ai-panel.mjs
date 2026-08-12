@@ -103,10 +103,10 @@ export const AIPanel = {
       .addEventListener("click", () => AIPanelUI.toggle(false));
     document
       .getElementById("ai-panel-key")
-      .addEventListener("click", () => this.promptForApiKey());
+      .addEventListener("click", () => this.promptForConnection());
     document
       .getElementById("ai-panel-setup-key")
-      .addEventListener("click", () => this.promptForApiKey());
+      .addEventListener("click", () => this.promptForConnection());
     this.draftButton.addEventListener("click", () => this.draftReply());
 
     // The draft button only makes sense with a message selected, and what
@@ -437,32 +437,58 @@ export const AIPanel = {
   // -- API key ------------------------------------------------------------
 
   /**
-   * Ask for an API key and store it in the login manager.
+   * Ask for the endpoint and the API key, and store them.
    *
-   * Uses the password prompt so the key is masked as it is typed and never
-   * ends up in a text field that could be screenshotted or logged.
+   * The two belong together: pointing at a different provider almost always
+   * means a different key, and editing ai-config.json by hand to change one
+   * of them is a poor answer to "this key stopped working".
+   *
+   * Both prompts open on the current setting, so this doubles as a way to
+   * see what is configured, and either can be left alone by pressing Enter.
+   *
+   * The key uses the password prompt, so it is masked as it is typed and
+   * never sits in a text field that could be screenshotted or logged. It is
+   * stored in the login manager; the base URL is not secret and goes in
+   * ai-config.json.
    */
-  async promptForApiKey() {
+  async promptForConnection() {
     const profile = await lazy.AIConfig.activeProfile();
-    const [title, message] = await document.l10n.formatValues([
-      { id: "ai-panel-key-title" },
-      { id: "ai-panel-key-prompt", args: { provider: profile.label ?? profile.name } },
-    ]);
+    const provider = profile.label ?? profile.name;
+    const [title, urlMessage, keyMessage, badUrl] =
+      await document.l10n.formatValues([
+        { id: "ai-panel-key-title" },
+        { id: "ai-panel-url-prompt", args: { provider } },
+        { id: "ai-panel-key-prompt", args: { provider } },
+        { id: "ai-panel-url-invalid" },
+      ]);
 
-    const value = { value: "" };
-    const accepted = Services.prompt.promptPassword(
-      window,
-      title,
-      message,
-      value,
-      null,
-      {}
-    );
-    if (!accepted) {
+    const url = { value: profile.baseUrl ?? "" };
+    if (!Services.prompt.prompt(window, title, urlMessage, url, null, {})) {
+      return;
+    }
+    const baseUrl = url.value.trim().replace(/\/+$/, "");
+    if (!/^https?:\/\//i.test(baseUrl)) {
+      // Anything else would fail later as an opaque network error, with
+      // nothing pointing back at what was typed here.
+      Services.prompt.alert(window, title, badUrl);
       return;
     }
 
-    await lazy.AIConfig.setApiKey(profile.name, value.value.trim());
+    // Prefilled with the stored key, so pressing Enter keeps it and the
+    // dialog also answers "which key is this profile using".
+    const key = { value: (await lazy.AIConfig.getApiKey(profile.name)) ?? "" };
+    if (!Services.prompt.promptPassword(window, title, keyMessage, key, null, {})) {
+      return;
+    }
+
+    if (baseUrl != profile.baseUrl) {
+      const config = await lazy.AIConfig.read();
+      config.profiles[profile.name].baseUrl = baseUrl;
+      await lazy.AIConfig.save(config);
+    }
+    // Whatever is left in the field wins, including nothing: clearing it is
+    // how a key gets removed.
+    await lazy.AIConfig.setApiKey(profile.name, key.value.trim());
     await this.refreshConfigured();
   },
 

@@ -923,7 +923,10 @@ ai-panel-key-button = Key
 ai-panel-key-title = AI provider API key
 
 # $provider is the configured provider's label, e.g. "DeepSeek".
-ai-panel-key-prompt = Enter the API key for { $provider }. It is stored with your saved passwords, not in a file.
+ai-panel-url-prompt = Base URL for { $provider }.
+ai-panel-url-invalid = The base URL must start with http:// or https://.
+
+ai-panel-key-prompt = API key for { $provider }. It is stored with your saved passwords, not in a file.
 
 ai-panel-draft-reply = Draft reply to selected thread
 
