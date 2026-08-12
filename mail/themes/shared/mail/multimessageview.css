@@ -229,27 +229,31 @@ a {
  * pane uses rather than borrowed through its variables, which are defined for
  * the tree widget and not for this document.
  */
+/* The whole row opens the message (see multimessageview.js), and it takes
+ * the highlight the message list uses so it reads as one target.
+ *
+ * The cursor is deliberately left alone: this is a row in a list, not a
+ * link, and the rest of the message pane does not switch to a hand either.
+ */
 #messageList > li {
-  cursor: pointer;
-  transition: background-color 120ms ease;
+  transition: background-color 120ms ease, box-shadow 120ms ease;
 }
 
-/* The highlight is clipped to the content box rather than drawn to the row's
- * edges. The unread dot hangs outside the row (inset-inline-start: -6px) and
- * reaches about ten pixels into it, so a fill drawn to the edge runs through
- * it; the row's inline-start padding is 12px, so clipping to the content box
- * starts the fill just past the dot. Clipping rather than a separate layer
- * because a negative z-index pseudo-element paints behind the pane's own
- * background and is never seen. */
+/* Painted with a spread shadow as well as a background, so the highlight
+ * reaches past the row's own edges. The unread dot hangs outside the row
+ * (inset-inline-start: -6px), and a fill drawn only to the edge either cuts
+ * through the dot or has to stop short of it; extending outward instead puts
+ * the dot inside the highlight, where it belongs. */
 #messageList > li:hover {
+  border-radius: 4px;
   background-color: color-mix(in srgb, var(--selected-item-color, AccentColor) 14%, transparent);
-  background-clip: content-box;
-  border-radius: 6px;
+  box-shadow: 0 0 0 8px color-mix(in srgb, var(--selected-item-color, AccentColor) 14%, transparent);
 }
 
 @media (prefers-reduced-motion: reduce) {
   #messageList > li {
     transition: none;
   }
+}
 }
 }
