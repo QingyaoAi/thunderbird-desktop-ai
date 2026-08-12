@@ -8,7 +8,7 @@
  * collapse-width so a drag collapses rather than crushing the content. */
 #aiPane {
   box-sizing: border-box;
-  min-inline-size: 220px;
+  min-inline-size: var(--aiPane-min-width, 17em);
   overflow: hidden;
   contain: strict;
 }
@@ -32,6 +32,11 @@
   gap: 3px;
   padding: 6px 6px 6px 12px;
   border-block-end: 1px solid var(--splitter-color);
+  /* Narrow enough and the three buttons no longer fit beside the title.
+   * Wrapping puts them on a second row; without this they were simply
+   * clipped by the pane's overflow and appeared to be missing. */
+  flex-wrap: wrap;
+  row-gap: 4px;
 }
 
 .ai-panel-title {
@@ -216,7 +221,10 @@
 }
 
 .ai-panel-input {
-  flex: 1;
+  flex: 1 1 0;
+  /* A flex item will not shrink below its content without this, which
+   * pushed Send out of the pane. */
+  min-inline-size: 0;
   resize: none;
   font: inherit;
   font-size: 0.95rem;
@@ -236,6 +244,8 @@
 
 .ai-panel-send {
   appearance: none;
+  /* Never shrink: the button is the point of the row. */
+  flex: none;
   border: 1px solid transparent;
   border-radius: 4px;
   padding: 6px 12px;
@@ -262,7 +272,13 @@
 
 .ai-panel-action {
   appearance: none;
-  flex: 1;
+  flex: 1 1 0;
+  min-inline-size: 0;
+  /* Long labels ellipsize rather than forcing the button wider than the
+   * pane, which used to push it out of view. */
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
   border: 1px solid var(--splitter-color);
   border-radius: 4px;
   background-color: var(--layout-background-2);
