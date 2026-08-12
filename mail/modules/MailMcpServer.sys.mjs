@@ -44,6 +44,14 @@ const TOKEN_ORIGIN = "chrome://messenger/mcp";
 /** Enables the listener. Off means nothing binds a port at all. */
 const ENABLED_PREF = "mail.mcp.enabled";
 
+/**
+ * The port to listen on. Fixed, so a client can be configured once instead
+ * of rediscovering the port after every restart, and high and unusual enough
+ * to be unlikely to collide with anything else. If it is taken, the OS picks
+ * one instead and mcp-endpoint.json records what was actually used.
+ */
+const PORT_PREF = "mail.mcp.port";
+
 /** Requests larger than this are refused rather than buffered. */
 const MAX_REQUEST_BYTES = 1024 * 1024;
 
@@ -833,9 +841,19 @@ export const MailMcpServer = {
     const socket = Cc["@mozilla.org/network/server-socket;1"].createInstance(
       Ci.nsIServerSocket
     );
-    // Port 0 lets the OS choose; `true` is loopback-only, so nothing outside
-    // this machine can reach it even if a firewall is misconfigured.
-    socket.init(-1, true, -1);
+    // `true` is loopback-only, so nothing outside this machine can reach it
+    // even if a firewall is misconfigured.
+    const wanted = Services.prefs.getIntPref(PORT_PREF, 47821);
+    try {
+      socket.init(wanted, true, -1);
+    } catch (ex) {
+      // Something else has it. Better to run on another port -- recorded in
+      // mcp-endpoint.json -- than not to run at all.
+      console.warn(
+        `Port ${wanted} is in use; letting the system choose one instead.`
+      );
+      socket.init(-1, true, -1);
+    }
     socket.asyncListen({
       onSocketAccepted: (_socket, transport) => {
         // Belt and braces: init(loopback) should make this impossible, but a
@@ -894,15 +912,24 @@ async function handleConnection(transport) {
   binary.setInputStream(input);
 
   const respond = (status, payload) => {
-    const body = JSON.stringify(payload);
-    const bytes = new TextEncoder().encode(body);
+    const bytes = new TextEncoder().encode(JSON.stringify(payload));
+    // Written one byte per character. nsIOutputStream.write counts what it
+    // is given in characters, so handing it a JS string promises
+    // Content-Length bytes and delivers fewer as soon as the response holds
+    // anything outside ASCII -- a folder named in Chinese, a subject with an
+    // accent -- and the client waits for the remainder that never comes.
+    let encoded = "";
+    const CHUNK = 8192;
+    for (let i = 0; i < bytes.length; i += CHUNK) {
+      encoded += String.fromCharCode.apply(null, bytes.subarray(i, i + CHUNK));
+    }
     const head =
       `HTTP/1.1 ${status}\r\n` +
       "Content-Type: application/json; charset=utf-8\r\n" +
       `Content-Length: ${bytes.length}\r\n` +
       "Connection: close\r\n\r\n";
     output.write(head, head.length);
-    output.write(body, body.length);
+    output.write(encoded, encoded.length);
     output.close();
     input.close();
   };
