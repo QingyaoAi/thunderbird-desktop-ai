@@ -247,7 +247,16 @@ a {
 #messageList > li:hover {
   border-radius: 4px;
   background-color: color-mix(in srgb, var(--selected-item-color, AccentColor) 14%, transparent);
-  box-shadow: 0 0 0 8px color-mix(in srgb, var(--selected-item-color, AccentColor) 14%, transparent);
+  /* Two copies of the row's own box, shifted left and right rather than a
+   * spread, which would grow the highlight in every direction -- vertically
+   * that swallowed the divider below the row. This widens it only, far
+   * enough that the unread dot hanging off the inline start sits inside. */
+  box-shadow:
+    -8px 0 0 0 color-mix(in srgb, var(--selected-item-color, AccentColor) 14%, transparent),
+    8px 0 0 0 color-mix(in srgb, var(--selected-item-color, AccentColor) 14%, transparent);
+  /* The divider is drawn on the row's own bottom edge, so while the row is
+   * highlighted it would run through it. */
+  border-block-end-color: transparent;
 }
 
 @media (prefers-reduced-motion: reduce) {
