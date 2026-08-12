@@ -1640,3 +1640,8 @@ pref("mailnews.tags.$mailflagbit1.tag", "Yellow flag");
 pref("mailnews.tags.$mailflagbit1.color", "#FFCC00");
 pref("mailnews.tags.$mailflagbit2.tag", "Blue flag");
 pref("mailnews.tags.$mailflagbit2.color", "#007AFF");
+
+// A local endpoint that lets an LLM read this mailbox and write drafts
+// (MailMcpServer.sys.mjs). Off by default: turning it on binds a loopback
+// port, and every request still needs a token created by hand.
+pref("mail.mcp.enabled", false);

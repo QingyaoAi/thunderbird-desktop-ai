@@ -42,6 +42,7 @@ ChromeUtils.defineESModuleGetters(lazy, {
   LightweightThemeConsumer:
     "resource://gre/modules/LightweightThemeConsumer.sys.mjs",
   MailMigrator: "resource:///modules/MailMigrator.sys.mjs",
+  MailMcpServer: "resource:///modules/MailMcpServer.sys.mjs",
   StarTagSync: "resource:///modules/StarTagSync.sys.mjs",
   TagMessageCounts: "resource:///modules/TagMessageCounts.sys.mjs",
   MailNotificationManager:
@@ -954,6 +955,16 @@ MailGlue.prototype = {
         // the first run walks every folder to reconcile existing mail.
         task: () => {
           lazy.StarTagSync.start();
+        },
+      },
+      {
+        // The MCP endpoint, which does nothing unless mail.mcp.enabled is
+        // set. Watched afterwards so the pref takes effect without a restart.
+        task: () => {
+          lazy.MailMcpServer.refresh();
+          Services.prefs.addObserver("mail.mcp.enabled", () =>
+            lazy.MailMcpServer.refresh()
+          );
         },
       },
       {

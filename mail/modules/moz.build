@@ -31,6 +31,7 @@ EXTRA_JS_MODULES += [
     "LinkHelper.sys.mjs",
     "MailConsts.sys.mjs",
     "MailE10SUtils.sys.mjs",
+    "MailMcpServer.sys.mjs",
     "MailMigrator.sys.mjs",
     "MailUsageTelemetry.sys.mjs",
     "MailUtils.sys.mjs",
