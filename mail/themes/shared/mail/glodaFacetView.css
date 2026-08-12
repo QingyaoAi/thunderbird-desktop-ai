@@ -747,3 +747,15 @@ facet-result-message.selected .message-author,
 facet-result-message.selected .message-date {
   color: inherit;
 }
+
+/* A selected result is filled with the accent colour, so nothing inside it
+ * may be drawn in that colour too. The subject's hover and focus styling did
+ * exactly that -- accent text on an accent background -- so pointing at the
+ * title of the selected result made it vanish. Inside a selected result the
+ * subject keeps the selected text colour in every state, and takes no
+ * background of its own. */
+facet-result-message.selected .message-subject,
+facet-result-message.selected .message-subject:is(:hover, :focus, :active) {
+  color: var(--selected-item-text-color);
+  background-color: transparent;
+}
