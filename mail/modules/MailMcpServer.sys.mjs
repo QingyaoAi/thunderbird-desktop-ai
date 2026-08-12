@@ -270,39 +270,77 @@ function hdrFromUri(uri) {
 
 const Methods = {
   /**
-   * Ranked search, using the same searcher the search box uses.
+   * Search, by text and/or by field.
    *
-   * @param {object} params - {query, limit}
+   * `query` is full text, ranked by Gloda exactly as the search box ranks it.
+   * The filters narrow whatever that returns -- or, with no query at all,
+   * narrow a folder directly, which is how "everything from her since March"
+   * is answered without inventing search terms for it.
+   *
+   * @param {object} params - {query, from, to, subject, folder, after,
+   *   before, tag, unread, flagged, hasAttachment, limit}
    */
   async search(params) {
     const query = String(params?.query ?? "").trim();
-    if (!query) {
-      throw new Error("search requires a query");
-    }
-    const limit = Math.min(Number(params?.limit) || 25, 100);
-    const searcher = new lazy.GlodaMsgSearcher(null, query);
-    searcher.limit = limit;
+    const limit = Math.min(Number(params?.limit) || 25, 200);
+    const filters = buildFilters(params);
 
-    const collection = await new Promise((resolve, reject) => {
-      searcher.getCollection({
-        onItemsAdded() {},
-        onItemsModified() {},
-        onItemsRemoved() {},
-        onQueryCompleted(coll) {
-          resolve(coll);
-        },
+    let candidates = [];
+    if (query) {
+      const searcher = new lazy.GlodaMsgSearcher(null, query);
+      // Over-fetch, because the filters run afterwards: asking for 25 and
+      // then discarding most of them would quietly return far fewer than
+      // were asked for.
+      searcher.limit = filters.any ? Math.min(limit * 8, 500) : limit;
+
+      const collection = await new Promise((resolve, reject) => {
+        searcher.getCollection({
+          onItemsAdded() {},
+          onItemsModified() {},
+          onItemsRemoved() {},
+          onQueryCompleted(coll) {
+            resolve(coll);
+          },
+        });
+        lazy.setTimeout(() => reject(new Error("search timed out")), 30000);
       });
-      lazy.setTimeout(() => reject(new Error("search timed out")), 30000);
-    });
+      for (const item of collection.items) {
+        const hdr = item.folderMessage;
+        if (hdr) {
+          candidates.push({ hdr, snippet: item.indexedBodyText?.slice(0, 300) ?? "" });
+        }
+      }
+    } else if (filters.folders.length) {
+      // No text to rank by, so read the folders themselves, newest first.
+      for (const folder of filters.folders) {
+        let database;
+        try {
+          database = folder.msgDatabase;
+        } catch (ex) {
+          continue;
+        }
+        for (const hdr of database.enumerateMessages()) {
+          candidates.push({ hdr, snippet: "" });
+        }
+      }
+      candidates.sort((a, b) => (b.hdr.date ?? 0) - (a.hdr.date ?? 0));
+    } else {
+      throw new Error(
+        "search needs a query, or a folder to filter within"
+      );
+    }
 
-    const results = [];
-    for (const item of collection.items.slice(0, limit)) {
-      const hdr = item.folderMessage;
-      if (hdr) {
-        results.push({ ...headerToJson(hdr), snippet: item.indexedBodyText?.slice(0, 300) ?? "" });
+    const messages = [];
+    for (const { hdr, snippet } of candidates) {
+      if (!filters.matches(hdr)) {
+        continue;
+      }
+      messages.push({ ...headerToJson(hdr), snippet });
+      if (messages.length >= limit) {
+        break;
       }
     }
-    return { query, count: results.length, messages: results };
+    return { query, filters: filters.describe, count: messages.length, messages };
   },
 
   /**
@@ -466,6 +504,140 @@ const Methods = {
     return { identities };
   },
 };
+
+/**
+ * Turn the filter parameters into something that can test a header.
+ *
+ * Substring, case-insensitive, on the decoded fields -- so "liu" finds
+ * "Yiqun Liu <yiqunliu@example.com>" whether the caller knows the display
+ * name or the address.
+ *
+ * @param {object} params
+ * @returns {{any: boolean, folders: nsIMsgFolder[], describe: object,
+ *   matches: function(nsIMsgDBHdr): boolean}}
+ */
+function buildFilters(params) {
+  const text = key => {
+    const value = params?.[key];
+    return value ? String(value).toLowerCase() : null;
+  };
+  const from = text("from");
+  const to = text("to");
+  const subject = text("subject");
+  const tag = text("tag");
+
+  const stamp = key => {
+    if (!params?.[key]) {
+      return null;
+    }
+    const when = new Date(params[key]);
+    if (isNaN(when.getTime())) {
+      throw new Error(`${key} is not a date: ${params[key]}`);
+    }
+    // nsIMsgDBHdr.date is microseconds.
+    return when.getTime() * 1000;
+  };
+  const after = stamp("after");
+  const before = stamp("before");
+
+  const unread = params?.unread;
+  const flagged = params?.flagged;
+  const hasAttachment = params?.hasAttachment;
+
+  // A folder may be named by URI or by name, and a name may match several.
+  const folders = [];
+  if (params?.folder) {
+    const wanted = String(params.folder).toLowerCase();
+    for (const server of lazy.MailServices.accounts.allServers) {
+      for (const folder of server.rootFolder.descendants) {
+        if (
+          folder.URI.toLowerCase() == wanted ||
+          folder.prettyName?.toLowerCase() == wanted ||
+          folder.URI.toLowerCase().endsWith(`/${wanted}`)
+        ) {
+          folders.push(folder);
+        }
+      }
+    }
+    if (!folders.length) {
+      throw new Error(`no folder matches: ${params.folder}`);
+    }
+  }
+
+  const any = Boolean(
+    from || to || subject || tag || after || before || folders.length ||
+      unread !== undefined || flagged !== undefined ||
+      hasAttachment !== undefined
+  );
+
+  return {
+    any,
+    folders,
+    describe: {
+      from: params?.from ?? null,
+      to: params?.to ?? null,
+      subject: params?.subject ?? null,
+      folder: params?.folder ?? null,
+      after: params?.after ?? null,
+      before: params?.before ?? null,
+      tag: params?.tag ?? null,
+      unread: unread ?? null,
+      flagged: flagged ?? null,
+      hasAttachment: hasAttachment ?? null,
+    },
+    matches(hdr) {
+      if (from && !(hdr.mime2DecodedAuthor ?? "").toLowerCase().includes(from)) {
+        return false;
+      }
+      if (to) {
+        const recipients = `${hdr.mime2DecodedRecipients ?? ""} ${hdr.ccList ?? ""}`;
+        if (!recipients.toLowerCase().includes(to)) {
+          return false;
+        }
+      }
+      if (
+        subject &&
+        !(hdr.mime2DecodedSubject ?? "").toLowerCase().includes(subject)
+      ) {
+        return false;
+      }
+      if (after !== null && !(hdr.date > after)) {
+        return false;
+      }
+      if (before !== null && !(hdr.date < before)) {
+        return false;
+      }
+      if (tag) {
+        const keywords = (hdr.getStringProperty("keywords") || "").toLowerCase();
+        if (!keywords.split(/\s+/).includes(tag)) {
+          return false;
+        }
+      }
+      if (unread !== undefined && unread !== null) {
+        const isRead = Boolean(hdr.flags & Ci.nsMsgMessageFlags.Read);
+        if (Boolean(unread) == isRead) {
+          return false;
+        }
+      }
+      if (flagged !== undefined && flagged !== null) {
+        const isFlagged = Boolean(hdr.flags & Ci.nsMsgMessageFlags.Marked);
+        if (Boolean(flagged) != isFlagged) {
+          return false;
+        }
+      }
+      if (hasAttachment !== undefined && hasAttachment !== null) {
+        const has = Boolean(hdr.flags & Ci.nsMsgMessageFlags.Attachment);
+        if (Boolean(hasAttachment) != has) {
+          return false;
+        }
+      }
+      if (folders.length && !folders.some(f => f.URI == hdr.folder.URI)) {
+        return false;
+      }
+      return true;
+    },
+  };
+}
 
 /**
  * @returns {?nsIMsgIdentity}
