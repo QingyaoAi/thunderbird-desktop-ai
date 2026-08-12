@@ -265,7 +265,10 @@ mail-tagfield[collapsed] {
   display: -webkit-box;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 3;
-  overflow-y: auto;
+  /* Hidden, not auto: the clamp already stops at three lines, so the only
+   * thing a scroller adds is a scrollbar drawn down the side of the subject
+   * whenever it wraps -- which it does at any larger UI font size. */
+  overflow: hidden;
 }
 
 #expandedButtonsBox {
