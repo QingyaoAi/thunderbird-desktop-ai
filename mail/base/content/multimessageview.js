@@ -332,9 +332,6 @@ class MultiMessageSummary {
       const subjectNode = listItem.querySelector(".subject");
       subjectNode.textContent =
         firstMessage.mime2DecodedSubject || l10n.formatValueSync("no-subject");
-      subjectNode.addEventListener("click", () =>
-        this._selectCallback(messages)
-      );
 
       if (messages?.length > 1) {
         let countStr = l10n.formatValueSync("num-messages", {
@@ -351,10 +348,22 @@ class MultiMessageSummary {
       listItem.querySelector(".date").textContent = makeFriendlyDateAgo(
         new Date(firstMessage.date / 1000)
       );
-      author.addEventListener("click", () => {
-        this._selectCallback(messages);
-      });
     }
+
+    // The whole row is one target: clicking the date, the snippet or the
+    // empty space beside them opens the message, the same as clicking the
+    // sender or the subject -- which were previously the only parts that
+    // responded, so most of the row looked clickable and was not. Anything
+    // genuinely interactive inside keeps its own behaviour.
+    listItem.addEventListener("click", event => {
+      if (
+        event.button != 0 ||
+        event.target.closest("button, a, .star, .tag, .tags")
+      ) {
+        return;
+      }
+      this._selectCallback(messages);
+    });
 
     this._addTagNodes(tags, listItem.querySelector(".tags"));
 

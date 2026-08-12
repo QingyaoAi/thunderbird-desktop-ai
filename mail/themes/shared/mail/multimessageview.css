@@ -219,3 +219,9 @@ a {
   gap: 6px;
   user-select: none;
 }
+
+/* The whole row opens the message (see multimessageview.js), so the pointer
+ * should say so across all of it rather than only over the sender. */
+#messageList > li {
+  cursor: pointer;
+}
