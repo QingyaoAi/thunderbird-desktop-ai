@@ -144,6 +144,44 @@ Use `.claude/skills/` inside a project instead to scope it to that project.
 giving its name and description. Paste it wherever that harness keeps system
 instructions, or hand it over as a document at the start of a session.
 
+### Or have an agent do it
+
+Paste this to Claude Code (or any agent with shell access) from the checkout.
+It is written to make the agent check its work rather than report success
+from having run the commands.
+
+```
+Set up this Thunderbird fork's mail access for me. The endpoint runs inside
+Thunderbird; you are connecting a client to it.
+
+1. Ask me for the access password before doing anything that needs one. I
+   create it in Thunderbird under Tools -> Mail Access for AI. Do not invent
+   one, and do not write it into any file that is under version control --
+   it belongs in the MCP client's env only.
+
+2. Install the skill: copy mail/components/mcp/SKILL.md to
+   ~/.claude/skills/thunderbird-mail/SKILL.md, creating the directory.
+
+3. Register the bridge as an MCP server named "thunderbird", running
+   `node <absolute path to mail/components/mcp/mail-mcp-bridge.js>` with
+   MAIL_MCP_TOKEN set to the password.
+
+4. Verify, and tell me which of these you actually saw:
+   - Thunderbird is running and something is listening on 127.0.0.1:47821
+     (`lsof -nP -iTCP:47821 -sTCP:LISTEN`). It can take a couple of minutes
+     after launch on a large mailbox.
+   - A POST to http://127.0.0.1:47821/rpc with the password and
+     {"method":"listFolders"} returns folders and counts.
+   - The same request without the password returns 401.
+   - The skill file exists where you put it.
+
+5. Report what works and what does not. If the endpoint is not listening or
+   the password is refused, say so plainly -- do not describe the setup as
+   complete because the files are in place. Read
+   mail/components/mcp/README.md if something fails; its troubleshooting
+   section covers the usual causes.
+```
+
 ### Check it works
 
 With Thunderbird running:
