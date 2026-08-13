@@ -1650,3 +1650,19 @@ pref("mail.mcp.enabled", true);
 // unlikely to collide; if it is taken, the system picks another and
 // mcp-endpoint.json in the profile records it.
 pref("mail.mcp.port", 47821);
+
+// Folder summary databases are cached in memory, and the sweep that closes
+// idle ones only considers databases smaller than keep_open_size -- 1MB by
+// default. A large account's summaries are far bigger than that, so they were
+// exempt from closing however long they sat untouched, and max_open never
+// evicted them either because it allows more open databases than such an
+// account has folders. The result is that every folder ever visited stays
+// in memory for the session.
+//
+// Raising the size ceiling lets the big ones be closed once idle, and
+// lowering the count makes the cache evict the least recently used. The cost
+// is rereading a summary when returning to a folder left alone for a few
+// minutes, which is disk work Thunderbird already does at startup.
+pref("mail.db.keep_open_size", 33554432);
+pref("mail.db.idle_limit", 120000);
+pref("mail.db.max_open", 12);
