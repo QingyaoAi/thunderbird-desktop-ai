@@ -1666,3 +1666,10 @@ pref("mail.mcp.port", 47821);
 pref("mail.db.keep_open_size", 33554432);
 pref("mail.db.idle_limit", 120000);
 pref("mail.db.max_open", 12);
+
+// The content memory cache sizes itself to the machine rather than to the
+// job: left automatic it grows to hundreds of megabytes on a large-memory
+// Mac, which suits a browser holding many pages open and not a mail client
+// showing one message at a time. 32MB is ample for message bodies and the
+// images in them.
+pref("browser.cache.memory.capacity", 32768);
