@@ -240,6 +240,9 @@ export const StarTagSync = {
     let checked = 0;
     let fixed = 0;
 
+    // Same care as TagMessageCounts: a database opened here stays in memory
+    // until it is closed, and this walks every folder.
+    const wasOpen = folder.databaseOpen;
     let database;
     try {
       database = folder.msgDatabase;
@@ -270,6 +273,15 @@ export const StarTagSync = {
       }
     } catch (ex) {
       console.warn(`Could not reconcile ${folder.URI}:`, ex);
+    } finally {
+      if (!wasOpen) {
+        try {
+          // Committed, because this pass may have written keywords.
+          database.close(true);
+        } catch (ex) {
+          // Already closed, or in use elsewhere.
+        }
+      }
     }
 
     return { checked, fixed };

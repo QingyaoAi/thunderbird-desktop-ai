@@ -206,6 +206,12 @@ export const TagMessageCounts = {
             continue;
           }
 
+          // Opening a folder's database keeps it in memory until something
+          // closes it. Walking every folder on a large account therefore
+          // pins every summary file open -- tens of thousands of messages
+          // apiece -- for the rest of the session. Note which ones were
+          // already open so only the ones opened here are released.
+          const wasOpen = folder.databaseOpen;
           let database;
           try {
             database = folder.msgDatabase;
@@ -231,6 +237,15 @@ export const TagMessageCounts = {
             }
           } catch (ex) {
             console.warn(`Could not count tags in ${folder.URI}:`, ex);
+          } finally {
+            if (!wasOpen) {
+              // Nothing was written, so there is nothing to commit.
+              try {
+                database.close(false);
+              } catch (ex) {
+                // Already closed, or in use elsewhere.
+              }
+            }
           }
         }
       }
