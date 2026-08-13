@@ -73,6 +73,91 @@ before you set one up, and each answer lists exactly which conversations
 were used. Point `baseUrl` at a local model if you would rather nothing
 left the machine.
 
+## Mail access for AI assistants (MCP)
+
+An assistant running outside Thunderbird — Claude Code, Claude Desktop, or
+anything else that speaks MCP — can search this mailbox, read messages and
+threads, and save drafts. It cannot send, move, delete or flag anything.
+
+Two pieces, both in [`mail/components/mcp/`](mail/components/mcp/):
+
+- **[README.md](mail/components/mcp/README.md)** — the endpoint: setup, the
+  security model, every method and field.
+- **[SKILL.md](mail/components/mcp/SKILL.md)** — written for the assistant:
+  how to search well, when to read a whole thread, how to draft as the user.
+
+### 1. Create a password in Thunderbird
+
+**Tools → Mail Access for AI…** → *Create a new password*. It is shown once
+and copied to your clipboard. The same menu turns access on or off and
+deletes passwords.
+
+The endpoint listens on `127.0.0.1:47821` — loopback only, and every request
+must carry a password. On a large mailbox it starts a couple of minutes
+after launch.
+
+### 2. Register the MCP server
+
+**Claude Code** — from the checkout:
+
+```bash
+claude mcp add thunderbird \
+  --env MAIL_MCP_TOKEN=<the password> \
+  -- node "$PWD/mail/components/mcp/mail-mcp-bridge.js"
+```
+
+**Claude Desktop** — in `claude_desktop_config.json`
+(`~/Library/Application Support/Claude/` on macOS):
+
+```json
+{
+  "mcpServers": {
+    "thunderbird": {
+      "command": "node",
+      "args": ["/absolute/path/to/mail/components/mcp/mail-mcp-bridge.js"],
+      "env": { "MAIL_MCP_TOKEN": "<the password>" }
+    }
+  }
+}
+```
+
+**Anything else**: the bridge is a stdio MCP server. Run it with
+`MAIL_MCP_TOKEN` set and speak JSON-RPC on stdin and stdout. It needs Node
+and nothing else — no dependencies to install. Set `MAIL_MCP_URL` if you want
+to point it somewhere other than the port recorded in the profile.
+
+### 3. Install the skill
+
+The tools work without it, but the skill is what makes the assistant use them
+well rather than mechanically.
+
+**Claude Code** — as a personal skill:
+
+```bash
+mkdir -p ~/.claude/skills/thunderbird-mail
+cp mail/components/mcp/SKILL.md ~/.claude/skills/thunderbird-mail/SKILL.md
+```
+
+Use `.claude/skills/` inside a project instead to scope it to that project.
+
+**Other harnesses**: `SKILL.md` is plain Markdown with YAML frontmatter
+giving its name and description. Paste it wherever that harness keeps system
+instructions, or hand it over as a document at the start of a session.
+
+### Check it works
+
+With Thunderbird running:
+
+```bash
+curl -s -X POST http://127.0.0.1:47821/rpc \
+  -H "Authorization: Bearer <the password>" \
+  -d '{"method":"listFolders"}'
+```
+
+Folders and counts mean the endpoint and password are good, and anything left
+is the client's configuration. `401` means the password is wrong or was
+deleted; no answer at all means Thunderbird is closed or access is off.
+
 ## Other changes
 
 - **VIP folders.** Mark senders as VIPs (right-click a message → *Add
