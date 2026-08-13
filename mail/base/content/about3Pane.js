@@ -63,6 +63,7 @@ ChromeUtils.defineESModuleGetters(this, {
   MailE10SUtils: "resource:///modules/MailE10SUtils.sys.mjs",
   MailUtils: "resource:///modules/MailUtils.sys.mjs",
   SmartMailboxUtils: "resource:///modules/SmartMailboxUtils.sys.mjs",
+  TagMessageCounts: "resource:///modules/TagMessageCounts.sys.mjs",
   VipAddresses: "resource:///modules/SmartMailboxUtils.sys.mjs",
   TagUtils: "resource:///modules/TagUtils.sys.mjs",
   UIDensity: "resource:///modules/UIDensity.sys.mjs",
@@ -2449,6 +2450,10 @@ var folderPane = {
     // and needs to know this is a tag row to get that right.
     row.dataset.tagKey = tag.key;
     row.setFolder(folder);
+    // Counting is deferred until a tag row is actually drawn, so ask for it
+    // here; the answer arrives through the tag-message-counts-changed
+    // notification, which refreshes every row.
+    TagMessageCounts.ensureCounted();
     // setFolder took the count from the virtual folder, which reads 0 until
     // its search has been run. Replace it with the real number.
     row.updateTotalMessageCount();

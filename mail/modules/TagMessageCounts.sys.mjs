@@ -107,9 +107,10 @@ export const TagMessageCounts = {
         lazy.MailServices.mfn.msgsDeleted
     );
 
-    this.refresh().catch(ex =>
-      console.error("Could not count tagged messages:", ex)
-    );
+    // The counts are not scanned here. Nothing can see them until the
+    // folder pane draws a tag row, and scanning at startup reads every
+    // header in every folder to produce numbers that are usually never
+    // looked at. ensureCounted() does it on first sight instead.
   },
 
   stop() {
@@ -118,6 +119,24 @@ export const TagMessageCounts = {
     }
     this._started = false;
     lazy.MailServices.mfn.removeListener(this);
+  },
+
+  /**
+   * Count everything, unless that has already been done or is under way.
+   *
+   * Called when a tag row is first drawn, so the walk over every folder
+   * happens when the numbers are about to be shown rather than on every
+   * launch whether or not anyone looks at them.
+   *
+   * @returns {Promise<void>}
+   */
+  async ensureCounted() {
+    if (this.ready || this._scanning) {
+      return;
+    }
+    await this.refresh().catch(ex =>
+      console.error("Could not count tagged messages:", ex)
+    );
   },
 
   /**

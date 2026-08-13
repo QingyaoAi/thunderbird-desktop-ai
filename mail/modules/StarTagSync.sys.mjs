@@ -28,6 +28,12 @@ const IMPORTANT_TAG = "$label1";
 const RECONCILE_CHUNK = 200;
 
 /**
+ * Set once the one-off pass over existing mail has finished. Clear it to run
+ * the pass again -- after importing an account, say.
+ */
+const RECONCILED_PREF = "mail.startagsync.reconciled";
+
+/**
  * Whether a header carries the Important tag.
  *
  * @param {nsIMsgDBHdr} hdr
@@ -83,10 +89,15 @@ export const StarTagSync = {
       lazy.MailServices.mfn.msgPropertyChanged
     );
 
-    // Existing mail predates the listeners, so bring it into line too.
-    this.reconcileAll().catch(ex =>
-      console.error("Could not reconcile stars and tags:", ex)
-    );
+    // Existing mail predates the listeners, so bring it into line -- but
+    // only once. Everything arriving afterwards is handled by the listeners
+    // above, so repeating the walk on every launch re-reads every header in
+    // the account to discover that there is nothing to do.
+    if (!Services.prefs.getBoolPref(RECONCILED_PREF, false)) {
+      this.reconcileAll()
+        .then(() => Services.prefs.setBoolPref(RECONCILED_PREF, true))
+        .catch(ex => console.error("Could not reconcile stars and tags:", ex));
+    }
   },
 
   stop() {
