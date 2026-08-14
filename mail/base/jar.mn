@@ -133,7 +133,7 @@ messenger.jar:
     content/messenger/contact-avatar.mjs            (content/widgets/treeview/contact-avatar.mjs)
     content/messenger/thread-card-tags.mjs          (content/widgets/treeview/thread-card-tags.mjs)
     content/messenger/thread-card.mjs               (content/widgets/treeview/thread-card.mjs)
-    content/messenger/menu-font-size.js              (content/menu-font-size.js)
+    content/messenger/list-font-size.js              (content/list-font-size.js)
     content/messenger/ai-pane-status.js              (content/ai-pane-status.js)
     content/messenger/ai-markdown.mjs                (content/widgets/ai-markdown.mjs)
     content/messenger/ai-panel.mjs                  (content/widgets/ai-panel.mjs)

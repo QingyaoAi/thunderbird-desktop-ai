@@ -1545,14 +1545,3 @@ panel[type="arrow"].panel-block-padding::part(content) {
     font-size: 14px !important;
   }
 }
-
-/* Menus sized on their own, through mail.menufontsize (menu-font-size.js
- * sets the property). With the pref at its default the property is absent,
- * these rules do not match, and the menus inherit the interface font. */
-:root[style*="--menu-font-size"] menubar,
-:root[style*="--menu-font-size"] menupopup,
-:root[style*="--menu-font-size"] menu,
-:root[style*="--menu-font-size"] menuitem,
-:root[style*="--menu-font-size"] menucaption {
-  font-size: var(--menu-font-size);
-}

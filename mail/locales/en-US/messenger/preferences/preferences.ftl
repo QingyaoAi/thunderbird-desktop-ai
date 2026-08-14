@@ -1491,14 +1491,14 @@ apply-current-view-error = Unable to apply current view settings
 
 apply-current-view-success = Current view settings applied successfully
 
-## Menu font size
+## Folder and message list font size
 
-menu-font-legend = Menus
+list-font-legend = Folders and message list
 
-menu-font-size-label =
-    .value = Menu font size:
+list-font-size-label =
+    .value = Folder and list font size:
 
-menu-font-size-default =
+list-font-size-default =
     .label = Same as the rest of the interface
 
-menu-font-size-description = Sets the size of the menu bar and its menus only, leaving the message list and folders at the size above.
+list-font-size-description = Sets the size of the folder pane and the message list only. A smaller size fits more messages and folders on screen.
