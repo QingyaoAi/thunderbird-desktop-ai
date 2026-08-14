@@ -1609,7 +1609,10 @@ pref("calendar.dialogs.new.enabled", false);
 pref("mail.threadpane.listview", 0);
 
 // Row count for the cards view, currently bound to a range between 2 and 3.
-pref("mail.threadpane.cardsview.rowcount", 3);
+// Two rather than three: every row in the list is this height whatever it
+// holds, so a message with no reply count -- most of them -- spent the third
+// row on nothing and read as a blank line under the preview.
+pref("mail.threadpane.cardsview.rowcount", 2);
 
 // Whether the OS Authentication is enabled or not.
 pref("signon.management.page.os-auth.locked.enabled", false);
