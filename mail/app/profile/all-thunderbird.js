@@ -942,6 +942,9 @@ pref("mail.uidensity", 1);
 // list) noticeably larger out of the box. Still fully adjustable via
 // View > Zoom / the app menu font-size controls, or Settings > General.
 pref("mail.uifontsize", 16);
+// Sizes the menus on their own (menu-font-size.js). Zero means follow the
+// interface font above, which is what the Appearance pane calls "Default".
+pref("mail.menufontsize", 0);
 
 // Sanitize dialog window
 pref("privacy.cpd.history", true);

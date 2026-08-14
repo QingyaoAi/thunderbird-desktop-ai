@@ -1490,3 +1490,15 @@ apply-changes-prompt-folder-children-message = Apply the current threading and s
 apply-current-view-error = Unable to apply current view settings
 
 apply-current-view-success = Current view settings applied successfully
+
+## Menu font size
+
+menu-font-legend = Menus
+
+menu-font-size-label =
+    .value = Menu font size:
+
+menu-font-size-default =
+    .label = Same as the rest of the interface
+
+menu-font-size-description = Sets the size of the menu bar and its menus only, leaving the message list and folders at the size above.

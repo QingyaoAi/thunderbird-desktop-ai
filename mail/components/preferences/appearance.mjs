@@ -12,6 +12,7 @@ ChromeUtils.defineESModuleGetters(lazy, {
 
 Preferences.addAll([
   { id: "mail.appearance.accentColor", type: "string" },
+  { id: "mail.menufontsize", type: "int" },
   { id: "mail.threadpane.listview", type: "int" },
   { id: "mail.threadpane.cardsview.rowcount", type: "int" },
   { id: "mailnews.default_view_flags", type: "int" },
