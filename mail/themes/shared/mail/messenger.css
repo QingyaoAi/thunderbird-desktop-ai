@@ -1522,3 +1522,26 @@ panel[type="arrow"].panel-block-padding::part(content) {
   border: none;
   padding: 0;
 }
+
+/* Ease the interface font down when there is little room for it.
+ *
+ * The size comes from mail.uifontsize and is written as an inline style on
+ * the root element (UIFontSize.sys.mjs), which a stylesheet can only reach
+ * past with !important. A size chosen to read comfortably on a large display
+ * costs real rows of mail on a laptop screen, so it steps down rather than
+ * forcing the user to change the setting when they move the window.
+ *
+ * Keyed on the width available to this document, not the screen: a narrow
+ * window on a large display has the same problem as a small display.
+ */
+@media (max-width: 1280px) {
+  :root {
+    font-size: 15px !important;
+  }
+}
+
+@media (max-width: 1024px) {
+  :root {
+    font-size: 14px !important;
+  }
+}
