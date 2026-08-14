@@ -259,10 +259,6 @@ class ThreadCard extends TreeViewTableRow {
         count: repliesCount,
       });
     }
-    // A message that is not a thread has nothing to put on the row that
-    // holds the reply count, so the row is laid out differently rather than
-    // left as a blank line between the subject and the preview.
-    this.classList.toggle("no-replies", !(repliesCount > 0));
 
     Promise.allSettled(ariaLabelPromises).then(results => {
       this.setAttribute(
