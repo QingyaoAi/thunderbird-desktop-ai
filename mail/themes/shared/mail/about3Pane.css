@@ -80,6 +80,14 @@ body {
    * and the pane clips them rather than reflowing. The splitter can
    * still collapse the pane entirely; this only bounds the dragging. */
   --aiPane-min-width: 17em;
+  /* The width of the AI column. Hiding the pane removes the pane, but the
+   * column it sat in is sized by this variable and would otherwise stay
+   * behind as an empty gap the message pane cannot expand into. */
+  --aiPane-track: max(var(--aiPane-min-width), var(--aiPaneSplitter-width));
+
+  &:has(#aiPane[hidden]) {
+    --aiPane-track: 0px;
+  }
 
   /* Classic layout: folder tree on the left, thread tree and message browser on the right. */
   &.layout-classic {
@@ -87,14 +95,14 @@ body {
       "folders folderPaneSplitter threads aiPaneSplitter ai" minmax(auto, 1fr)
       "folders folderPaneSplitter messagePaneSplitter aiPaneSplitter ai" min-content
       "folders folderPaneSplitter message aiPaneSplitter ai" minmax(auto, var(--messagePaneSplitter-height))
-      / minmax(auto, var(--folderPaneSplitter-width)) min-content minmax(auto, 1fr) min-content max(var(--aiPane-min-width), var(--aiPaneSplitter-width));
+      / minmax(auto, var(--folderPaneSplitter-width)) min-content minmax(auto, 1fr) min-content var(--aiPane-track);
   }
 
   /* Vertical layout: three columns. */
   &.layout-vertical {
     grid-template:
       "folders folderPaneSplitter threads messagePaneSplitter message aiPaneSplitter ai" auto
-      / minmax(auto, var(--folderPaneSplitter-width)) min-content minmax(auto, 1fr) min-content minmax(auto, var(--messagePaneSplitter-width)) min-content max(var(--aiPane-min-width), var(--aiPaneSplitter-width));
+      / minmax(auto, var(--folderPaneSplitter-width)) min-content minmax(auto, 1fr) min-content minmax(auto, var(--messagePaneSplitter-width)) min-content var(--aiPane-track);
   }
 
   /* Wide layout: folder tree and thread tree on the top, and message browser on the bottom. */
@@ -103,7 +111,7 @@ body {
       "folders folderPaneSplitter threads aiPaneSplitter ai" minmax(auto, 1fr)
       "messagePaneSplitter messagePaneSplitter messagePaneSplitter aiPaneSplitter ai" min-content
       "message message message aiPaneSplitter ai" minmax(auto, var(--messagePaneSplitter-height))
-      / minmax(auto, var(--folderPaneSplitter-width)) min-content minmax(auto, 1fr) min-content max(var(--aiPane-min-width), var(--aiPaneSplitter-width));
+      / minmax(auto, var(--folderPaneSplitter-width)) min-content minmax(auto, 1fr) min-content var(--aiPane-track);
   }
 
   /* If Account Central is shown, it overrides the layout setting. */
