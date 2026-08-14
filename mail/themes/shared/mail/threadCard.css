@@ -670,3 +670,23 @@
     }
   }
 }
+
+/* A single message has no reply count, so the row carrying it holds only the
+ * star -- and still took a full line, leaving a gap between the subject and
+ * the preview. Those cards put the subject and the star on one line, which
+ * is the arrangement the wide layout already uses.
+ *
+ * The selector is this long deliberately. The template it overrides is
+ * written five levels deep inside #threadTree, and a shorter selector -- two
+ * earlier attempts at this -- loses on specificity and silently does
+ * nothing.
+ */
+#threadTree[rows="thread-card"]
+  .card-layout.no-replies
+  .card-container
+  .thread-card-column
+  .thread-card-dynamic-row {
+  grid-template:
+    "button subject info" max-content
+    / auto 1fr auto;
+}

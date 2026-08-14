@@ -259,6 +259,10 @@ class ThreadCard extends TreeViewTableRow {
         count: repliesCount,
       });
     }
+    // Set either way, not just when there are replies: rows are recycled as
+    // the list scrolls, so anything left set from the previous message would
+    // be wrong for this one.
+    this.classList.toggle("no-replies", repliesCount <= 0);
 
     Promise.allSettled(ariaLabelPromises).then(results => {
       this.setAttribute(
