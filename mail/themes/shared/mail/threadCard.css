@@ -670,3 +670,13 @@
     }
   }
 }
+
+/* A single message has no reply count, so the row that would carry it holds
+ * only the star -- which still took a full line, leaving a gap between the
+ * subject and the preview. Those cards put the subject and the star on one
+ * line instead, which is the arrangement the wide layout already uses. */
+#threadTree[rows="thread-card"] .card-layout.no-replies .thread-card-dynamic-row {
+  grid-template:
+    "button subject info" max-content
+    / auto 1fr auto;
+}
