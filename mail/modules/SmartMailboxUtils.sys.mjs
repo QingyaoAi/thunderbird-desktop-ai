@@ -51,6 +51,27 @@ const ALL_VIP_FOLDER_KEY = "vip_all";
  * be edited by hand in the Config Editor. Addresses are compared lower
  * cased; display names are kept verbatim.
  */
+/**
+ * Make a virtual folder search the local index instead of the server.
+ *
+ * Only touches folders that are actually set to search online, so this costs
+ * a property read on every other call.
+ *
+ * @param {nsIMsgFolder} folder
+ */
+function turnOffOnlineSearch(folder) {
+  try {
+    const wrapped = lazy.VirtualFolderHelper.wrapVirtualFolder(folder);
+    if (wrapped.onlineSearch) {
+      wrapped.onlineSearch = false;
+      wrapped.cleanUpMessageDatabase();
+      lazy.MailServices.accounts.saveVirtualFolders();
+    }
+  } catch (ex) {
+    console.warn(`Could not switch ${folder.URI} to a local search:`, ex);
+  }
+}
+
 export const VipAddresses = {
   /**
    * @returns {Array<{address: string, name: string}>} The VIP entries, in
@@ -353,6 +374,10 @@ class SmartMailbox {
       true
     );
     if (folderFromUri) {
+      // Folders made by an earlier version carry online search in their own
+      // database, so the change above would never reach them. Corrected here
+      // rather than in a migration, since every use comes through this.
+      turnOffOnlineSearch(folderFromUri);
       return folderFromUri;
     }
 
@@ -393,12 +418,18 @@ class SmartMailbox {
         }
       }
 
+      // Searched locally, not on the server. Created with online search, a
+      // unified folder ran an IMAP search over every account each time it
+      // was opened -- a network round trip before anything could be drawn,
+      // on every click, however recently it had been visited. The mail these
+      // folders gather is synchronised anyway, so the local index answers
+      // the same question without leaving the machine.
       const wrapper = lazy.VirtualFolderHelper.createNewVirtualFolder(
         folderType.name,
         this.#rootFolder,
         searchFolders,
         "ALL",
-        true
+        false
       );
       const folder = wrapper.virtualFolder;
       folder.setFlag(folderType.flag);
