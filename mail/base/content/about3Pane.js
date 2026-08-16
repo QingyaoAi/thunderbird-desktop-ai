@@ -64,6 +64,7 @@ ChromeUtils.defineESModuleGetters(this, {
   MailUtils: "resource:///modules/MailUtils.sys.mjs",
   SmartMailboxUtils: "resource:///modules/SmartMailboxUtils.sys.mjs",
   TagMessageCounts: "resource:///modules/TagMessageCounts.sys.mjs",
+  VipUnreadCounts: "resource:///modules/VipUnreadCounts.sys.mjs",
   VipAddresses: "resource:///modules/SmartMailboxUtils.sys.mjs",
   TagUtils: "resource:///modules/TagUtils.sys.mjs",
   UIDensity: "resource:///modules/UIDensity.sys.mjs",
@@ -1713,7 +1714,7 @@ var folderPane = {
         const allFolder = this._smartMailbox.getAllVipFolder();
         if (allFolder) {
           this.containerList.appendChild(
-            folderPane._createVipRow(this.name, allFolder)
+            folderPane._createVipRow(this.name, allFolder, "*")
           );
         }
         for (const entry of VipAddresses.getEntries()) {
@@ -1723,7 +1724,7 @@ var folderPane = {
           );
           if (folder) {
             this.containerList.appendChild(
-              folderPane._createVipRow(this.name, folder)
+              folderPane._createVipRow(this.name, folder, entry.address)
             );
           } else {
             console.warn(
@@ -1807,6 +1808,7 @@ var folderPane = {
     Services.obs.addObserver(this, "folder-needs-repair");
     Services.obs.addObserver(this, "folder-strings-changed");
     Services.obs.addObserver(this, "tag-message-counts-changed");
+    Services.obs.addObserver(this, "vip-unread-counts-changed");
     Services.obs.addObserver(this, "server-connection-succeeded");
 
     folderTree.addEventListener("auxclick", this);
@@ -1883,6 +1885,7 @@ var folderPane = {
     Services.obs.removeObserver(this, "folder-needs-repair");
     Services.obs.removeObserver(this, "folder-strings-changed");
     Services.obs.removeObserver(this, "tag-message-counts-changed");
+    Services.obs.removeObserver(this, "vip-unread-counts-changed");
     Services.obs.removeObserver(this, "server-connection-succeeded");
   },
 
@@ -1986,6 +1989,15 @@ var folderPane = {
           row.updateFolderNames();
         }
         break;
+      case "vip-unread-counts-changed": {
+        const selector = data
+          ? `li[data-vip-address="${CSS.escape(data)}"], li[data-vip-address="*"]`
+          : "li[data-vip-address]";
+        for (const row of folderTree.querySelectorAll(selector)) {
+          row.updateUnreadMessageCount();
+        }
+        break;
+      }
       case "tag-message-counts-changed": {
         // `data` names the one tag that changed, or is null when several
         // did (or when a full recount finished).
@@ -2468,14 +2480,18 @@ var folderPane = {
    * @param {nsIMsgFolder} folder
    * @returns {FolderTreeRow}
    */
-  _createVipRow(modeName, folder) {
+  _createVipRow(modeName, folder, address) {
     const row = document.createElement("li", { is: "folder-tree-row" });
     row.modeName = modeName;
     // Marked before setFolder, which decides which counts to show: what
     // matters about a VIP is how much of their mail is still unread, not how
-    // much of it there is.
+    // much of it there is. The address is how the count is looked up; the
+    // aggregate row uses ALL_VIPS, which is not an address.
     row.dataset.vip = "true";
+    row.dataset.vipAddress = address ?? "*";
     row.setFolder(folder);
+    VipUnreadCounts.ensureCounted();
+    row.updateUnreadMessageCount();
     return row;
   },
 

@@ -10,6 +10,7 @@ ChromeUtils.defineESModuleGetters(lazy, {
   FolderUtils: "resource:///modules/FolderUtils.sys.mjs",
   MailServices: "resource:///modules/MailServices.sys.mjs",
   TagMessageCounts: "resource:///modules/TagMessageCounts.sys.mjs",
+  VipUnreadCounts: "resource:///modules/VipUnreadCounts.sys.mjs",
   XULStoreUtils: "resource:///modules/XULStoreUtils.sys.mjs",
 });
 
@@ -382,6 +383,13 @@ class FolderTreeRow extends HTMLLIElement {
   }
 
   updateUnreadMessageCount() {
+    if (this.dataset.vipAddress) {
+      // A virtual folder only maintains its unread count while its own
+      // search results are open, so reading a VIP's mail elsewhere left this
+      // number frozen. Counted directly instead.
+      this.unreadCount = lazy.VipUnreadCounts.get(this.dataset.vipAddress);
+      return;
+    }
     this.unreadCount = lazy.MailServices.folderLookup
       .getFolderForURL(this.uri)
       .getNumUnread(this.classList.contains("collapsed"));

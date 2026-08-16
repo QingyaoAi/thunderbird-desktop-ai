@@ -45,6 +45,7 @@ ChromeUtils.defineESModuleGetters(lazy, {
   MailMcpServer: "resource:///modules/MailMcpServer.sys.mjs",
   StarTagSync: "resource:///modules/StarTagSync.sys.mjs",
   TagMessageCounts: "resource:///modules/TagMessageCounts.sys.mjs",
+  VipUnreadCounts: "resource:///modules/VipUnreadCounts.sys.mjs",
   MailNotificationManager:
     "resource:///modules/MailNotificationManager.sys.mjs",
   MailServices: "resource:///modules/MailServices.sys.mjs",
@@ -973,6 +974,8 @@ MailGlue.prototype = {
         // notifications.
         task: () => {
           lazy.TagMessageCounts.start();
+          // Listeners only; the count itself waits until a VIP row is drawn.
+          lazy.VipUnreadCounts.start();
         },
       },
       {

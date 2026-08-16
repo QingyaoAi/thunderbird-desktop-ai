@@ -56,6 +56,7 @@ EXTRA_JS_MODULES += [
     "TransportErrorUrlListener.sys.mjs",
     "UIDensity.sys.mjs",
     "UIFontSize.sys.mjs",
+    "VipUnreadCounts.sys.mjs",
     "XULStoreUtils.sys.mjs",
 ]
 
