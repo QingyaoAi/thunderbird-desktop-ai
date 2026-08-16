@@ -1657,30 +1657,14 @@ pref("mail.mcp.enabled", true);
 // mcp-endpoint.json in the profile records it.
 pref("mail.mcp.port", 47821);
 
-// Folder summary databases are cached in memory, and the sweep that closes
-// idle ones only considers databases smaller than keep_open_size -- 1MB by
-// default. A large account's summaries are far bigger than that, so they were
-// exempt from closing however long they sat untouched, and max_open never
-// evicted them either because it allows more open databases than such an
-// account has folders. The result is that every folder ever visited stays
-// in memory for the session.
-//
-// Raising the size ceiling lets the big ones be closed once idle, and
-// lowering the count makes the cache evict the least recently used. The cost
-// is rereading a summary when returning to a folder left alone for a few
-// minutes, which is disk work Thunderbird already does at startup.
-//
-// Rebalanced after the first attempt made opening a unified folder slow: it
-// needs every underlying inbox at once, and this account's inbox summaries
-// are 52MB and 20MB, so evicting them means rereading both before anything
-// appears. The size ceiling is now below those, which keeps the folders
-// returned to constantly resident while everything smaller -- the great
-// majority -- still leaves memory when idle. The idle limit goes back to
-// five minutes and rather more databases are allowed open, since the cost of
-// being wrong here is felt on every click.
-pref("mail.db.keep_open_size", 8388608);
-pref("mail.db.idle_limit", 300000);
-pref("mail.db.max_open", 20);
+// Thunderbird's own defaults for the summary database cache are left alone.
+// Tuning them here saved real memory on a large account, but cost it back on
+// every click: a unified folder needs each underlying inbox at once, and a
+// virtual folder's results are small enough to be evicted first while being
+// the most expensive thing to rebuild -- re-running a search over ninety
+// thousand messages. Memory is instead reclaimed by releasing the databases
+// this fork's own passes open (TagMessageCounts, StarTagSync), which costs
+// nothing to use.
 
 // The content memory cache sizes itself to the machine rather than to the
 // job: left automatic it grows to hundreds of megabytes on a large-memory
