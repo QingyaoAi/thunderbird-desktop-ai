@@ -1669,9 +1669,18 @@ pref("mail.mcp.port", 47821);
 // lowering the count makes the cache evict the least recently used. The cost
 // is rereading a summary when returning to a folder left alone for a few
 // minutes, which is disk work Thunderbird already does at startup.
-pref("mail.db.keep_open_size", 33554432);
-pref("mail.db.idle_limit", 120000);
-pref("mail.db.max_open", 12);
+//
+// Rebalanced after the first attempt made opening a unified folder slow: it
+// needs every underlying inbox at once, and this account's inbox summaries
+// are 52MB and 20MB, so evicting them means rereading both before anything
+// appears. The size ceiling is now below those, which keeps the folders
+// returned to constantly resident while everything smaller -- the great
+// majority -- still leaves memory when idle. The idle limit goes back to
+// five minutes and rather more databases are allowed open, since the cost of
+// being wrong here is felt on every click.
+pref("mail.db.keep_open_size", 8388608);
+pref("mail.db.idle_limit", 300000);
+pref("mail.db.max_open", 20);
 
 // The content memory cache sizes itself to the machine rather than to the
 // job: left automatic it grows to hundreds of megabytes on a large-memory
