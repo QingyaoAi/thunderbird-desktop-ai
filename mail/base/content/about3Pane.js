@@ -2471,6 +2471,10 @@ var folderPane = {
   _createVipRow(modeName, folder) {
     const row = document.createElement("li", { is: "folder-tree-row" });
     row.modeName = modeName;
+    // Marked before setFolder, which decides which counts to show: what
+    // matters about a VIP is how much of their mail is still unread, not how
+    // much of it there is.
+    row.dataset.vip = "true";
     row.setFolder(folder);
     return row;
   },

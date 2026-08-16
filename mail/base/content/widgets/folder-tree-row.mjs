@@ -206,9 +206,15 @@ class FolderTreeRow extends HTMLLIElement {
     // A tag row exists to answer "how many are tagged this way", so its
     // count is the point of the row rather than extra detail, and it shows
     // whether or not total counts are switched on for ordinary folders.
+    //
+    // A VIP row is the opposite: the useful number is how much of that
+    // person's mail is still unread, which the unread badge already gives,
+    // so the total is suppressed rather than sitting beside it meaning
+    // something else.
     this.totalCountLabel.hidden =
-      !this.dataset.tagKey &&
-      !lazy.XULStoreUtils.isItemVisible("messenger", "totalMsgCount");
+      this.dataset.vip == "true" ||
+      (!this.dataset.tagKey &&
+        !lazy.XULStoreUtils.isItemVisible("messenger", "totalMsgCount"));
     this.#scheduleAriaLabelUpdate();
   }
 
