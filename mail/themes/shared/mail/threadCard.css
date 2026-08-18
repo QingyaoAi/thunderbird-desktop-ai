@@ -7,10 +7,13 @@
   --thread-child-start: 20px;
   --thread-card-content-gap: 3px;
   --thread-card-button-padding: 1px 3px;
+  --thread-card-preview-lines: 3;
   --thread-line-height: 100%;
   --read-status-new: var(--icon-sparkle-star-sm);
   --read-status-icon: var(--icon-dot);
-  --read-status-size: 16px;
+  /* dot.svg draws its circle at half the box it is given (r=4 in a 16
+   * viewBox), so the visible dot is half this number. */
+  --read-status-size: 22px;
   --inset-inline-start: 0;
 
   &[uidensity="compact"] {
@@ -19,7 +22,7 @@
     --thread-card-content-gap: 1px;
     --thread-card-button-padding: 0 3px;
     --read-status-new: var(--icon-sparkle-star-xs);
-    --read-status-size: 12px;
+    --read-status-size: 16px;
   }
 
   &[uidensity="touch"] {
@@ -79,8 +82,8 @@
     /* Unread Message */
     &[data-properties~="unread"] {
       --read-status-display: inline-block;
-      --read-status-fill: var(--color-green-40);
-      --read-status-stroke: var(--color-green-60);
+      --read-status-fill: var(--color-blue-40);
+      --read-status-stroke: var(--color-blue-60);
 
       & .card-container :is(.sender, .subject) {
         font-weight: bold;
@@ -99,7 +102,17 @@
       }
     }
 
+    /* A thread carrying unread replies marks itself in the read-status
+     * column, the same place and the same dot a standalone unread message
+     * uses. It used to be drawn as button.twisty::before, pulled -3px up and
+     * back so it sat on the twisty's own corner -- which put the unread mark
+     * on top of the control for expanding the thread, obscuring it and
+     * giving the two meanings one spot. */
     &[data-properties~="hasUnread"] {
+      --read-status-display: inline-block;
+      --read-status-fill: var(--color-blue-40);
+      --read-status-stroke: var(--color-blue-60);
+
       & .replies-icon,
       & .thread-replies {
         font-weight: bold;
@@ -111,18 +124,6 @@
       & button.twisty {
         background-color: var(--layout-background-2);
         border-color: var(--layout-background-4);
-
-        &::before {
-          position: absolute;
-          inset-inline-start: -3px;
-          inset-block-start: -3px;
-          content: var(--icon-dot-xs);
-          -moz-context-properties: fill, stroke;
-          fill: var(--color-green-50);
-          stroke: var(--color-green-60);
-          overflow: visible;
-          line-height: 0;
-        }
 
         & .thread-replies {
           color: var(--unread-color);
@@ -149,11 +150,9 @@
           color: var(--new-color);
         }
 
-        & button.twisty::before {
-          content: var(--icon-sparkle-star-xs);
-          fill: var(--color-yellow-30);
-          stroke: var(--color-amber-50);
-        }
+        --read-status-icon: var(--read-status-new);
+        --read-status-fill: var(--color-yellow-30);
+        --read-status-stroke: var(--color-amber-50);
 
         & .thread-replies {
           color: var(--new-color);
@@ -340,13 +339,26 @@
           padding: 0;
           margin: 0;
           position: relative;
+          /* The column is a flex container, so this row would otherwise be
+           * shrunk below the clamped text's height and cut the last line. */
+          flex-shrink: 0;
         }
 
+        /* Clamped to --thread-card-preview-lines lines. Kept in step with
+         * previewRowHeight in about3Pane.js densityChange(), which reserves
+         * the row height for exactly this many lines. Change both. */
         & .preview {
-          display: block;
+          display: -webkit-box;
+          -webkit-box-orient: vertical;
+          -webkit-line-clamp: var(--thread-card-preview-lines);
           overflow: hidden;
-          text-overflow: ellipsis;
-          white-space: nowrap;
+          /* The enclosing td sets white-space: nowrap and it inherits, so the
+           * preview has to opt back into wrapping or it stays one line no
+           * matter what the clamp says. anywhere breaks the long unspaced
+           * URLs that turn up in mail, which would otherwise leave a line
+           * mostly empty before being clipped. */
+          white-space: normal;
+          overflow-wrap: anywhere;
           line-height: 1.3;
           font-size: 0.85rem;
           opacity: 0.75;
@@ -480,13 +492,6 @@
 
     & .thread-card-subject-container {
       padding-inline-start: 0;
-    }
-
-    & button.twisty::before {
-      inset-inline-start: -2px;
-      inset-block-start: -2px;
-      inline-size: 12px;
-      block-size: 12px;
     }
 
     & .replies-icon,

@@ -742,8 +742,11 @@ th.column-dragging {
  * ------------------------------------------------------------------------ */
 
 #threadTree[rows="thread-card"] {
-  /* Room to breathe, which is most of what makes Mail.app's list readable. */
-  --card-container-padding-block: 5px;
+  /* Room to breathe, which is most of what makes Mail.app's list readable.
+   * Paired with densityPaddingConstant in about3Pane.js densityChange(): this
+   * is the row's padding-block, and ROW_HEIGHT has to include it or the card
+   * content overflows the slot the virtualized list gives it. Change both. */
+  --card-container-padding-block: 8px;
 
   & .card-layout > td {
     padding-inline: 6px;
@@ -769,13 +772,12 @@ th.column-dragging {
    */
   --thread-row-separator: light-dark(rgba(0, 0, 0, 0.12), rgba(255, 255, 255, 0.20));
 
+  /* The hairline stays put when the row is selected. It sits on the row's
+   * bottom edge, which is --card-container-padding-block clear of the filled
+   * card above it, so it never touches the fill -- it just goes on separating
+   * the selection from the next message, the way every other row is
+   * separated. */
   & .card-layout:not(:last-of-type) > td {
     box-shadow: inset 0 -1px 0 var(--thread-row-separator);
-  }
-
-  /* A selected row is a single filled shape, so the separator under it would
-   * cut across the fill. */
-  & .card-layout.selected > td {
-    box-shadow: none;
   }
 }

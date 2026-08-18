@@ -102,8 +102,10 @@ body {
       inset-block-start: 8px;
       content: var(--icon-dot);
       -moz-context-properties: fill, stroke;
-      fill: var(--color-green-50);
-      stroke: var(--color-green-60);
+      /* Same pair as the message list's unread dot, so one message reads the
+       * same in the list and in the thread it belongs to. */
+      fill: var(--color-blue-40);
+      stroke: var(--color-blue-60);
       overflow: visible;
     }
   }

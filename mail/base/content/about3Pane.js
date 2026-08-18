@@ -5351,13 +5351,19 @@ var threadPane = {
     // subject line-height * this.rowCount * current font-size.
     const cardRowConstant = Math.round(1.5 * this.rowCount * currentFontSize);
     // Extra height for the card's body-preview row (see thread-card.mjs /
-    // ".preview" in threadCard.css): a single ellipsized line at ~0.85x the
-    // UI font size and 1.3 line-height. This has to be tracked explicitly
+    // ".preview" in threadCard.css): PREVIEW_LINES clamped lines at ~0.85x
+    // the UI font size and 1.3 line-height. This has to be tracked explicitly
     // here, same as the other rows above, because ROW_HEIGHT is what the
     // virtualized list uses to size each row's slot -- if it doesn't
     // account for this row, the preview's actual rendered content
-    // overflows whatever slot height gets computed without it.
-    const previewRowHeight = Math.round(1.3 * 0.85 * currentFontSize);
+    // overflows whatever slot height gets computed without it. Keep in step
+    // with --thread-card-preview-lines in threadCard.css.
+    // Round the line box up before multiplying, not the total after: the
+    // layout rounds each line, so rounding the total can land a pixel or two
+    // short of the three stacked lines and clip the last one.
+    const PREVIEW_LINES = 3;
+    const previewRowHeight =
+      Math.ceil(1.3 * 0.85 * currentFontSize) * PREVIEW_LINES;
     let rowHeight = Math.ceil(currentFontSize * 1.4);
     let lineGap;
     let densityPaddingConstant;
@@ -5366,7 +5372,7 @@ var threadPane = {
       case UIDensity.MODE_COMPACT:
         // Calculation based on card components:
         lineGap = 1;
-        densityPaddingConstant = 3; // card padding-block + 2 * row padding-block
+        densityPaddingConstant = 9; // card padding-block + 2 * row padding-block
         cardRowHeight =
           cardRowConstant +
           lineGap * this.rowCount +
@@ -5377,7 +5383,7 @@ var threadPane = {
       case UIDensity.MODE_TOUCH:
         rowHeight = rowHeight + 13;
         lineGap = 6;
-        densityPaddingConstant = 12; // card padding-block + 2 * row padding-block
+        densityPaddingConstant = 18; // card padding-block + 2 * row padding-block
         cardRowHeight =
           cardRowConstant +
           lineGap * this.rowCount +
@@ -5388,7 +5394,7 @@ var threadPane = {
       default:
         rowHeight = rowHeight + 7;
         lineGap = 3;
-        densityPaddingConstant = 7; // card padding-block + 2 * row padding-block
+        densityPaddingConstant = 13; // card padding-block + 2 * row padding-block
         cardRowHeight =
           cardRowConstant +
           lineGap * this.rowCount +

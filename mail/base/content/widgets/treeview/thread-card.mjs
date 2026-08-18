@@ -22,9 +22,9 @@ ChromeUtils.defineESModuleGetters(lazy, {
 });
 
 // How many characters of body text to keep for the preview; the CSS clamps
-// the display to a single line regardless, so this only needs to be long
-// enough to fill one wide row.
-const PREVIEW_SNIPPET_LENGTH = 160;
+// the display to PREVIEW_LINES lines regardless, so this only needs to be
+// long enough to fill that many lines on a wide row.
+const PREVIEW_SNIPPET_LENGTH = 420;
 
 // Body-preview text keyed by "<folder URI>#<message key>", shared by every
 // card row instance so scrolling back to an already-fetched row is instant
@@ -38,6 +38,23 @@ function cachePreview(key, text) {
     previewCache.delete(previewCache.keys().next().value);
   }
   previewCache.set(key, text);
+}
+
+// Which child of a collapsed thread is the newest, keyed by
+// "<thread key>#<child count>". Finding it means reading every child's date,
+// and that happens before the preview cache can be consulted -- so without
+// this, scrolling past a long conversation re-walked the whole thread every
+// time one of its rows was recycled. The child count is part of the key so
+// the answer is dropped as soon as the thread gains or loses a message.
+// Only the index is kept, never the header, so this retains nothing.
+const newestChildCache = new Map();
+const NEWEST_CHILD_CACHE_MAX = 500;
+
+function cacheNewestChild(key, childIndex) {
+  if (newestChildCache.size >= NEWEST_CHILD_CACHE_MAX) {
+    newestChildCache.delete(newestChildCache.keys().next().value);
+  }
+  newestChildCache.set(key, childIndex);
 }
 
 /**
@@ -57,15 +74,28 @@ function previewHeaderFor(view, index, isCollapsedThread) {
   if (!thread) {
     return ownHdr;
   }
+  const numChildren = thread.numChildren;
+  const memoKey = `${thread.threadKey}#${numChildren}`;
+  const memo = newestChildCache.get(memoKey);
+  if (memo !== undefined) {
+    const hdr = thread.getChildHdrAt(memo);
+    if (hdr) {
+      return hdr;
+    }
+  }
   let newestHdr = null;
   let newestDate = -1;
-  const numChildren = thread.numChildren;
+  let newestIndex = -1;
   for (let i = 0; i < numChildren; i++) {
     const hdr = thread.getChildHdrAt(i);
     if (hdr && hdr.date > newestDate) {
       newestDate = hdr.date;
       newestHdr = hdr;
+      newestIndex = i;
     }
+  }
+  if (newestIndex >= 0) {
+    cacheNewestChild(memoKey, newestIndex);
   }
   return newestHdr || ownHdr;
 }
