@@ -14,6 +14,7 @@
 #include "nsIDBFolderInfo.h"
 #include "nsMsgMessageFlags.h"
 #include "nsMsgUtils.h"
+#include "nsTHashSet.h"
 
 nsMsgQuickSearchDBView::nsMsgQuickSearchDBView() {
   m_usingCachedHits = false;
@@ -460,6 +461,12 @@ nsresult nsMsgQuickSearchDBView::SortThreads(
   m_keys.Sort();
   // array of the threads' root hdr keys.
   nsTArray<nsMsgKey> threadRootIds;
+  // Which roots have been taken already. This array used to be kept sorted
+  // so that a binary search could answer that, which meant every root was
+  // inserted into the middle of it -- an O(n) shift for each row of the
+  // view, and quadratic over a large result. A set answers it outright, so
+  // roots are appended and the order restored once, below.
+  nsTHashSet<nsMsgKey> seenRoots;
   nsCOMPtr<nsIMsgDBHdr> rootHdr;
   nsCOMPtr<nsIMsgDBHdr> msgHdr;
   nsCOMPtr<nsIMsgThread> threadHdr;
@@ -469,19 +476,19 @@ nsresult nsMsgQuickSearchDBView::SortThreads(
     if (threadHdr) {
       nsMsgKey rootKey;
       threadHdr->GetChildKeyAt(0, &rootKey);
-      nsMsgViewIndex threadRootIndex = threadRootIds.BinaryIndexOf(rootKey);
       // if we already have that id in top level threads, ignore this msg.
-      if (threadRootIndex != nsMsgViewIndex_None) continue;
-      // it would be nice if GetInsertIndexHelper always found the hdr, but it
-      // doesn't.
+      if (seenRoots.Contains(rootKey)) continue;
       threadHdr->GetChildHdrAt(0, getter_AddRefs(rootHdr));
       if (!rootHdr) continue;
-      threadRootIndex = GetInsertIndexHelper(rootHdr, threadRootIds, nullptr,
-                                             nsMsgViewSortOrder::ascending,
-                                             nsMsgViewSortType::byId);
-      threadRootIds.InsertElementAt(threadRootIndex, rootKey);
+      seenRoots.Insert(rootKey);
+      threadRootIds.AppendElement(rootKey);
     }
   }
+
+  // Put the roots back into ascending key order, which is what inserting each
+  // one in its place used to leave behind and what the sort below expects to
+  // start from.
+  threadRootIds.Sort();
 
   // Need to sort the top level threads now by sort order, even if it's by id
   // and ascending (which is the order per above), to ensure certain side
