@@ -81,6 +81,10 @@ export const VipUnreadCounts = {
   _notifyTimer: null,
   _pendingKey: undefined,
   _recountTimer: null,
+  /** Folders whose unread count changed since the last debounced recount. */
+  _dirtyFolders: new Set(),
+  /** Per-folder tallies, keyed by folder URI; totals are derived from these. */
+  _perFolder: new Map(),
 
   /** @type {Map<string, number>} Address to unread count. */
   _counts: new Map(),
@@ -157,24 +161,88 @@ export const VipUnreadCounts = {
     }, NOTIFY_DELAY);
   },
 
-  /**
-   * @param {string} address
-   * @param {integer} delta
-   */
-  _bump(address, delta) {
-    if (!delta || !this._addresses().has(address)) {
-      return;
-    }
-    for (const key of [address, ALL_VIPS]) {
-      const next = Math.max(0, (this._counts.get(key) ?? 0) + delta);
-      this._counts.set(key, next);
-    }
-    this._notify(address);
-  },
-
   /** @returns {Set<string>} The VIP addresses, lowercased. */
   _addresses() {
     return new Set(lazy.VipAddresses.get().map(a => a.toLowerCase()));
+  },
+
+  /**
+   * Count unread mail from each wanted address in one folder.
+   *
+   * @param {nsIMsgFolder} folder
+   * @param {Set<string>} wanted
+   * @returns {Promise<Map<string, number>>} Per-address counts for this
+   *   folder alone. ALL_VIPS is not included; it is derived in _recompute.
+   */
+  async _countFolder(folder, wanted) {
+    const counts = new Map();
+    if (!wanted.size || folder.isSpecialFolder(UNCOUNTED_FOLDER_FLAGS, true)) {
+      return counts;
+    }
+    // Nothing unread here, so nothing this pass cares about -- and this
+    // avoids opening the database at all, which on a large account is the
+    // whole cost.
+    if (!folder.getNumUnread(false)) {
+      return counts;
+    }
+
+    const wasOpen = folder.databaseOpen;
+    let database;
+    try {
+      database = folder.msgDatabase;
+    } catch (ex) {
+      return counts;
+    }
+    let scanned = 0;
+    try {
+      for (const hdr of database.enumerateMessages()) {
+        if (!isUnread(hdr)) {
+          continue;
+        }
+        const from = senderAddress(hdr);
+        if (wanted.has(from)) {
+          counts.set(from, (counts.get(from) ?? 0) + 1);
+        }
+        if (++scanned % SCAN_CHUNK == 0) {
+          await new Promise(r => lazy.setTimeout(r, 0));
+        }
+      }
+    } catch (ex) {
+      console.warn(`Could not count VIP mail in ${folder.URI}:`, ex);
+    } finally {
+      if (!wasOpen) {
+        // Clear the folder's reference, not just the one held here:
+        // database.close() leaves folder.msgDatabase set and the summary
+        // stays in memory for the rest of the session.
+        try {
+          folder.msgDatabase = null;
+        } catch (ex) {
+          // Already released, or in use elsewhere.
+        }
+      }
+    }
+    return counts;
+  },
+
+  /**
+   * Add the per-folder tallies up into the totals callers read, including
+   * the ALL_VIPS aggregate. Totals are always derived from the per-folder
+   * counts rather than adjusted in place, so repeated updates cannot drift
+   * away from what a full recount would produce.
+   */
+  _recompute() {
+    const totals = new Map();
+    let all = 0;
+    for (const perAddress of this._perFolder.values()) {
+      for (const [address, n] of perAddress) {
+        totals.set(address, (totals.get(address) ?? 0) + n);
+        all += n;
+      }
+    }
+    if (all) {
+      totals.set(ALL_VIPS, all);
+    }
+    this._counts = totals;
   },
 
   /**
@@ -189,8 +257,7 @@ export const VipUnreadCounts = {
     this._scanning = true;
 
     const wanted = this._addresses();
-    const counts = new Map();
-    let scanned = 0;
+    const perFolder = new Map();
 
     try {
       if (wanted.size) {
@@ -202,47 +269,9 @@ export const VipUnreadCounts = {
             continue;
           }
           for (const folder of folders) {
-            if (folder.isSpecialFolder(UNCOUNTED_FOLDER_FLAGS, true)) {
-              continue;
-            }
-            // Nothing unread here, so nothing this pass cares about -- and
-            // this avoids opening the database at all, which on a large
-            // account is the whole cost.
-            if (!folder.getNumUnread(false)) {
-              continue;
-            }
-
-            const wasOpen = folder.databaseOpen;
-            let database;
-            try {
-              database = folder.msgDatabase;
-            } catch (ex) {
-              continue;
-            }
-            try {
-              for (const hdr of database.enumerateMessages()) {
-                if (!isUnread(hdr)) {
-                  continue;
-                }
-                const from = senderAddress(hdr);
-                if (wanted.has(from)) {
-                  counts.set(from, (counts.get(from) ?? 0) + 1);
-                  counts.set(ALL_VIPS, (counts.get(ALL_VIPS) ?? 0) + 1);
-                }
-                if (++scanned % SCAN_CHUNK == 0) {
-                  await new Promise(r => lazy.setTimeout(r, 0));
-                }
-              }
-            } catch (ex) {
-              console.warn(`Could not count VIP mail in ${folder.URI}:`, ex);
-            } finally {
-              if (!wasOpen) {
-                try {
-                  database.close(false);
-                } catch (ex) {
-                  // Already closed, or in use elsewhere.
-                }
-              }
+            const counts = await this._countFolder(folder, wanted);
+            if (counts.size) {
+              perFolder.set(folder.URI, counts);
             }
           }
         }
@@ -251,10 +280,11 @@ export const VipUnreadCounts = {
       this._scanning = false;
     }
 
-    this._counts = counts;
+    this._perFolder = perFolder;
+    this._recompute();
     this.ready = true;
     this._notify(null);
-    return counts;
+    return this._counts;
   },
 
   // -- staying current -----------------------------------------------------
@@ -263,25 +293,61 @@ export const VipUnreadCounts = {
     if (property != "TotalUnreadMessages" || !this.ready) {
       return;
     }
-    // Recounted rather than adjusted: the notification says how many unread
-    // messages the folder now has, not which ones changed, and guessing the
-    // sender from that is not possible. Debounced because reading a run of
-    // messages fires this for each one, and the recount only reads folders
-    // that have unread mail in them.
+    // The notification says how many unread messages the folder now has, not
+    // which ones changed, so the folder is recounted rather than adjusted --
+    // but only *that* folder. Rescanning every account here meant a run of
+    // messages being read re-read every inbox on the machine, which is also
+    // work that reopens summaries this fork otherwise takes care to release.
+    // Debounced because reading a run of messages fires this for each one.
+    this._dirtyFolders.add(folder);
     if (this._recountTimer) {
       lazy.clearTimeout(this._recountTimer);
     }
     this._recountTimer = lazy.setTimeout(() => {
       this._recountTimer = null;
-      this.refresh().catch(ex =>
+      const dirty = [...this._dirtyFolders];
+      this._dirtyFolders.clear();
+      this._recountFolders(dirty).catch(ex =>
         console.warn("Could not recount unread VIP mail:", ex)
       );
     }, 400);
   },
 
+  /**
+   * Recount just the folders whose unread count moved, then re-derive the
+   * totals. Exact, because each folder's contribution is replaced wholesale
+   * rather than nudged.
+   *
+   * @param {nsIMsgFolder[]} folders
+   */
+  async _recountFolders(folders) {
+    if (this._scanning) {
+      // A full refresh is already under way and will supersede this.
+      return;
+    }
+    const wanted = this._addresses();
+    for (const folder of folders) {
+      const counts = await this._countFolder(folder, wanted);
+      if (counts.size) {
+        this._perFolder.set(folder.URI, counts);
+      } else {
+        this._perFolder.delete(folder.URI);
+      }
+    }
+    this._recompute();
+    this._notify(null);
+  },
+
   onFolderAdded() {},
   onMessageAdded() {},
-  onFolderRemoved() {},
+  onFolderRemoved(_parent, child) {
+    // Drop its contribution, so a removed folder's unread mail stops
+    // counting towards the totals.
+    if (child?.URI && this._perFolder.delete(child.URI)) {
+      this._recompute();
+      this._notify(null);
+    }
+  },
   onMessageRemoved() {},
   onFolderPropertyChanged() {},
   onFolderBoolPropertyChanged() {},
