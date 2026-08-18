@@ -23,6 +23,7 @@
 const lazy = {};
 ChromeUtils.defineESModuleGetters(lazy, {
   MailServices: "resource:///modules/MailServices.sys.mjs",
+  MailboxScan: "resource:///modules/MailboxScan.sys.mjs",
   VipAddresses: "resource:///modules/SmartMailboxUtils.sys.mjs",
   clearTimeout: "resource://gre/modules/Timer.sys.mjs",
   setTimeout: "resource://gre/modules/Timer.sys.mjs",
@@ -257,24 +258,38 @@ export const VipUnreadCounts = {
     this._scanning = true;
 
     const wanted = this._addresses();
-    const perFolder = new Map();
+    let perFolder = new Map();
 
     try {
       if (wanted.size) {
-        for (const server of lazy.MailServices.accounts.allServers) {
-          let folders;
-          try {
-            folders = server.rootFolder.descendants;
-          } catch (ex) {
-            continue;
-          }
-          for (const folder of folders) {
-            const counts = await this._countFolder(folder, wanted);
-            if (counts.size) {
+        // Shared with the other counters that need every header, so the
+        // large summaries are read once between them rather than once each.
+        await lazy.MailboxScan.scanAll({
+          wants: folder =>
+            !folder.isSpecialFolder(UNCOUNTED_FOLDER_FLAGS, true) &&
+            // Nothing unread here, so nothing this pass cares about -- and
+            // if no other consumer wants it either, the database is never
+            // opened, which on a large account is the whole cost.
+            Boolean(folder.getNumUnread(false)),
+          begin: () => {
+            perFolder = new Map();
+          },
+          onMessage: (hdr, folder) => {
+            if (!isUnread(hdr)) {
+              return;
+            }
+            const from = senderAddress(hdr);
+            if (!wanted.has(from)) {
+              return;
+            }
+            let counts = perFolder.get(folder.URI);
+            if (!counts) {
+              counts = new Map();
               perFolder.set(folder.URI, counts);
             }
-          }
-        }
+            counts.set(from, (counts.get(from) ?? 0) + 1);
+          },
+        });
       }
     } finally {
       this._scanning = false;

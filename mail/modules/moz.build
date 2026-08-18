@@ -29,6 +29,7 @@ EXTRA_JS_MODULES += [
     "FolderTreeProperties.sys.mjs",
     "GlobalPopupNotifications.sys.mjs",
     "LinkHelper.sys.mjs",
+    "MailboxScan.sys.mjs",
     "MailConsts.sys.mjs",
     "MailE10SUtils.sys.mjs",
     "MailMcpServer.sys.mjs",

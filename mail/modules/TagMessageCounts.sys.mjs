@@ -26,15 +26,13 @@
 const lazy = {};
 ChromeUtils.defineESModuleGetters(lazy, {
   MailServices: "resource:///modules/MailServices.sys.mjs",
+  MailboxScan: "resource:///modules/MailboxScan.sys.mjs",
   setTimeout: "resource://gre/modules/Timer.sys.mjs",
   clearTimeout: "resource://gre/modules/Timer.sys.mjs",
 });
 
 /** Sent when any count changes. Data is the tag key, or null for "several". */
 export const TAG_COUNTS_CHANGED = "tag-message-counts-changed";
-
-/** How many messages to scan before yielding, so startup stays responsive. */
-const SCAN_CHUNK = 500;
 
 /** Notifications are coalesced over this long, in ms. */
 const NOTIFY_DELAY = 250;
@@ -207,73 +205,21 @@ export const TagMessageCounts = {
     }
     this._scanning = true;
 
-    const counts = new Map();
-    let scanned = 0;
-
+    // Shared with the other counters that need every header, so the large
+    // summaries are read once between them rather than once each.
+    let counts = new Map();
     try {
-      for (const server of lazy.MailServices.accounts.allServers) {
-        let folders;
-        try {
-          folders = server.rootFolder.descendants;
-        } catch (ex) {
-          console.warn(`Could not list folders for ${server.prettyName}:`, ex);
-          continue;
-        }
-
-        for (const folder of folders) {
-          if (!isCounted(folder)) {
-            continue;
+      await lazy.MailboxScan.scanAll({
+        wants: folder => isCounted(folder),
+        begin: () => {
+          counts = new Map();
+        },
+        onMessage: hdr => {
+          for (const key of keywordsToKeys(hdr.getStringProperty("keywords"))) {
+            counts.set(key, (counts.get(key) ?? 0) + 1);
           }
-
-          // Opening a folder's database keeps it in memory until something
-          // closes it. Walking every folder on a large account therefore
-          // pins every summary file open -- tens of thousands of messages
-          // apiece -- for the rest of the session. Note which ones were
-          // already open so only the ones opened here are released.
-          const wasOpen = folder.databaseOpen;
-          let database;
-          try {
-            database = folder.msgDatabase;
-          } catch (ex) {
-            // A folder whose summary file is missing would have to be
-            // rebuilt, which is too heavy a side effect for a count.
-            continue;
-          }
-          if (!database) {
-            continue;
-          }
-
-          try {
-            for (const hdr of database.enumerateMessages()) {
-              for (const key of keywordsToKeys(
-                hdr.getStringProperty("keywords")
-              )) {
-                counts.set(key, (counts.get(key) ?? 0) + 1);
-              }
-              if (++scanned % SCAN_CHUNK == 0) {
-                await new Promise(resolve => lazy.setTimeout(resolve, 0));
-              }
-            }
-          } catch (ex) {
-            console.warn(`Could not count tags in ${folder.URI}:`, ex);
-          } finally {
-            if (!wasOpen) {
-              // Clear the folder's reference, not just the one held here.
-              // database.close() releases this caller's handle but leaves
-              // folder.msgDatabase set, so the summary stays in memory for
-              // the rest of the session -- exactly what this is meant to
-              // prevent. Assigning null is how MsgDBCacheManager evicts an
-              // idle database; it commits first, which costs nothing when,
-              // as here, nothing was written.
-              try {
-                folder.msgDatabase = null;
-              } catch (ex) {
-                // Already released, or in use elsewhere.
-              }
-            }
-          }
-        }
-      }
+        },
+      });
     } finally {
       this._scanning = false;
     }
