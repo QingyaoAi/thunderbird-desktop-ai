@@ -438,7 +438,9 @@ class SmartMailbox {
       const folderInfo = msgDatabase.dBFolderInfo;
       folderInfo.setUint32Property("searchFolderFlag", folderType.flag);
       msgDatabase.summaryValid = true;
-      msgDatabase.close(true);
+      // Commit and release the folder's own reference. close() only drops
+      // the handle held here, leaving the summary open for the session.
+      folder.msgDatabase = null;
 
       this.#rootFolder.notifyFolderAdded(folder);
     } catch (ex) {
@@ -489,7 +491,9 @@ class SmartMailbox {
       );
       folderInfo.setBooleanProperty("searchOnline", false);
       msgDatabase.summaryValid = true;
-      msgDatabase.close(true);
+      // Commit and release the folder's own reference. close() only drops
+      // the handle held here, leaving the summary open for the session.
+      folder.msgDatabase = null;
 
       this.#tagsFolder.notifyFolderAdded(folder);
       return folder;
@@ -595,7 +599,8 @@ class SmartMailbox {
           msgDatabase.dBFolderInfo.setCharProperty("searchStr", searchStr);
         }
         msgDatabase.summaryValid = true;
-        msgDatabase.close(true);
+        // Commit and release the folder's own reference; see above.
+        folder.msgDatabase = null;
       }
       return folder;
     }
@@ -616,7 +621,9 @@ class SmartMailbox {
       );
       folderInfo.setBooleanProperty("searchOnline", false);
       msgDatabase.summaryValid = true;
-      msgDatabase.close(true);
+      // Commit and release the folder's own reference. close() only drops
+      // the handle held here, leaving the summary open for the session.
+      folder.msgDatabase = null;
 
       this.#vipFolder.notifyFolderAdded(folder);
       return folder;

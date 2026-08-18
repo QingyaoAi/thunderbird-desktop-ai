@@ -258,11 +258,17 @@ export const TagMessageCounts = {
             console.warn(`Could not count tags in ${folder.URI}:`, ex);
           } finally {
             if (!wasOpen) {
-              // Nothing was written, so there is nothing to commit.
+              // Clear the folder's reference, not just the one held here.
+              // database.close() releases this caller's handle but leaves
+              // folder.msgDatabase set, so the summary stays in memory for
+              // the rest of the session -- exactly what this is meant to
+              // prevent. Assigning null is how MsgDBCacheManager evicts an
+              // idle database; it commits first, which costs nothing when,
+              // as here, nothing was written.
               try {
-                database.close(false);
+                folder.msgDatabase = null;
               } catch (ex) {
-                // Already closed, or in use elsewhere.
+                // Already released, or in use elsewhere.
               }
             }
           }

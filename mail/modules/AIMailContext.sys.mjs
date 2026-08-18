@@ -500,12 +500,25 @@ export const AIMailContext = {
    *   and the message a reply should respond to.
    */
   async threadForReply(hdr, maxMessages = 10, maxCharsPerMessage = 3000) {
-    const thread = hdr.folder.msgDatabase.getThreadContainingMsgHdr(hdr);
+    // Reading .msgDatabase opens the folder's summary if it wasn't already
+    // open, and nothing else here would close it again -- on a large folder
+    // that pins tens of megabytes for the rest of the session. Release it
+    // only if this call is what opened it.
+    const folder = hdr.folder;
+    const dbWasOpen = folder.databaseOpen;
+    const thread = folder.msgDatabase.getThreadContainingMsgHdr(hdr);
     const headers = [];
     for (let i = 0; i < thread.numChildren; i++) {
       const child = thread.getChildHdrAt(i);
       if (child) {
         headers.push(child);
+      }
+    }
+    if (!dbWasOpen) {
+      try {
+        folder.msgDatabase = null;
+      } catch (ex) {
+        // Already released, or in use elsewhere.
       }
     }
     headers.sort((a, b) => a.date - b.date);

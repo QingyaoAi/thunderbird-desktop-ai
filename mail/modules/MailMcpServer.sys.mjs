@@ -321,17 +321,37 @@ const Methods = {
     } else if (filters.folders.length) {
       // No text to rank by, so read the folders themselves, newest first.
       for (const folder of filters.folders) {
+        // Reading .msgDatabase opens the summary; put it back afterwards if
+        // it wasn't already open, so listing a folder doesn't pin it for
+        // the session.
+        const dbWasOpen = folder.databaseOpen;
         let database;
         try {
           database = folder.msgDatabase;
         } catch (ex) {
           continue;
         }
-        for (const hdr of database.enumerateMessages()) {
-          candidates.push({ hdr, snippet: "" });
+        try {
+          // Collect the headers themselves rather than a wrapper object per
+          // message: on a folder with tens of thousands of messages the
+          // wrappers were the bulk of the allocation, and the snippet they
+          // carried was always empty on this path anyway.
+          for (const hdr of database.enumerateMessages()) {
+            candidates.push(hdr);
+          }
+        } finally {
+          if (!dbWasOpen) {
+            try {
+              folder.msgDatabase = null;
+            } catch (ex) {
+              // Already released, or in use elsewhere.
+            }
+          }
         }
       }
-      candidates.sort((a, b) => (b.hdr.date ?? 0) - (a.hdr.date ?? 0));
+      candidates.sort((a, b) => (b.date ?? 0) - (a.date ?? 0));
+      // Match the shape the gloda branch produces before the shared tail.
+      candidates = candidates.map(hdr => ({ hdr, snippet: "" }));
     } else {
       throw new Error(
         "search needs a query, or a folder to filter within"
@@ -372,7 +392,12 @@ const Methods = {
    */
   async getThread(params) {
     const hdr = hdrFromUri(String(params?.id ?? ""));
-    const thread = hdr.folder.msgDatabase.getThreadContainingMsgHdr(hdr);
+    // Reading .msgDatabase opens the folder's summary; release it again if
+    // this call is what opened it, so a tool call doesn't pin a large
+    // folder in memory for the rest of the session.
+    const folder = hdr.folder;
+    const dbWasOpen = folder.databaseOpen;
+    const thread = folder.msgDatabase.getThreadContainingMsgHdr(hdr);
     const messages = [];
     for (let i = 0; i < thread.numChildren; i++) {
       const child = thread.getChildHdrAt(i);
@@ -383,6 +408,13 @@ const Methods = {
       messages.push(
         params?.includeBodies === false ? json : { ...json, ...(await bodyOf(child)) }
       );
+    }
+    if (!dbWasOpen) {
+      try {
+        folder.msgDatabase = null;
+      } catch (ex) {
+        // Already released, or in use elsewhere.
+      }
     }
     messages.sort((a, b) => (a.date ?? "").localeCompare(b.date ?? ""));
     return { count: messages.length, messages };

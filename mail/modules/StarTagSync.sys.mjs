@@ -287,10 +287,13 @@ export const StarTagSync = {
     } finally {
       if (!wasOpen) {
         try {
-          // Committed, because this pass may have written keywords.
-          database.close(true);
+          // Assigning null commits -- which this pass needs, since it may
+          // have written keywords -- and also clears the folder's own
+          // reference. database.close() only released the handle held here,
+          // leaving the summary in memory for the rest of the session.
+          folder.msgDatabase = null;
         } catch (ex) {
-          // Already closed, or in use elsewhere.
+          // Already released, or in use elsewhere.
         }
       }
     }
