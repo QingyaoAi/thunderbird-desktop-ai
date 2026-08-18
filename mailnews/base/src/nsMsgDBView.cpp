@@ -5572,8 +5572,12 @@ nsresult nsMsgDBView::MarkThreadRead(nsIMsgThread* threadHdr,
     if (isRead != bRead) {
       // MarkRead will change the unread count on the thread.
       db->MarkRead(msgKey, bRead, nullptr);
-      // Insert at the front. Should we insert at the end?
-      idsMarkedRead.InsertElementAt(0, msgKey);
+      // Appended rather than inserted at the front: inserting at index 0
+      // shifts everything already collected, so ignoring a long thread cost
+      // a quadratic amount of copying to build this. Nothing reads the order
+      // -- both callers pass an array they never look at again -- and the
+      // equivalent in nsMsgDatabase::MarkThreadRead appends too.
+      idsMarkedRead.AppendElement(msgKey);
     }
   }
 
