@@ -19,6 +19,7 @@
 #include "nsMsgMessageFlags.h"
 #include "nsIMsgSearchSession.h"
 #include "nsIMsgImapMailFolder.h"
+#include "nsTHashSet.h"
 
 using mozilla::Preferences;
 
@@ -421,6 +422,21 @@ nsresult nsMsgSearchDBView::AddHdrFromFolder(nsIMsgDBHdr* msgHdr,
     }
 
     AddMsgToHashTables(msgHdr, thread);
+
+    if (m_addingHdrsInBulk) {
+      // Defer laying out the flat view array; just record the header's
+      // place within its thread. FinishBulkThreadAdd() builds the whole
+      // view in one pass once all headers from this batch have been
+      // added, instead of shifting the view array once per message here.
+      nsCOMPtr<nsIMsgDBHdr> bulkParent;
+      uint32_t bulkPosInThread;
+      bool reparentChildren =
+          (newThread || !viewThread->MsgCount()) ? false : msgIsReferredTo;
+      viewThread->AddHdr(msgHdr, reparentChildren, bulkPosInThread,
+                         getter_AddRefs(bulkParent));
+      return NS_OK;
+    }
+
     nsCOMPtr<nsIMsgDBHdr> parent;
     uint32_t posInThread;
     // We need to move threads in order to keep ourselves sorted
@@ -1241,6 +1257,71 @@ nsresult nsMsgSearchDBView::AddMsgToHashTables(nsIMsgDBHdr* msgHdr,
   }
 
   return AddRefToHash(messageId, thread);
+}
+
+nsresult nsMsgSearchDBView::FinishBulkThreadAdd() {
+  // m_threadsTable maps several different keys (message-id, each
+  // reference, and possibly subject) to the same nsMsgXFViewThread, so
+  // dedupe by identity to get one row per thread.
+  nsTHashSet<nsIMsgThread*> seenThreads;
+  for (auto iter = m_threadsTable.Iter(); !iter.Done(); iter.Next()) {
+    nsIMsgThread* thread = iter.Data();
+    if (!thread || seenThreads.Contains(thread)) continue;
+    seenThreads.Insert(thread);
+
+    nsCOMPtr<nsIMsgDBHdr> rootHdr;
+    thread->GetChildHdrAt(0, getter_AddRefs(rootHdr));
+    if (!rootHdr) continue;
+
+    nsMsgKey msgKey;
+    uint32_t msgFlags;
+    rootHdr->GetMessageKey(&msgKey);
+    rootHdr->GetFlags(&msgFlags);
+
+    uint32_t numChildren = 0;
+    thread->GetNumChildren(&numChildren);
+    if (numChildren > 1) {
+      msgFlags |= MSG_VIEW_FLAG_HASCHILDREN | MSG_VIEW_FLAG_ISTHREAD;
+      if (!(m_viewFlags & nsMsgViewFlagsType::kExpandAll))
+        msgFlags |= nsMsgMessageFlags::Elided;
+    } else {
+      msgFlags |= MSG_VIEW_FLAG_ISTHREAD;
+    }
+
+    nsCOMPtr<nsIMsgFolder> folder;
+    rootHdr->GetFolder(getter_AddRefs(folder));
+    m_keys.AppendElement(msgKey);
+    m_flags.AppendElement(msgFlags);
+    m_levels.AppendElement(0);
+    m_folders.AppendObject(folder);
+  }
+
+  // Sort the one-row-per-thread array into its final order. This is the
+  // same "flatten to roots, sort, then re-expand" approach
+  // nsMsgThreadedDBView::SortThreads() uses when re-sorting an existing
+  // threaded view after the user changes the sort order.
+  nsMsgViewSortTypeValue sortType = m_sortType;
+  nsMsgViewSortOrderValue sortOrder = m_sortOrder;
+  m_sortType = nsMsgViewSortType::byNone;  // Force a sort from scratch.
+  nsMsgDBView::Sort(sortType, sortOrder);
+  m_viewFlags |= nsMsgViewFlagsType::kThreadedDisplay;
+
+  // Expand any thread that shouldn't start collapsed (currently only
+  // possible via kExpandAll, since we just set Elided above on every
+  // other multi-message thread).
+  SetSuppressChangeNotifications(true);
+  for (uint32_t j = 0; j < m_keys.Length(); j++) {
+    uint32_t flags = m_flags[j];
+    if ((flags & (MSG_VIEW_FLAG_HASCHILDREN | nsMsgMessageFlags::Elided)) ==
+        MSG_VIEW_FLAG_HASCHILDREN) {
+      uint32_t numExpanded = 0;
+      ExpandByIndex(j, &numExpanded);
+      j += numExpanded;
+    }
+  }
+  SetSuppressChangeNotifications(false);
+
+  return NS_OK;
 }
 
 nsresult nsMsgSearchDBView::RemoveRefFromHash(nsCString& reference) {

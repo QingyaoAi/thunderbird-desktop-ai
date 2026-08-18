@@ -402,6 +402,17 @@ nsMsgXFVirtualFolderDBView::OnNewSearch() {
     if (mJSTree) mJSTree->BeginUpdateBatch();
   }
 
+  // Building the view's flat arrays incrementally (one array insertion
+  // per message, via AddHdrFromFolder) as search hits stream in is fine
+  // for everyday single-message additions, but for the *initial*
+  // population of a big cross-folder search (e.g. every account's Inbox,
+  // for "Unified Folders") it makes this loop O(n^2): each insertion
+  // shifts everything after it. Skip laying out the arrays here and do
+  // it all in one pass afterwards, in FinishBulkThreadAdd().
+  bool bulkThreadBuild = !m_doingQuickSearch &&
+                        (m_viewFlags & nsMsgViewFlagsType::kThreadedDisplay);
+  m_addingHdrsInBulk = bulkThreadBuild;
+
   for (int32_t i = 0; i < scopeCount; i++) {
     nsMsgSearchScopeValue scopeId;
     nsCOMPtr<nsIMsgFolder> searchFolder;
@@ -448,6 +459,12 @@ nsMsgXFVirtualFolderDBView::OnNewSearch() {
         }
       }
     }
+  }
+
+  m_addingHdrsInBulk = false;
+  if (bulkThreadBuild) {
+    nsresult rvBulk = FinishBulkThreadAdd();
+    NS_ENSURE_SUCCESS(rvBulk, rvBulk);
   }
 
   if (!m_doingQuickSearch) {

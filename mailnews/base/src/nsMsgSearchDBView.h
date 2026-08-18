@@ -175,6 +175,27 @@ class nsMsgSearchDBView : public nsMsgGroupView,
   nsresult RemoveRefFromHash(nsCString& reference);
   nsresult RemoveMsgFromHashTables(nsIMsgDBHdr* msgHdr);
   nsresult InitRefHash();
+
+  // When true, AddHdrFromFolder()'s threaded-display branch only builds
+  // the cross-folder thread groupings (hash tables + nsMsgXFViewThread
+  // child lists) and skips laying out m_keys/m_flags/m_levels/m_folders.
+  // Normally each added header is inserted straight into its sorted
+  // position in those flat arrays, which is an O(n) shift per message
+  // (nsTArray::InsertElementAt moves everything after it); for an initial
+  // bulk population of a big cross-folder search that's O(n^2) overall.
+  // A caller doing a bulk add (nsMsgXFVirtualFolderDBView::OnNewSearch())
+  // sets this before the loop, and must call FinishBulkThreadAdd()
+  // afterwards to lay out the flat arrays in one pass instead.
+  bool m_addingHdrsInBulk = false;
+
+  // Companion to m_addingHdrsInBulk: builds one row per thread from the
+  // threads accumulated in m_threadsTable, sorts that once, and expands
+  // the threads that should start expanded. Mirrors the "flatten to
+  // roots, sort, then re-expand" approach nsMsgThreadedDBView::SortThreads
+  // already uses for re-sorting an existing threaded view, so that each
+  // thread is laid out with a single insertion instead of one insertion
+  // per message.
+  nsresult FinishBulkThreadAdd();
 };
 
 #endif  // COMM_MAILNEWS_BASE_SRC_NSMSGSEARCHDBVIEW_H_
