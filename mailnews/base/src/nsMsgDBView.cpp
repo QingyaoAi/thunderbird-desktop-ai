@@ -43,6 +43,8 @@
 #include "nsMsgUtils.h"
 #include "nsServiceManagerUtils.h"
 #include "nsTArray.h"
+#include "nsTHashMap.h"
+#include "nsTHashSet.h"
 #include "nsTreeColumns.h"
 #include "prmem.h"
 
@@ -4866,7 +4868,10 @@ nsresult nsMsgDBView::ListIdsInThread(nsIMsgThread* threadHdr,
   // at index 0 -- it is not listed itself, but a reply to it still has to
   // be recognized as part of a killed subthread.
   nsTArray<nsCOMPtr<nsIMsgDBHdr>> allHdrs;
-  nsTArray<nsMsgKey> killedKeys;
+  // A hash set rather than an array: this is probed once per ancestor hop of
+  // every message in the thread, so a linear scan here made listing a large
+  // thread that contains an ignored subthread quadratic.
+  nsTHashSet<nsMsgKey> killedKeys;
   for (i = 0; i <= numChildren; i++) {
     nsCOMPtr<nsIMsgDBHdr> msgHdr;
     threadHdr->GetChildHdrAt(i, getter_AddRefs(msgHdr));
@@ -4879,7 +4884,7 @@ nsresult nsMsgDBView::ListIdsInThread(nsIMsgThread* threadHdr,
       if (killed) {
         nsMsgKey killedKey;
         msgHdr->GetMessageKey(&killedKey);
-        killedKeys.AppendElement(killedKey);
+        killedKeys.Insert(killedKey);
       }
     }
     if (i > 0) {
@@ -4888,6 +4893,9 @@ nsresult nsMsgDBView::ListIdsInThread(nsIMsgThread* threadHdr,
   }
 
   uint32_t ignoredHeaders = 0;
+  // Memoised "is this key inside a killed subthread", filled in as the
+  // ancestry of each message is walked below.
+  nsTHashMap<nsMsgKey, bool> killedVerdict;
   nsTArray<nsCOMPtr<nsIMsgDBHdr>> children;
   for (nsIMsgDBHdr* msgHdr : allHdrs) {
     // "Ignore Subthread" has to hide the killed message *and everything
@@ -4896,6 +4904,10 @@ nsresult nsMsgDBView::ListIdsInThread(nsIMsgThread* threadHdr,
     // means we have to check each message's ancestry explicitly instead.
     if (!showIgnored && !killedKeys.IsEmpty()) {
       bool inKilledSubthread = false;
+      // Messages in one thread share ancestors, so without remembering the
+      // answer per key the same chain gets re-walked for every reply below
+      // it -- and each hop is a database lookup.
+      nsTArray<nsMsgKey> visited;
       nsCOMPtr<nsIMsgDBHdr> curHdr = msgHdr;
       nsMsgKey curKey;
       curHdr->GetMessageKey(&curKey);
@@ -4904,6 +4916,11 @@ nsresult nsMsgDBView::ListIdsInThread(nsIMsgThread* threadHdr,
           inKilledSubthread = true;
           break;
         }
+        if (auto known = killedVerdict.Lookup(curKey)) {
+          inKilledSubthread = *known;
+          break;
+        }
+        visited.AppendElement(curKey);
         nsMsgKey parentKey;
         curHdr->GetThreadParent(&parentKey);
         // Stop at the root, and defend against a self-parenting loop from
@@ -4919,6 +4936,9 @@ nsresult nsMsgDBView::ListIdsInThread(nsIMsgThread* threadHdr,
         }
         curHdr = parentHdr;
         curKey = parentKey;
+      }
+      for (nsMsgKey seen : visited) {
+        killedVerdict.InsertOrUpdate(seen, inKilledSubthread);
       }
       if (inKilledSubthread) {
         ignoredHeaders++;
