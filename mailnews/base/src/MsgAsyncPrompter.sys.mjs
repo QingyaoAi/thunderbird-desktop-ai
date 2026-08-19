@@ -170,6 +170,32 @@ export class MsgAuthPrompt {
 
   static l10n = new Localization(["messenger/msgAuthPrompt.ftl"], true);
 
+  /**
+   * Make sure a login for this origin can actually be stored.
+   *
+   * Ticking "remember this password" is a request to remember it, but saving
+   * can be switched off in two independent places: globally, with
+   * signon.rememberSignons, and per server, in the login manager's list of
+   * origins to never save for. Either one silently discards the login, and
+   * the prompt then returns at every launch with no indication why. Both are
+   * therefore lifted here, and only in response to that box being ticked --
+   * accepting the prompt without it changes nothing.
+   *
+   * @param {string} origin - The origin the login will be saved under.
+   */
+  static allowSaving(origin) {
+    try {
+      if (!Services.prefs.getBoolPref("signon.rememberSignons", true)) {
+        Services.prefs.setBoolPref("signon.rememberSignons", true);
+      }
+      if (!Services.logins.getLoginSavingEnabled(origin)) {
+        Services.logins.setLoginSavingEnabled(origin, true);
+      }
+    } catch (ex) {
+      console.warn(`Could not enable password saving for ${origin}:`, ex);
+    }
+  }
+
   #getRealmInfo(aRealmString) {
     const httpRealm = /^.+ \(.+\)$/;
     if (httpRealm.test(aRealmString)) {
@@ -273,21 +299,27 @@ export class MsgAuthPrompt {
 
     // If origin is null, we can't save this login.
     if (origin) {
+      const savingEnabled = Services.logins.getLoginSavingEnabled(origin);
       const canRememberLogin =
-        aSavePassword == Ci.nsIAuthPrompt.SAVE_PASSWORD_PERMANENTLY &&
-        Services.logins.getLoginSavingEnabled(origin);
+        aSavePassword == Ci.nsIAuthPrompt.SAVE_PASSWORD_PERMANENTLY;
 
       // if checkBoxLabel is null, the checkbox won't be shown at all.
+      //
+      // The box is offered even when saving is currently switched off. It
+      // used to be hidden in that case, which left no way out: the prompt
+      // returns at every launch, and the one control that would stop it is
+      // the one thing not on the dialog. Ticking it is taken as a request to
+      // switch saving back on -- see below.
       if (canRememberLogin) {
         checkBoxLabel = MsgAuthPrompt.l10n.formatValueSync(
           "remember-password-checkbox-label"
         );
-        // Ticked by default. It used to start clear and only be ticked when a
-        // login was already stored -- that is, on every prompt except the one
-        // where it matters. Someone typing a password they have not saved yet
-        // had to notice the checkbox to be asked only once, and not noticing
-        // it produced a prompt on every launch with nothing to show why.
-        checkBox.value = true;
+        // Ticked by default when saving is available: it used to start clear
+        // and only be ticked when a login was already stored -- that is, on
+        // every prompt except the one where it matters. Left clear when
+        // saving is off, so that turning it back on is something the person
+        // chose rather than a side effect of accepting the prompt.
+        checkBox.value = savingEnabled;
       }
 
       for (const login of await Services.logins.searchLoginsAsync({
@@ -321,6 +353,8 @@ export class MsgAuthPrompt {
     if (!lazy.enforcePrimaryPassword()) {
       return ok;
     }
+
+    MsgAuthPrompt.allowSaving(origin);
 
     const newLogin = new LoginInfo(
       origin,
@@ -389,20 +423,19 @@ export class MsgAuthPrompt {
 
     // If origin is null, we can't save this login.
     if (origin) {
+      const savingEnabled = Services.logins.getLoginSavingEnabled(origin);
       const canRememberLogin =
-        aSavePassword == Ci.nsIAuthPrompt.SAVE_PASSWORD_PERMANENTLY &&
-        Services.logins.getLoginSavingEnabled(origin);
+        aSavePassword == Ci.nsIAuthPrompt.SAVE_PASSWORD_PERMANENTLY;
 
       // if checkBoxLabel is null, the checkbox won't be shown at all.
+      // Offered even when saving is off, and ticked by default only when it
+      // is on; see the same change in #promptUsernameAndPasswordInternal.
+      // This is the prompt a mail account password goes through.
       if (canRememberLogin) {
         checkBoxLabel = MsgAuthPrompt.l10n.formatValueSync(
           "remember-password-checkbox-label"
         );
-        // Ticked by default; see the same change in
-        // #promptUsernameAndPasswordInternal. This is the prompt a mail
-        // account password goes through, and leaving it clear meant the
-        // password was asked for again at every launch.
-        checkBox.value = true;
+        checkBox.value = savingEnabled;
       }
 
       if (!aPassword.value) {
@@ -431,6 +464,7 @@ export class MsgAuthPrompt {
       if (!lazy.enforcePrimaryPassword()) {
         return ok;
       }
+      MsgAuthPrompt.allowSaving(origin);
       const newLogin = new LoginInfo(
         origin,
         null,
