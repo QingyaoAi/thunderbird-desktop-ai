@@ -8,6 +8,12 @@ quick-filter-button =
   .title = Toggle the Quick Filter Bar
 quick-filter-button-label = Quick Filter
 
+# A one-click shortcut for the Quick Filter Bar's "Unread" filter, in the
+# list header beside the button that opens that bar.
+thread-pane-unread-filter-button =
+  .title = Show only unread messages
+  .aria-label = Show only unread messages
+
 thread-pane-header-display-button =
   .title = Message list display options
 

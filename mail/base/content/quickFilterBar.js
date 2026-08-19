@@ -64,6 +64,26 @@ var quickFilterBar = {
       true
     );
 
+    // Unread is the filter reached for most often, so it also sits in the
+    // list header next to the button that opens this bar, one click away
+    // rather than two. The bar itself is opened along with it: hiding the bar
+    // clears every filter (see _showFilterBar), so a filter applied while it
+    // was closed would be silently dropped, and leaving the list filtered
+    // with nothing on screen saying so is worse than showing the bar.
+    this.unreadHeaderButton = document.getElementById(
+      "threadPaneUnreadFilterButton"
+    );
+    this.unreadHeaderButton?.addEventListener("click", () => {
+      const wanted = this.unreadHeaderButton.pressed ? true : null;
+      if (!this.filterer.visible) {
+        this._showFilterBar(true);
+      }
+      this.filterer.setFilterValue("unread", wanted);
+      this.updateFiltersSettings("unread", wanted);
+      this.reflectFiltererState("unread");
+      this.deferredUpdateSearch();
+    });
+
     commandController.registerCallback("cmd_showQuickFilterBar", () => {
       if (!this.filterer.visible) {
         this._showFilterBar(true);
@@ -431,6 +451,15 @@ var quickFilterBar = {
           filterDef.reflectInDOM(domNode, value, document, this);
         }
       }
+    }
+
+    // The header's unread button sits outside this bar, so the loop above
+    // never reaches it. It is also updated while the bar is hidden, which
+    // the loop deliberately skips: closing the bar clears every filter, and
+    // a button left pressed would claim a filter that is no longer applied.
+    if (this.unreadHeaderButton) {
+      this.unreadHeaderButton.pressed =
+        this.filterer.visible && this.filterer.filterValues.unread === true;
     }
 
     this.reflectFiltererResults();

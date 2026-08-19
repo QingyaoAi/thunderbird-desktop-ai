@@ -621,6 +621,14 @@ tr[data-properties~="outgoing"].selected .correspondentcol-column {
   padding-inline-start: 9px;
 }
 
+/* Same icon the Quick Filter Bar's own Unread button uses, so the two read
+ * as the one filter reached from two places. */
+#threadPaneUnreadFilterButton {
+  background-image: var(--icon-unread);
+  margin: 0;
+  flex-shrink: 0;
+}
+
 #threadPaneQuickFilterButton {
   background-image: var(--icon-filter);
   margin: 0;
