@@ -2554,16 +2554,27 @@ async function saveLinkAttachmentsToFile(aAttachmentInfoArray) {
 // See attachmentBucketDNDObserver, which should have the same logic.
 const attachmentListDNDObserver = {
   onDragStart(event) {
-    // NOTE: Starting a drag on an attachment item will normally also select
-    // the attachment item before this method is called. But this is not
-    // necessarily the case. E.g. holding Shift when starting the drag
-    // operation. When it isn't selected, we just don't transfer.
-    if (event.target.matches(".attachmentItem[selected]")) {
-      // Also transfer other selected attachment items.
-      const attachments = Array.from(
+    // Starting a drag on an attachment item will normally also select it
+    // first, but not always -- holding Shift is one case, and an item that
+    // has never been clicked is another. Transferring only when the item was
+    // already selected meant those drags handed over nothing, and the drag
+    // fell through to the default handling for what is inside the row: the
+    // attachment's own URL. Dropping that in Finder writes a link to the
+    // message part instead of the file.
+    //
+    // The item under the pointer is therefore always transferred. Other
+    // selected items come too, so dragging one of a selected group still
+    // takes the group.
+    const item = event.target.closest(".attachmentItem");
+    if (item) {
+      const selected = Array.from(
         document.querySelectorAll("#attachmentList .attachmentItem[selected]"),
-        item => item.attachment
+        listItem => listItem.attachment
       );
+      const attachments =
+        item.hasAttribute("selected") && selected.length
+          ? selected
+          : [item.attachment];
       setupDataTransfer(event, attachments);
     }
     event.stopPropagation();
