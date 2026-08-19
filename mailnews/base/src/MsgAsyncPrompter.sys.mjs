@@ -282,6 +282,12 @@ export class MsgAuthPrompt {
         checkBoxLabel = MsgAuthPrompt.l10n.formatValueSync(
           "remember-password-checkbox-label"
         );
+        // Ticked by default. It used to start clear and only be ticked when a
+        // login was already stored -- that is, on every prompt except the one
+        // where it matters. Someone typing a password they have not saved yet
+        // had to notice the checkbox to be asked only once, and not noticing
+        // it produced a prompt on every launch with nothing to show why.
+        checkBox.value = true;
       }
 
       for (const login of await Services.logins.searchLoginsAsync({
@@ -392,6 +398,11 @@ export class MsgAuthPrompt {
         checkBoxLabel = MsgAuthPrompt.l10n.formatValueSync(
           "remember-password-checkbox-label"
         );
+        // Ticked by default; see the same change in
+        // #promptUsernameAndPasswordInternal. This is the prompt a mail
+        // account password goes through, and leaving it clear meant the
+        // password was asked for again at every launch.
+        checkBox.value = true;
       }
 
       if (!aPassword.value) {
