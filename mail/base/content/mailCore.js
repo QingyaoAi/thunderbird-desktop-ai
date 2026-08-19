@@ -846,7 +846,7 @@ function SanitizeAttachmentDisplayName(aAttachment) {
  * @param {Event} event - The associated event.
  * @param {nsIMsgAttachment[]} attachments - The attachments to setup
  */
-function setupDataTransfer(event, attachments) {
+function setupDataTransfer(event, attachments, stagedFiles = null) {
   let index = 0;
   for (const attachment of attachments) {
     if (attachment.contentType == "text/x-moz-deleted") {
@@ -856,6 +856,28 @@ function setupDataTransfer(event, attachments) {
     const name = attachment.name || attachment.displayName;
 
     if (!attachment.url || !name) {
+      continue;
+    }
+
+    // If the attachment has already been written to a file, hand over the
+    // file itself, the way dragging in Finder does. This is the only form
+    // every application understands: the file promise below puts an empty
+    // public.file-url on the macOS pasteboard and relies on a handshake that
+    // Finder implements and most other applications do not, leaving them to
+    // take the URL instead and save a link to the message part.
+    //
+    // The URL flavours are deliberately not offered alongside it. They are
+    // what a drop target picks when it does not understand the promise, so
+    // offering both is what produced a .webloc rather than the attachment.
+    const stagedFile = stagedFiles?.get(attachment.url);
+    if (stagedFile?.exists()) {
+      event.dataTransfer.mozSetDataAt("application/x-moz-file", stagedFile, index);
+      event.dataTransfer.mozSetDataAt(
+        "application/x-moz-file-promise-dest-filename",
+        name.replace(/(.{74}).*(.{10})$/u, "$1...$2"),
+        index
+      );
+      index++;
       continue;
     }
 

@@ -30,6 +30,7 @@ var { MailServices } = ChromeUtils.importESModule(
 
 ChromeUtils.defineESModuleGetters(this, {
   AttachmentInfo: "resource:///modules/AttachmentInfo.sys.mjs",
+  DownloadPaths: "resource://gre/modules/DownloadPaths.sys.mjs",
   Gloda: "resource:///modules/gloda/GlodaPublic.sys.mjs",
   GlodaUtils: "resource:///modules/gloda/GlodaUtils.sys.mjs",
   MailUtils: "resource:///modules/MailUtils.sys.mjs",
@@ -2551,6 +2552,51 @@ async function saveLinkAttachmentsToFile(aAttachmentInfoArray) {
   }
 }
 
+/**
+ * Attachments already written to a temporary file, keyed by attachment URL,
+ * so that a drag can hand over a real file rather than a promise of one.
+ *
+ * macOS only ever puts a path on the pasteboard for a file that exists.
+ * Gecko's file-promise support writes an *empty* public.file-url and a
+ * private promise handshake instead (see the comment in
+ * widget/cocoa/nsClipboard.mm), which Finder understands and most other
+ * applications do not -- they fall back to the plain URL also on offer and
+ * save a .webloc pointing at imap://..., which is not the attachment.
+ *
+ * Writing the file first is the only way to drag what Finder drags: a path.
+ * It cannot be done during dragstart, which is synchronous and cannot wait
+ * for an IMAP fetch, so it starts when the pointer goes down on the item and
+ * is usually finished by the time the drag threshold is crossed.
+ *
+ * @type {Map<string, nsIFile>}
+ */
+const attachmentDragFiles = new Map();
+
+/**
+ * Begin writing an attachment to a temporary file, so a drag starting from
+ * it can offer the file itself. Failures are ignored: the drag still works
+ * through the promise, just less well outside Finder.
+ *
+ * @param {AttachmentInfo} attachment
+ */
+async function prepareAttachmentForDrag(attachment) {
+  if (
+    !attachment ||
+    attachment.contentType == "text/x-moz-deleted" ||
+    attachmentDragFiles.get(attachment.url)?.exists()
+  ) {
+    return;
+  }
+  try {
+    const name = DownloadPaths.sanitize(attachment.name) || "attachment";
+    const tempFile = await attachment.setupTempFile(name);
+    await attachment.saveToFile(tempFile.path, true);
+    attachmentDragFiles.set(attachment.url, tempFile);
+  } catch (ex) {
+    console.warn(`Could not stage ${attachment.name} for dragging:`, ex);
+  }
+}
+
 // See attachmentBucketDNDObserver, which should have the same logic.
 const attachmentListDNDObserver = {
   onDragStart(event) {
@@ -2575,9 +2621,18 @@ const attachmentListDNDObserver = {
         item.hasAttribute("selected") && selected.length
           ? selected
           : [item.attachment];
-      setupDataTransfer(event, attachments);
+      setupDataTransfer(event, attachments, attachmentDragFiles);
     }
     event.stopPropagation();
+  },
+
+  onMouseDown(event) {
+    // Start writing the file now so that dragstart, which cannot wait for a
+    // fetch, has a real file to hand over. See attachmentDragFiles.
+    const item = event.target.closest(".attachmentItem");
+    if (item?.attachment) {
+      prepareAttachmentForDrag(item.attachment);
+    }
   },
 };
 
