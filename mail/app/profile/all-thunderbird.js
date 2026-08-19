@@ -773,11 +773,17 @@ pref("font.name.sans-serif.x-western", "Lucida Grande");
 pref("font.name.monospace.x-western", "Menlo");
 pref("font.name-list.sans-serif.x-western", "Lucida Grande");
 pref("font.name-list.monospace.x-western", "Menlo, Monaco");
-// Message body text. These were 15/12 on macOS against 17/14 everywhere
-// else, and plain-text mail -- which uses the monospace size -- came out
-// noticeably small in the message and preview panes. Matched to the other
-// platforms rather than picked arbitrarily.
-pref("font.size.variable.x-western", 17);
+// Message body text, sized to match Mail.app: it composes and displays at
+// Helvetica 12pt, and 12pt is 16px. These were 15/12 on macOS against 17/14
+// everywhere else, which made plain-text mail -- it uses the monospace size
+// -- noticeably small; they then went to 17/14 to match the other platforms,
+// which overshot what the rest of the machine reads mail at.
+//
+// The compose editor takes its size from this same pref, so this is also
+// what a reply is written in. Mail.app's own size pref is in points and
+// absolute; Thunderbird's compose default only understands the relative
+// HTML sizes 1-7, so the way to write at 12pt is for the base to be 12pt.
+pref("font.size.variable.x-western", 16);
 pref("font.size.monospace.x-western", 14);
 // The size actually used depends on the message's charset, which the MIME
 // emitter maps to a language group before looking up font.size.*.<group>
@@ -785,7 +791,7 @@ pref("font.size.monospace.x-western", 14);
 // x-western, and that group was still on the small macOS defaults -- so
 // raising x-western alone left most real mail rendering at 12px. Keep the
 // two groups in step.
-pref("font.size.variable.x-unicode", 17);
+pref("font.size.variable.x-unicode", 16);
 pref("font.size.monospace.x-unicode", 14);
 
 pref("font.name.sans-serif.x-cyrillic", "Lucida Grande");
@@ -1672,3 +1678,12 @@ pref("mail.mcp.port", 47821);
 // showing one message at a time. 32MB is ample for message bodies and the
 // images in them.
 pref("browser.cache.memory.capacity", 32768);
+
+// Write in the same face as Mail.app, so a reply sent from here looks like
+// the rest of the mail on this machine rather than announcing which client
+// produced it. Mail.app composes in Helvetica at 12pt.
+//
+// Only the face is set here. The size pref is an HTML font size (1-7), not
+// points, and the default of 3 is "medium" -- which is 16px, and 16px is
+// 12pt. Saying "3" again would only restate Thunderbird's own default.
+pref("msgcompose.font_face", "Helvetica");
