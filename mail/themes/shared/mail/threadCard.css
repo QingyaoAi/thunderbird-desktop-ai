@@ -107,8 +107,22 @@
      * uses. It used to be drawn as button.twisty::before, pulled -3px up and
      * back so it sat on the twisty's own corner -- which put the unread mark
      * on top of the control for expanding the thread, obscuring it and
-     * giving the two meanings one spot. */
-    &[data-properties~="hasUnread"] {
+     * giving the two meanings one spot.
+     *
+     * Only on a row that is standing in for messages it is hiding, which is
+     * what .children.collapsed means. hasUnread is a fact about the
+     * conversation rather than about the row's own message, and the view
+     * puts it on every row of the thread -- so a thread with one unread
+     * reply marked all ten of its messages unread, the read ones included.
+     *
+     * Both halves are needed. Without .collapsed an expanded thread still
+     * marks its own root, which is just another read message once its
+     * replies are on screen. Without .children the replies match too: a
+     * leaf reply carries the collapsed class as well, having nothing to
+     * collapse. With both, the dot appears where it says something -- a
+     * conversation with unread mail inside it -- and everywhere else a dot
+     * means what it means in the rest of the list: this message is unread. */
+    &.children.collapsed[data-properties~="hasUnread"] {
       --read-status-display: inline-block;
       --read-status-fill: var(--color-blue-40);
       --read-status-stroke: var(--color-blue-60);
