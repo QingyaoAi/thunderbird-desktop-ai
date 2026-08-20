@@ -2572,6 +2572,34 @@ async function saveLinkAttachmentsToFile(aAttachmentInfoArray) {
  */
 const attachmentDragFiles = new Map();
 
+// Each entry is a whole attachment written to disk, so this is capped far
+// lower than a cache of text would be. Pressing on attachments while reading
+// a morning's mail should not leave a copy of every one of them in the
+// temporary directory until the application exits.
+const ATTACHMENT_DRAG_CACHE_MAX = 20;
+
+/**
+ * Remember a staged file, discarding the oldest if the cache is full.
+ *
+ * @param {string} url - The attachment's URL.
+ * @param {nsIFile} file - The file it was written to.
+ */
+function rememberAttachmentDragFile(url, file) {
+  if (attachmentDragFiles.size >= ATTACHMENT_DRAG_CACHE_MAX) {
+    const oldestUrl = attachmentDragFiles.keys().next().value;
+    const oldest = attachmentDragFiles.get(oldestUrl);
+    attachmentDragFiles.delete(oldestUrl);
+    try {
+      // setupTempFile also registers these for deletion at exit; this keeps
+      // a long session from holding them all until then.
+      oldest?.remove(false);
+    } catch (ex) {
+      // Already gone, or in use.
+    }
+  }
+  attachmentDragFiles.set(url, file);
+}
+
 /**
  * Begin writing an attachment to a temporary file, so a drag starting from
  * it can offer the file itself. Failures are ignored: the drag still works
@@ -2591,7 +2619,7 @@ async function prepareAttachmentForDrag(attachment) {
     const name = DownloadPaths.sanitize(attachment.name) || "attachment";
     const tempFile = await attachment.setupTempFile(name);
     await attachment.saveToFile(tempFile.path, true);
-    attachmentDragFiles.set(attachment.url, tempFile);
+    rememberAttachmentDragFile(attachment.url, tempFile);
   } catch (ex) {
     console.warn(`Could not stage ${attachment.name} for dragging:`, ex);
   }
