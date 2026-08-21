@@ -684,7 +684,16 @@ conversation-view {
 .account-indicator {
   display: none;
   box-sizing: border-box;
-  background-color: var(--account-color, var(--folder-color-inbox));
+  /* The account's own colour where one has been set, and otherwise the
+   * colour of the text beside it rather than the inbox blue.
+   *
+   * The colour is only meaningful once accounts have been given different
+   * ones. Until then every account gets the same fallback, so the stripe
+   * distinguishes nothing while reading as a marker on the message -- and
+   * beside a blue unread dot it reads as exactly that one. Matching the
+   * text keeps it as the quiet rule it is, and the moment a colour is
+   * assigned to an account it does its job again. */
+  background-color: var(--account-color, currentColor);
   border-radius: 3px;
   inline-size: 3px;
   block-size: 1rem;
