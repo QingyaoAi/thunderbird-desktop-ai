@@ -2,6 +2,8 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+#include <algorithm>
+
 #include "nsMsgQuickSearchDBView.h"
 
 #include "mozilla/ProfilerMarkers.h"
@@ -522,11 +524,13 @@ nsresult nsMsgQuickSearchDBView::SortThreads(
         m_flags.AppendElement(rootFlags);
         m_levels.AppendElement(0);
 
-        nsMsgViewIndex startOfThreadViewIndex = m_keys.Length();
-        nsMsgViewIndex rootIndex = startOfThreadViewIndex - 1;
+        nsMsgViewIndex rootIndex = m_keys.Length() - 1;
         uint32_t numListed = 0;
-        ListIdsInThreadOrder(threadHdr, rootKey, 1, &startOfThreadViewIndex,
-                             &numListed);
+        // Through ListIdsInThread, so that a re-sort lays a thread out the
+        // same way expanding one does: flat, newest first. This rebuilds the
+        // whole view and then leaves it expanded, so listing it in reply
+        // order here would put every thread back the way it was before.
+        ListIdsInThread(threadHdr, rootIndex, &numListed);
         if (numListed > 0)
           m_flags[rootIndex] = rootFlags | MSG_VIEW_FLAG_HASCHILDREN;
       }
@@ -574,12 +578,9 @@ nsresult nsMsgQuickSearchDBView::ListCollapsedChildren(
 nsresult nsMsgQuickSearchDBView::ListIdsInThread(
     nsIMsgThread* threadHdr, nsMsgViewIndex startOfThreadViewIndex,
     uint32_t* pNumListed) {
-  if (m_viewFlags & nsMsgViewFlagsType::kThreadedDisplay &&
-      !(m_viewFlags & nsMsgViewFlagsType::kGroupBySort)) {
-    nsMsgKey parentKey = m_keys[startOfThreadViewIndex++];
-    return ListIdsInThreadOrder(threadHdr, parentKey, 1,
-                                &startOfThreadViewIndex, pNumListed);
-  }
+  const bool threadedView =
+      m_viewFlags & nsMsgViewFlagsType::kThreadedDisplay &&
+      !(m_viewFlags & nsMsgViewFlagsType::kGroupBySort);
 
   uint32_t numChildren;
   threadHdr->GetNumChildren(&numChildren);
@@ -593,33 +594,67 @@ nsresult nsMsgQuickSearchDBView::ListIdsInThread(
   rootHdr->GetMessageKey(&rootKey);
   // group threads can have the root key twice, one for the dummy row.
   bool rootKeySkipped = false;
+
+  // Every message in the thread that survived the search, gathered before
+  // any of it is placed so that the threaded case can order it by date.
+  //
+  // Walking the children directly rather than recursing down the reply tree
+  // also drops two problems the recursive listing had to carry: a quick
+  // search view can be rooted at a message that is not the thread root, so
+  // that listing needed a second pass to pick up the root's other children,
+  // and it needed a depth guard in case a corrupt thread pointed at itself.
+  // Neither applies when the children are simply enumerated once.
+  nsTArray<nsCOMPtr<nsIMsgDBHdr>> children;
   for (i = 0; i < numChildren; i++) {
     nsCOMPtr<nsIMsgDBHdr> msgHdr;
     threadHdr->GetChildHdrAt(i, getter_AddRefs(msgHdr));
-    if (msgHdr != nullptr) {
-      nsMsgKey msgKey;
-      msgHdr->GetMessageKey(&msgKey);
-      if (msgKey != rootKey || (GroupViewUsesDummyRow() && rootKeySkipped)) {
-        nsMsgViewIndex threadRootIndex = m_origKeys.BinaryIndexOf(msgKey);
-        // if this hdr is in the original view, add it to new view.
-        if (threadRootIndex != nsMsgViewIndex_None) {
-          uint32_t childFlags;
-          msgHdr->GetFlags(&childFlags);
-          InsertMsgHdrAt(
-              viewIndex, msgHdr, msgKey, childFlags,
-              FindLevelInThread(msgHdr, startOfThreadViewIndex, viewIndex));
-          if (!(rootFlags & MSG_VIEW_FLAG_HASCHILDREN))
-            m_flags[startOfThreadViewIndex] =
-                rootFlags | MSG_VIEW_FLAG_HASCHILDREN;
-
-          viewIndex++;
-          (*pNumListed)++;
-        }
-      } else {
-        rootKeySkipped = true;
-      }
+    if (!msgHdr) {
+      continue;
     }
+    nsMsgKey msgKey;
+    msgHdr->GetMessageKey(&msgKey);
+    // The head of the thread is already on screen at startOfThreadViewIndex.
+    if (msgKey == rootKey && !(GroupViewUsesDummyRow() && rootKeySkipped)) {
+      rootKeySkipped = true;
+      continue;
+    }
+    // Only what matched the search belongs in the view.
+    if (m_origKeys.BinaryIndexOf(msgKey) == m_origKeys.NoIndex) {
+      continue;
+    }
+    children.AppendElement(msgHdr);
   }
+
+  if (threadedView) {
+    // Newest first, flat, the way the threaded folder view lists a thread.
+    std::sort(
+        children.begin(), children.end(),
+        [](const nsCOMPtr<nsIMsgDBHdr>& a, const nsCOMPtr<nsIMsgDBHdr>& b) {
+          PRTime dateA = 0, dateB = 0;
+          a->GetDate(&dateA);
+          b->GetDate(&dateB);
+          return dateA > dateB;
+        });
+  }
+
+  for (nsIMsgDBHdr* msgHdr : children) {
+    nsMsgKey msgKey;
+    uint32_t childFlags;
+    msgHdr->GetMessageKey(&msgKey);
+    msgHdr->GetFlags(&childFlags);
+    InsertMsgHdrAt(viewIndex, msgHdr, msgKey, childFlags,
+                   threadedView ? 1
+                                : FindLevelInThread(msgHdr,
+                                                    startOfThreadViewIndex,
+                                                    viewIndex));
+    if (!(rootFlags & MSG_VIEW_FLAG_HASCHILDREN)) {
+      m_flags[startOfThreadViewIndex] = rootFlags | MSG_VIEW_FLAG_HASCHILDREN;
+    }
+
+    viewIndex++;
+    (*pNumListed)++;
+  }
+
   return NS_OK;
 }
 

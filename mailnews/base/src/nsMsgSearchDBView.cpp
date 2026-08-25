@@ -2,6 +2,8 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+#include <algorithm>
+
 #include "nsMsgSearchDBView.h"
 
 #include "mozilla/Components.h"
@@ -1412,23 +1414,43 @@ nsresult nsMsgSearchDBView::ListIdsInThread(
 
   bool threadedView = m_viewFlags & nsMsgViewFlagsType::kThreadedDisplay &&
                       !(m_viewFlags & nsMsgViewFlagsType::kGroupBySort);
-  nsMsgXFViewThread* viewThread;
-  if (threadedView) viewThread = static_cast<nsMsgXFViewThread*>(threadHdr);
 
+  // Cross-folder views -- unified folders, saved searches, search results --
+  // come through this override rather than nsMsgDBView::ListIdsInThread, so
+  // they need the same flattening and ordering it does. Listing the children
+  // in database order here is what left an expanded thread in a unified
+  // folder reading oldest-first while the same thread in its own folder read
+  // newest-first.
+  nsTArray<nsCOMPtr<nsIMsgDBHdr>> children;
   for (i = 1; i <= numChildren; i++) {
     nsCOMPtr<nsIMsgDBHdr> msgHdr;
     threadHdr->GetChildHdrAt(i, getter_AddRefs(msgHdr));
-
     if (msgHdr) {
-      nsMsgKey msgKey;
-      uint32_t msgFlags;
-      msgHdr->GetMessageKey(&msgKey);
-      msgHdr->GetFlags(&msgFlags);
-      uint32_t level = (threadedView) ? viewThread->ChildLevelAt(i) : 1;
-      SetMsgHdrAt(msgHdr, viewIndex, msgKey, msgFlags & ~MSG_VIEW_FLAGS, level);
-      (*pNumListed)++;
-      viewIndex++;
+      children.AppendElement(msgHdr);
     }
+  }
+
+  if (threadedView) {
+    std::sort(
+        children.begin(), children.end(),
+        [](const nsCOMPtr<nsIMsgDBHdr>& a, const nsCOMPtr<nsIMsgDBHdr>& b) {
+          PRTime dateA = 0, dateB = 0;
+          a->GetDate(&dateA);
+          b->GetDate(&dateB);
+          return dateA > dateB;
+        });
+  }
+
+  // Flat, like the threaded folder view: every message at the same level,
+  // ordered by its own date rather than by where its parent happens to fall.
+  for (nsIMsgDBHdr* msgHdr : children) {
+    nsMsgKey msgKey;
+    uint32_t msgFlags;
+    msgHdr->GetMessageKey(&msgKey);
+    msgHdr->GetFlags(&msgFlags);
+    SetMsgHdrAt(msgHdr, viewIndex, msgKey, msgFlags & ~MSG_VIEW_FLAGS, 1);
+    (*pNumListed)++;
+    viewIndex++;
   }
 
   return NS_OK;
