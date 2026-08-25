@@ -930,6 +930,8 @@ ai-panel-key-prompt = API key for { $provider }. It is stored with your saved pa
 
 ai-panel-draft-reply = Draft reply to selected thread
 
+ai-panel-draft-stop = Stop drafting
+
 ai-panel-drafting = Reading the thread and drafting a reply…
 
 ai-panel-draft-opened = Draft opened in a compose window for you to review.

@@ -32,11 +32,13 @@ ChromeUtils.defineESModuleGetters(lazy, {
  * the mail being looked for.
  */
 const STOPWORDS = new Set(
-  ("a about all also am an and any are as at be been but by can could did " +
+  (
+    "a about all also am an and any are as at be been but by can could did " +
     "do does for from had has have he her him his how i if in into is it " +
     "its me my of on or our out say said she should so some tell than that " +
     "the their them then there these they this those to too us was we were " +
-    "what when where which who whom why will with would you your").split(" ")
+    "what when where which who whom why will with would you your"
+  ).split(" ")
 );
 
 /**
@@ -54,7 +56,9 @@ const STOPWORDS = new Set(
 function searchTermsFor(question) {
   const terms = [];
   const seen = new Set();
-  for (const raw of question.toLowerCase().match(/[\p{L}\p{N}][\p{L}\p{N}'-]*/gu) ?? []) {
+  for (const raw of question
+    .toLowerCase()
+    .match(/[\p{L}\p{N}][\p{L}\p{N}'-]*/gu) ?? []) {
     // Gloda ignores one- and two-character tokens for non-CJK anyway.
     if (raw.length < 3 || STOPWORDS.has(raw) || seen.has(raw)) {
       continue;
@@ -75,6 +79,7 @@ function searchTermsFor(question) {
  *
  * @param {string} query - Search terms.
  * @param {number} limit - Maximum messages to retrieve.
+ * @param andTerms
  * @returns {Promise<object[]>} Gloda message objects, most relevant first.
  */
 function glodaSearch(query, limit, andTerms = true) {
@@ -206,6 +211,7 @@ export const AIMailContext = {
    * @param {number} [limits.maxMessages]
    * @param {number} [limits.maxCharsPerMessage]
    * @param {number} [limits.maxTotalChars]
+   * @param searchQuery
    * @returns {Promise<{prompt: string, sources: object[], truncated: boolean}>}
    *   `prompt` is the context block to give the model, `sources` are the
    *   messages behind it (for citations), and `truncated` says whether the
@@ -292,9 +298,7 @@ export const AIMailContext = {
       if (!thread.length) {
         thread = entry.hits;
       }
-      thread = thread
-        .slice()
-        .sort((a, b) => (a.date ?? 0) - (b.date ?? 0));
+      thread = thread.slice().sort((a, b) => (a.date ?? 0) - (b.date ?? 0));
 
       const index = sources.length + 1;
       const parts = [];
@@ -342,9 +346,7 @@ export const AIMailContext = {
       blocks.push(block);
 
       // Cite the thread, linking to the message that actually matched.
-      const participants = [
-        ...new Set(thread.map(m => displayName(m.from))),
-      ];
+      const participants = [...new Set(thread.map(m => displayName(m.from)))];
       sources.push({
         index,
         subject,
@@ -493,10 +495,16 @@ export const AIMailContext = {
   /**
    * The messages of one thread, oldest first, for drafting a reply.
    *
-   * @param {nsIMsgDBHdr} hdr - Any message in the thread.
+   * The excerpt ends at `hdr` rather than at the newest message in the
+   * thread. A reply answers the message being read, and anything sent
+   * after it is not context for that -- it is what the reply has not seen.
+   * Ending there also keeps `hdr` in the excerpt when the thread has run
+   * on past it, which slicing the newest few would not.
+   *
+   * @param {nsIMsgDBHdr} hdr - The message being replied to.
    * @param {number} [maxMessages]
    * @param {number} [maxCharsPerMessage]
-   * @returns {{text: string, latest: nsIMsgDBHdr}} The conversation as text
+   * @returns {{text: string, target: nsIMsgDBHdr}} The conversation as text
    *   and the message a reply should respond to.
    */
   async threadForReply(hdr, maxMessages = 10, maxCharsPerMessage = 3000) {
@@ -523,10 +531,23 @@ export const AIMailContext = {
     }
     headers.sort((a, b) => a.date - b.date);
 
-    // Keep the most recent exchanges: the beginning of a long thread is
-    // usually less relevant to what the reply must address.
-    const kept = headers.slice(-maxMessages);
-    const latest = headers.at(-1) ?? hdr;
+    // Locate the message being replied to. Headers come from the database
+    // rather than from the caller, so this is a different wrapper around the
+    // same message -- match on identity, not on object equality.
+    const sameMessage = other =>
+      hdr.messageId && other.messageId
+        ? other.messageId == hdr.messageId
+        : other.messageKey == hdr.messageKey &&
+          other.folder?.URI == hdr.folder?.URI;
+    const targetIndex = headers.findIndex(sameMessage);
+    const target = targetIndex >= 0 ? headers[targetIndex] : hdr;
+
+    // Everything up to and including the target, then the most recent of
+    // those: the beginning of a long thread is usually less relevant to
+    // what the reply must address.
+    const upToTarget =
+      targetIndex >= 0 ? headers.slice(0, targetIndex + 1) : headers;
+    const kept = upToTarget.slice(-maxMessages);
 
     // Read the bodies in parallel; each is an async message load.
     const bodies = await Promise.all(
@@ -551,7 +572,7 @@ export const AIMailContext = {
       );
     });
 
-    return { text: parts.join("\n\n---\n\n"), latest };
+    return { text: parts.join("\n\n---\n\n"), target };
   },
 };
 

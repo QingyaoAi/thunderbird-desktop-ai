@@ -65,8 +65,17 @@ function isKeywordLike(question) {
 const SIDE_CALL_MAX_TOKENS = 2048;
 
 export const AIPanel = {
-  /** @type {?AbortController} Non-null while a request is in flight. */
+  /** @type {?AbortController} Non-null while a conversation request is in flight. */
   _abort: null,
+
+  /**
+   * @type {?AbortController} Non-null while a reply is being drafted.
+   *
+   * Drafting reads the whole thread and writes a reply, so it runs for long
+   * enough that holding the composer shut for it would make the pane unusable
+   * for the wait. It gets its own controller and is cancelled on its own.
+   */
+  _draftAbort: null,
 
   /** @type {Array<{role: string, content: string}>} Conversation so far. */
   _messages: [],
@@ -107,7 +116,13 @@ export const AIPanel = {
     document
       .getElementById("ai-panel-setup-key")
       .addEventListener("click", () => this.promptForConnection());
-    this.draftButton.addEventListener("click", () => this.draftReply());
+    this.draftButton.addEventListener("click", () => {
+      if (this._draftAbort) {
+        this.cancelDraft();
+      } else {
+        this.draftReply();
+      }
+    });
 
     // The draft button only makes sense with a message selected, and what
     // is selected changes as the user moves around the mail window.
@@ -143,15 +158,23 @@ export const AIPanel = {
   /** Remove the conversation, both on screen and as model context. */
   clear() {
     this.cancel();
+    this.cancelDraft();
     this._messages = [];
     this.transcript.replaceChildren();
   },
 
-  /** Abort an in-flight request, if there is one. */
+  /** Abort an in-flight conversation request, if there is one. */
   cancel() {
     this._abort?.abort();
     this._abort = null;
     this._setBusy(false);
+  },
+
+  /** Abort a reply being drafted, if there is one. */
+  cancelDraft() {
+    this._draftAbort?.abort();
+    this._draftAbort = null;
+    this.updateDraftButton();
   },
 
   _setBusy(busy) {
@@ -256,7 +279,11 @@ export const AIPanel = {
     let sources = [];
 
     this._setBusy(true);
-    this._abort = new AbortController();
+    // Held locally as well, so that a request cancelled and resent before this
+    // one unwinds neither has its controller cleared from under it nor has the
+    // composer reopened while it is still streaming.
+    const controller = new AbortController();
+    this._abort = controller;
 
     try {
       const options = await lazy.AIConfig.requestOptions();
@@ -264,7 +291,11 @@ export const AIPanel = {
       // Retrieve relevant mail for this question. Only the newest turn is
       // grounded: re-searching for every follow-up would send the mailbox
       // repeatedly, and the earlier context is still in the transcript.
-      const grounded = await this._buildGroundedPrompt(question, answerBody);
+      const grounded = await this._buildGroundedPrompt(
+        question,
+        answerBody,
+        controller.signal
+      );
       sources = grounded.sources ?? [];
       const sendMessages = [
         ...this._messages.slice(0, -1),
@@ -275,7 +306,7 @@ export const AIPanel = {
         ...options,
         system: grounded.system,
         messages: sendMessages,
-        signal: this._abort.signal,
+        signal: controller.signal,
 
         onReasoning: fragment => {
           // Create the block lazily: a model that doesn't reason should
@@ -342,9 +373,11 @@ export const AIPanel = {
         answerBody.appendChild(error);
       }
     } finally {
-      this._abort = null;
-      this._setBusy(false);
-      this.input.focus();
+      if (this._abort == controller) {
+        this._abort = null;
+        this._setBusy(false);
+        this.input.focus();
+      }
     }
   },
 
@@ -409,9 +442,8 @@ export const AIPanel = {
    */
   _showMessage(uri, subject) {
     try {
-      const hdr = lazy.MailServices
-        .messageServiceFromURI(uri)
-        .messageURIToMsgHdr(uri);
+      const hdr =
+        lazy.MailServices.messageServiceFromURI(uri).messageURIToMsgHdr(uri);
       if (typeof window.selectMessage == "function") {
         window.selectMessage(hdr);
         return;
@@ -419,7 +451,10 @@ export const AIPanel = {
       // Not in the mail tab -- fall back to opening it outright.
       this._openMessage(uri);
     } catch (ex) {
-      console.warn(`Could not show the cited message${subject ? ` "${subject}"` : ""}:`, ex);
+      console.warn(
+        `Could not show the cited message${subject ? ` "${subject}"` : ""}:`,
+        ex
+      );
     }
   },
 
@@ -477,7 +512,9 @@ export const AIPanel = {
     // Prefilled with the stored key, so pressing Enter keeps it and the
     // dialog also answers "which key is this profile using".
     const key = { value: (await lazy.AIConfig.getApiKey(profile.name)) ?? "" };
-    if (!Services.prompt.promptPassword(window, title, keyMessage, key, null, {})) {
+    if (
+      !Services.prompt.promptPassword(window, title, keyMessage, key, null, {})
+    ) {
       return;
     }
 
@@ -500,13 +537,14 @@ export const AIPanel = {
    *
    * @param {string} question
    * @param {HTMLElement} answerBody - Where to attach the sources list.
+   * @param {AbortSignal} signal - The signal of the request being built for.
    * @returns {Promise<{system: string, content: string, sources: object[]}>}
    *   The prompt pieces, plus the threads behind them so that citations
    *   in the answer can be linked back to the mail they came from.
    */
-  async _buildGroundedPrompt(question, answerBody) {
+  async _buildGroundedPrompt(question, answerBody, signal) {
     const config = await lazy.AIConfig.read();
-    const context = await this._retrieve(question, answerBody, config);
+    const context = await this._retrieve(question, answerBody, config, signal);
 
     if (!context.sources.length) {
       // Nothing found: say so rather than letting the model invent an
@@ -550,9 +588,10 @@ export const AIPanel = {
    * @param {string} question
    * @param {HTMLElement} answerBody - For the progress notice.
    * @param {object} config
+   * @param {AbortSignal} signal - The signal of the request being built for.
    * @returns {Promise<{prompt: string, sources: object[], truncated: boolean, queries: string[]}>}
    */
-  async _retrieve(question, answerBody, config) {
+  async _retrieve(question, answerBody, config, signal) {
     const progress = this._addSearchProgress(answerBody);
 
     const queries = [];
@@ -567,7 +606,7 @@ export const AIPanel = {
       query = question.trim();
     } else {
       progress.step("ai-search-step-formulating");
-      query = await this._formulateSearchQuery(question);
+      query = await this._formulateSearchQuery(question, signal);
     }
 
     for (let round = 1; round <= MAX_RETRIEVAL_ROUNDS; round++) {
@@ -588,10 +627,9 @@ export const AIPanel = {
           added++;
         }
       }
-      progress.step(
-        added ? "ai-search-step-found" : "ai-search-step-none",
-        { count: added }
-      );
+      progress.step(added ? "ai-search-step-found" : "ai-search-step-none", {
+        count: added,
+      });
 
       if (round == MAX_RETRIEVAL_ROUNDS) {
         break;
@@ -600,8 +638,16 @@ export const AIPanel = {
       // Judge what we have using only senders and subjects, which is
       // enough to spot irrelevance without resending every body.
       progress.step("ai-search-step-checking");
-      const interim = await lazy.AIMailContext.buildContext(pooled, config.context);
-      const next = await this._assessRetrieval(question, interim.sources, queries);
+      const interim = await lazy.AIMailContext.buildContext(
+        pooled,
+        config.context
+      );
+      const next = await this._assessRetrieval(
+        question,
+        interim.sources,
+        queries,
+        signal
+      );
       if (!next) {
         progress.step("ai-search-step-enough");
         break;
@@ -623,9 +669,10 @@ export const AIPanel = {
    * @param {string} question
    * @param {object[]} sources
    * @param {string[]} triedQueries
+   * @param {AbortSignal} signal - The signal of the request being built for.
    * @returns {Promise<?string>} A new query, or null to stop searching.
    */
-  async _assessRetrieval(question, sources, triedQueries) {
+  async _assessRetrieval(question, sources, triedQueries, signal) {
     try {
       const options = await lazy.AIConfig.requestOptions();
       const prompt = lazy.AIMailContext.assessPrompt(
@@ -638,7 +685,7 @@ export const AIPanel = {
         system: prompt.system,
         messages: [{ role: "user", content: prompt.content }],
         maxTokens: SIDE_CALL_MAX_TOKENS,
-        signal: this._abort?.signal,
+        signal,
       });
 
       const reply = lazy.AIMailContext.cleanSearchQuery(result.text);
@@ -713,9 +760,10 @@ export const AIPanel = {
    * than failing the question.
    *
    * @param {string} question
+   * @param {AbortSignal} signal - The signal of the request being built for.
    * @returns {Promise<?string>} The query, or null to use the fallback.
    */
-  async _formulateSearchQuery(question) {
+  async _formulateSearchQuery(question, signal) {
     try {
       const options = await lazy.AIConfig.requestOptions();
       const prompt = lazy.AIMailContext.searchQueryPrompt(question);
@@ -727,7 +775,7 @@ export const AIPanel = {
         // their output budget thinking first: at 64 the budget ran out
         // mid-reasoning and the query came back empty every time.
         maxTokens: SIDE_CALL_MAX_TOKENS,
-        signal: this._abort?.signal,
+        signal,
       });
       const query = lazy.AIMailContext.cleanSearchQuery(result.text);
       if (!query) {
@@ -764,9 +812,10 @@ export const AIPanel = {
       const item = document.createElement("li");
       const link = document.createElement("a");
       link.href = "#";
-      link.textContent = source.messageCount > 1
-        ? `[${source.index}] ${source.subject} — ${source.author} (${source.messageCount} messages)`
-        : `[${source.index}] ${source.subject} — ${source.author}`;
+      link.textContent =
+        source.messageCount > 1
+          ? `[${source.index}] ${source.subject} — ${source.author} (${source.messageCount} messages)`
+          : `[${source.index}] ${source.subject} — ${source.author}`;
       link.title = source.subject;
       if (source.uri) {
         link.addEventListener("click", event => {
@@ -809,7 +858,8 @@ export const AIPanel = {
    */
   _openMessage(uri) {
     try {
-      const hdr = lazy.MailServices.messageServiceFromURI(uri).messageURIToMsgHdr(uri);
+      const hdr =
+        lazy.MailServices.messageServiceFromURI(uri).messageURIToMsgHdr(uri);
       window.top.MsgOpenNewTabForMessages?.([hdr]) ??
         window.top.OpenMessageInNewTab?.(hdr, { background: false });
     } catch (ex) {
@@ -820,14 +870,11 @@ export const AIPanel = {
   // -- reply drafting -----------------------------------------------------
 
   /**
-   * A message from the user's current selection, used as the way in to the
-   * thread being replied to.
+   * A message from the user's current selection.
    *
-   * Any non-empty selection counts. Clicking a collapsed thread selects
-   * every message in it, which is the normal way to pick a conversation --
-   * requiring exactly one selected message would refuse the common case.
-   * threadForReply() walks out to the full thread from here anyway, so
-   * which message it is matters less than which thread.
+   * The fallback for _replyTarget() when nothing is on display: with a
+   * collapsed thread selected, or the message pane closed, there is no
+   * previewed message but there is still a conversation to reply to.
    *
    * @returns {?nsIMsgDBHdr}
    */
@@ -844,10 +891,53 @@ export const AIPanel = {
     return null;
   },
 
-  updateDraftButton() {
-    if (this.draftButton) {
-      this.draftButton.disabled = !this._selectedMessage();
+  /**
+   * The message on display in the message pane, if one is.
+   *
+   * about:3pane shows a single message through messageBrowser and hides it
+   * for everything else -- an empty selection, or the summary shown for
+   * several -- so its being visible is what distinguishes "this message is
+   * open" from "these messages are selected".
+   *
+   * @returns {?nsIMsgDBHdr}
+   */
+  _displayedMessage() {
+    try {
+      const browser = window.messageBrowser;
+      if (browser && !browser.hidden) {
+        return browser.contentWindow?.gMessage ?? null;
+      }
+    } catch {
+      // No message pane in this tab.
     }
+    return null;
+  },
+
+  /**
+   * The message a drafted reply should answer.
+   *
+   * What is open in the message pane wins over what is selected in the
+   * list: the reply is to the message being read, not to whatever the
+   * thread has moved on to since.
+   *
+   * @returns {?nsIMsgDBHdr}
+   */
+  _replyTarget() {
+    return this._displayedMessage() ?? this._selectedMessage();
+  },
+
+  updateDraftButton() {
+    if (!this.draftButton) {
+      return;
+    }
+    // While a draft is running the button is what cancels it, so it stays
+    // enabled whatever the selection has moved on to.
+    const drafting = !!this._draftAbort;
+    this.draftButton.disabled = !drafting && !this._replyTarget();
+    document.l10n.setAttributes(
+      this.draftButton,
+      drafting ? "ai-panel-draft-stop" : "ai-panel-draft-reply"
+    );
   },
 
   /**
@@ -855,10 +945,13 @@ export const AIPanel = {
    *
    * It deliberately opens a compose window rather than saving to Drafts or
    * sending: the whole point is that you read it first.
+   *
+   * Runs alongside the conversation: the composer stays live while it works,
+   * so a question can be asked and answered without waiting for the draft.
    */
   async draftReply() {
-    const hdr = this._selectedMessage();
-    if (!hdr || this._abort) {
+    const hdr = this._replyTarget();
+    if (!hdr || this._draftAbort) {
       return;
     }
     if (!(await this.refreshConfigured())) {
@@ -868,15 +961,19 @@ export const AIPanel = {
     const answerBody = this._addTurn("assistant");
     answerBody.appendChild(this._notice("ai-panel-drafting"));
 
-    this._setBusy(true);
-    this._abort = new AbortController();
+    // Held locally as well, so that a draft cancelled and restarted before
+    // this one unwinds does not have its controller cleared from under it.
+    const controller = new AbortController();
+    this._draftAbort = controller;
+    this.updateDraftButton();
 
     try {
-      const { text: thread, latest } =
+      const { text: thread, target } =
         await lazy.AIMailContext.threadForReply(hdr);
       const identity =
-        lazy.MailServices.accounts.getFirstIdentityForServer(hdr.folder.server) ??
-        lazy.MailServices.accounts.defaultAccount?.defaultIdentity;
+        lazy.MailServices.accounts.getFirstIdentityForServer(
+          hdr.folder.server
+        ) ?? lazy.MailServices.accounts.defaultAccount?.defaultIdentity;
 
       // Compose needs an identity to send as, and refuses to open a window
       // without one. Say that plainly rather than spending a request on a
@@ -892,7 +989,7 @@ export const AIPanel = {
       const options = await lazy.AIConfig.requestOptions();
       const result = await lazy.AIProvider.chat({
         ...options,
-        signal: this._abort.signal,
+        signal: controller.signal,
         system:
           `You draft email replies as ${me}. Write only the body of the ` +
           `reply: no subject line, no "To:" header, no quoted original, ` +
@@ -905,13 +1002,13 @@ export const AIPanel = {
           {
             role: "user",
             content:
-              `Draft a reply to the most recent message in this thread.\n\n` +
+              `Draft a reply to the last message shown in this thread.\n\n` +
               `${thread}`,
           },
         ],
       });
 
-      this._openReplyCompose(latest, identity, result.text);
+      this._openReplyCompose(target, identity, result.text);
       answerBody.replaceChildren(this._notice("ai-panel-draft-opened"));
     } catch (ex) {
       if (ex?.name == "AbortError") {
@@ -924,8 +1021,10 @@ export const AIPanel = {
         answerBody.replaceChildren(error);
       }
     } finally {
-      this._abort = null;
-      this._setBusy(false);
+      if (this._draftAbort == controller) {
+        this._draftAbort = null;
+        this.updateDraftButton();
+      }
     }
   },
 
