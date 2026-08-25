@@ -24,6 +24,7 @@ ChromeUtils.defineESModuleGetters(lazy, {
   AIMailContext: "resource:///modules/AIMailContext.sys.mjs",
   AIProvider: "resource:///modules/AIProvider.sys.mjs",
   MailServices: "resource:///modules/MailServices.sys.mjs",
+  openLinkExternally: "resource:///modules/LinkHelper.sys.mjs",
 });
 
 /** Keeps the transcript from growing without bound in a long session. */
@@ -102,6 +103,13 @@ export const AIPanel = {
       this.send();
     });
     this.draftButton = document.getElementById("ai-panel-draft-reply");
+
+    // Delegated: answers are re-rendered on every streamed fragment, so
+    // anything bound to the links themselves would be rebound dozens of
+    // times a second.
+    this.transcript.addEventListener("click", event =>
+      this._onTranscriptClick(event)
+    );
 
     this.stopButton.addEventListener("click", () => this.cancel());
     document
@@ -379,6 +387,44 @@ export const AIPanel = {
         this.input.focus();
       }
     }
+  },
+
+  /**
+   * Send a clicked link to the browser instead of following it here.
+   *
+   * A chrome document has nowhere sensible to navigate: following the link
+   * in place would replace the pane with the page. The scheme is checked
+   * again here rather than trusted from render time, because what reaches
+   * the transcript is model output.
+   *
+   * @param {MouseEvent} event
+   */
+  _onTranscriptClick(event) {
+    // Not a plain left click: let the platform do whatever it does.
+    if (event.button != 0 || event.defaultPrevented) {
+      return;
+    }
+    const anchor = event.target?.closest?.("a[href]");
+    if (!anchor) {
+      return;
+    }
+    // Citations point at mail rather than the web, and have their own
+    // handler which has already run by now.
+    const href = anchor.getAttribute("href");
+    if (!href || href.startsWith("#")) {
+      return;
+    }
+    let uri;
+    try {
+      uri = Services.io.newURI(href);
+    } catch {
+      return;
+    }
+    if (!["http", "https", "mailto"].includes(uri.scheme)) {
+      return;
+    }
+    event.preventDefault();
+    lazy.openLinkExternally(uri);
   },
 
   /**
