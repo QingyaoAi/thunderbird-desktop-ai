@@ -1092,8 +1092,12 @@ nsMsgDatabase::~nsMsgDatabase() {
   m_ChangeListeners.Clear();
 }
 
+// nsISupportsWeakReference because MsgDBReporter holds the database weakly --
+// a memory reporter that kept its subject alive would be reporting on memory
+// that only exists because it is reporting on it. Without this, every
+// do_GetWeakReference here failed silently and the reporter measured nothing.
 NS_IMPL_ISUPPORTS(nsMsgDatabase, nsIMsgDatabase, nsIMsgOfflineOpsDatabase,
-                  nsIDBChangeAnnouncer)
+                  nsIDBChangeAnnouncer, nsISupportsWeakReference)
 
 nsresult nsMsgDatabase::GetMDBFactory(nsIMdbFactory** aMdbFactory) {
   if (!mMdbFactory) {

@@ -21,6 +21,7 @@
 #include "nsTArray.h"
 #include "nsTHashMap.h"
 #include "nsTObserverArray.h"
+#include "nsWeakReference.h"
 #include "prtime.h"
 
 using mozilla::intl::Collator;
@@ -79,7 +80,8 @@ class MsgDBReporter;
 }
 }  // namespace mozilla
 
-class nsMsgDatabase : public nsIMsgOfflineOpsDatabase {
+class nsMsgDatabase : public nsIMsgOfflineOpsDatabase,
+                      public nsSupportsWeakReference {
  public:
   friend class nsMsgDBService;
   friend class nsMsgPropertyEnumerator;  // accesses m_mdbEnv and m_mdbStore

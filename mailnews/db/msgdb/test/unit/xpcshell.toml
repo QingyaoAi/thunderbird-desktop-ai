@@ -9,6 +9,8 @@ head = "head_maildb.js"
 
 ["test_maildb.js"]
 
+["test_msgDBMemoryReporter.js"]
+
 ["test_propertyEnumerator.js"]
 
 ["test_references_parsing.js"]
