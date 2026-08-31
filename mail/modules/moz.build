@@ -49,6 +49,7 @@ EXTRA_JS_MODULES += [
     "ShortcutsManager.sys.mjs",
     "SmartMailboxUtils.sys.mjs",
     "StarTagSync.sys.mjs",
+    "SummaryDatabaseReaper.sys.mjs",
     "SummaryFrameManager.sys.mjs",
     "TagMessageCounts.sys.mjs",
     "TagUtils.sys.mjs",

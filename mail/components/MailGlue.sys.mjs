@@ -44,6 +44,7 @@ ChromeUtils.defineESModuleGetters(lazy, {
   MailMigrator: "resource:///modules/MailMigrator.sys.mjs",
   MailMcpServer: "resource:///modules/MailMcpServer.sys.mjs",
   StarTagSync: "resource:///modules/StarTagSync.sys.mjs",
+  SummaryDatabaseReaper: "resource:///modules/SummaryDatabaseReaper.sys.mjs",
   TagMessageCounts: "resource:///modules/TagMessageCounts.sys.mjs",
   VipUnreadCounts: "resource:///modules/VipUnreadCounts.sys.mjs",
   MailNotificationManager:
@@ -966,6 +967,14 @@ MailGlue.prototype = {
           Services.prefs.addObserver("mail.mcp.enabled", () =>
             lazy.MailMcpServer.refresh()
           );
+        },
+      },
+      {
+        // Hands back the folder summaries nothing is reading any more.
+        // Nothing else in the tree does: once opened, a summary is resident
+        // for the session, so a long-lived window's memory only ever climbs.
+        task: () => {
+          lazy.SummaryDatabaseReaper.start();
         },
       },
       {
