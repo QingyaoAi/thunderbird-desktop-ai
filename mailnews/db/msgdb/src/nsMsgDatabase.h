@@ -408,6 +408,23 @@ class nsMsgDatabase : public nsIMsgOfflineOpsDatabase,
   static size_t HeaderHashSizeOf(PLDHashEntryHdr* hdr,
                                  mozilla::MallocSizeOf aMallocSizeOf,
                                  void* arg);
+  /**
+   * What a summary is spending its memory on.
+   *
+   * The parts answer different questions and have very different remedies,
+   * so they are reported separately. mMork is the parsed summary file, which
+   * is all-or-nothing: mork reads a store whole, and its own lazy-open policy
+   * (mOpenPolicy_MaxLazy) is a declared field no code has ever read. mHeaders
+   * is the nsMsgHdr objects currently materialised, which *are* built on
+   * demand and can be let go of.
+   */
+  struct SizeParts {
+    size_t mMork = 0;
+    size_t mHeaders = 0;
+    size_t mOther = 0;
+    size_t Total() const { return mMork + mHeaders + mOther; }
+  };
+  SizeParts SizeOfParts(mozilla::MallocSizeOf aMallocSizeOf) const;
   virtual size_t SizeOfExcludingThis(mozilla::MallocSizeOf aMallocSizeOf) const;
   virtual size_t SizeOfIncludingThis(
       mozilla::MallocSizeOf aMallocSizeOf) const {

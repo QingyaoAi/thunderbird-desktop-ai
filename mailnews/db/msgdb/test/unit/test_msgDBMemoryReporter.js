@@ -74,11 +74,22 @@ add_task(async function testOpenDatabaseIsReported() {
   Assert.greater(reports.length, 0, "a summary should be reported at all");
 
   const mine = reports.filter(r => r.path.includes("reported"));
-  Assert.equal(mine.length, 1, "this folder's summary should be reported once");
+  Assert.deepEqual(
+    mine.map(r => r.path.replace(/^.*\)\//, "")).sort(),
+    ["headers", "mork", "other"],
+    "the summary should be reported in its three parts"
+  );
+
+  const part = name => mine.find(r => r.path.endsWith("/" + name)).amount;
   Assert.greater(
-    mine[0].amount,
+    part("mork"),
     0,
-    "the reported summary should not measure zero bytes"
+    "an open summary should hold a parsed mork store"
+  );
+  Assert.greater(
+    part("mork") + part("headers") + part("other"),
+    0,
+    "the summary should not measure zero bytes in total"
   );
   Assert.ok(
     !reports.some(r => r.path.includes("UNKNOWN-FOLDER")),

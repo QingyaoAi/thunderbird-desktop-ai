@@ -897,39 +897,46 @@ void nsMsgDBService::DumpCache() {
 
 // Memory Reporting implementations
 
-size_t nsMsgDatabase::SizeOfExcludingThis(
+nsMsgDatabase::SizeParts nsMsgDatabase::SizeOfParts(
     mozilla::MallocSizeOf aMallocSizeOf) const {
-  size_t totalSize = 0;
-  if (m_dbFolderInfo) {
-    totalSize += m_dbFolderInfo->SizeOfExcludingThis(aMallocSizeOf);
-  }
+  SizeParts parts;
+
   if (m_mdbEnv) {
     nsIMdbHeap* morkHeap = nullptr;
     m_mdbEnv->GetHeap(&morkHeap);
-    if (morkHeap) totalSize += morkHeap->GetUsedSize();
+    if (morkHeap) parts.mMork = morkHeap->GetUsedSize();
   }
-  totalSize += m_newSet.ShallowSizeOfExcludingThis(aMallocSizeOf);
-  totalSize += m_ChangeListeners.ShallowSizeOfExcludingThis(aMallocSizeOf);
-  totalSize += m_threads.ShallowSizeOfExcludingThis(aMallocSizeOf);
+
   // We have two tables of header objects, but every header in m_cachedHeaders
   // should be in m_headersInUse.
   // double-counting...
-  size_t headerSize = 0;
   if (m_headersInUse) {
-    headerSize = m_headersInUse->ShallowSizeOfIncludingThis(aMallocSizeOf);
+    parts.mHeaders = m_headersInUse->ShallowSizeOfIncludingThis(aMallocSizeOf);
     for (auto iter = m_headersInUse->Iter(); !iter.Done(); iter.Next()) {
       auto* entry = static_cast<MsgHdrHashElement*>(iter.Get());
       // Sigh, this is dangerous, but so long as this is a closed system, this
       // is safe.
-      headerSize += static_cast<nsMsgHdr*>(entry->mHdr)
-                        ->SizeOfIncludingThis(aMallocSizeOf);
+      parts.mHeaders += static_cast<nsMsgHdr*>(entry->mHdr)
+                            ->SizeOfIncludingThis(aMallocSizeOf);
     }
   }
-  totalSize += headerSize;
-  if (m_msgReferences) {
-    totalSize += m_msgReferences->ShallowSizeOfIncludingThis(aMallocSizeOf);
+
+  if (m_dbFolderInfo) {
+    parts.mOther += m_dbFolderInfo->SizeOfExcludingThis(aMallocSizeOf);
   }
-  return totalSize;
+  parts.mOther += m_newSet.ShallowSizeOfExcludingThis(aMallocSizeOf);
+  parts.mOther += m_ChangeListeners.ShallowSizeOfExcludingThis(aMallocSizeOf);
+  parts.mOther += m_threads.ShallowSizeOfExcludingThis(aMallocSizeOf);
+  if (m_msgReferences) {
+    parts.mOther += m_msgReferences->ShallowSizeOfIncludingThis(aMallocSizeOf);
+  }
+
+  return parts;
+}
+
+size_t nsMsgDatabase::SizeOfExcludingThis(
+    mozilla::MallocSizeOf aMallocSizeOf) const {
+  return SizeOfParts(aMallocSizeOf).Total();
 }
 
 namespace mozilla::mailnews {
@@ -956,10 +963,39 @@ class MsgDBReporter final : public nsIMemoryReporter {
     nsCOMPtr<nsIMsgDatabase> database = do_QueryReferent(mDatabase);
     nsMsgDatabase* db =
         database ? static_cast<nsMsgDatabase*>(database.get()) : nullptr;
-    return aCb->Callback(EmptyCString(), path, nsIMemoryReporter::KIND_HEAP,
-                         nsIMemoryReporter::UNITS_BYTES,
-                         db ? db->SizeOfIncludingThis(GetMallocSize) : 0,
-                         "Memory used for the folder database."_ns, aClosure);
+
+    nsMsgDatabase::SizeParts parts;
+    if (db) {
+      parts = db->SizeOfParts(GetMallocSize);
+      parts.mOther += GetMallocSize(db);
+    }
+
+    // Split, because the two large parts have nothing in common but a folder.
+    // Mork is only given back by closing the summary; headers can be let go
+    // of while it stays open. Reported as one number they suggest one remedy,
+    // and it would be the wrong one for whichever half is actually large.
+    nsresult rv = aCb->Callback(
+        EmptyCString(), path + "/mork"_ns, nsIMemoryReporter::KIND_HEAP,
+        nsIMemoryReporter::UNITS_BYTES, parts.mMork,
+        "The parsed summary file. Mork reads a store whole and has no working "
+        "lazy-open policy, so this is the price of having the folder open."_ns,
+        aClosure);
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    rv = aCb->Callback(
+        EmptyCString(), path + "/headers"_ns, nsIMemoryReporter::KIND_HEAP,
+        nsIMemoryReporter::UNITS_BYTES, parts.mHeaders,
+        "Message headers materialised from the summary and still referenced. "
+        "Built on demand, so this tracks what is being looked at."_ns,
+        aClosure);
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    return aCb->Callback(
+        EmptyCString(), path + "/other"_ns, nsIMemoryReporter::KIND_HEAP,
+        nsIMemoryReporter::UNITS_BYTES, parts.mOther,
+        "Folder info, the thread and listener tables, and the reference "
+        "index."_ns,
+        aClosure);
   }
 
   void GetPath(nsACString& memoryPath, bool aAnonymize) {
