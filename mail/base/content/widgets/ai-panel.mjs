@@ -27,7 +27,10 @@ ChromeUtils.defineESModuleGetters(lazy, {
   openLinkExternally: "resource:///modules/LinkHelper.sys.mjs",
 });
 
-/** Keeps the transcript from growing without bound in a long session. */
+/**
+ * Keeps a long session bounded: both the turns shown and the history sent
+ * with each question are trimmed to this many.
+ */
 const MAX_TURNS = 40;
 
 /**
@@ -241,6 +244,21 @@ export const AIPanel = {
   _trimTranscript() {
     while (this.transcript.childElementCount > MAX_TURNS) {
       this.transcript.firstElementChild.remove();
+    }
+
+    // The history sent with each question is trimmed to the same length as
+    // the transcript shown. It used not to be, which cost twice: a session
+    // left open all day held every turn it had ever had, and -- because the
+    // whole history goes out with every question -- each request carried the
+    // lot, growing slower and more expensive the longer the session ran.
+    while (this._messages.length > MAX_TURNS) {
+      this._messages.shift();
+    }
+    // Dropping from the front can leave a reply whose question has gone.
+    // Providers that require the exchange to open with a user message reject
+    // that outright, so drop the orphan too.
+    if (this._messages[0]?.role == "assistant") {
+      this._messages.shift();
     }
   },
 
