@@ -115,6 +115,8 @@ tags = ["virtualfolders"]
 
 ["test_newMailNotification.js"]
 
+["test_notificationLanguageDetector.js"]
+
 ["test_nsIFolderListener.js"]
 
 ["test_nsIMsgContentPolicy.js"]

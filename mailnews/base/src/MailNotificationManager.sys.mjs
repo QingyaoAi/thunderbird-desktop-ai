@@ -16,6 +16,7 @@ const lazy = {};
 ChromeUtils.defineESModuleGetters(lazy, {
   LanguageDetector:
     "resource://gre/modules/translations/LanguageDetector.sys.mjs",
+  workerManager: "resource://gre/modules/translations/LanguageDetector.sys.mjs",
   MailNotificationService:
     "resource:///modules/MailNotificationService.sys.mjs",
   MailUtils: "resource:///modules/MailUtils.sys.mjs",
@@ -486,6 +487,17 @@ export const MailNotificationManager = new (class {
         if (!confident) {
           language = undefined;
         }
+
+        // Send the detector's worker away once it has answered. It carries an
+        // Emscripten heap of some sixteen megabytes and, left alone, keeps it
+        // for the life of the application: the manager only schedules its own
+        // termination after processing a string of 1.5MB or more, on the
+        // reasoning that such a string has already grown the heap and an
+        // Emscripten heap does not shrink. That is sound for detecting the
+        // language of a web page. A notification preview is a few dozen
+        // characters, never approaches the threshold, and so would hold the
+        // worker forever in exchange for having asked one short question.
+        lazy.workerManager.flushWorker();
 
         // Break the preview into words and keep all words that start before
         // the desired length is reached.
