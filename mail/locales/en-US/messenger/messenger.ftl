@@ -928,7 +928,11 @@ ai-panel-url-invalid = The base URL must start with http:// or https://.
 
 ai-panel-key-prompt = API key for { $provider }. It is stored with your saved passwords, not in a file.
 
+# The box below the transcript doubles as an instruction for the draft:
+# “decline politely”, “ask when they need it by”. The title says so,
+# since there is nothing on screen that would otherwise suggest it.
 ai-panel-draft-reply = Draft reply to selected thread
+    .title = Draft a reply to the selected thread. Anything typed in the box below steers it — for example “decline politely” or “ask for another week”.
 
 ai-panel-draft-stop = Stop drafting
 

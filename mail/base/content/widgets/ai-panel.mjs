@@ -1022,6 +1022,17 @@ export const AIPanel = {
       return;
     }
 
+    // Whatever is in the composer is taken as an instruction for the draft --
+    // "decline politely", "ask when they need it by". The alternative was a
+    // dialog of its own, which is a worse trade: there is already a text box
+    // in front of you, and a reply worth steering is usually one you have
+    // already started thinking in words about. Empty, this drafts as before.
+    const instruction = this.input.value.trim();
+    if (instruction) {
+      this.input.value = "";
+      this._addTurn("user").textContent = instruction;
+    }
+
     const answerBody = this._addTurn("assistant");
     answerBody.appendChild(this._notice("ai-panel-drafting"));
 
@@ -1061,13 +1072,27 @@ export const AIPanel = {
           `conversation. Be direct and concise. If the thread asks ` +
           `questions, answer them. If something genuinely cannot be ` +
           `answered without information you do not have, leave a clearly ` +
-          `marked [TODO] for the user rather than inventing it.`,
+          `marked [TODO] for the user rather than inventing it.` +
+          (instruction
+            ? ` The user has said what they want this reply to do. Follow ` +
+              `that instruction: it decides what the reply says and how it ` +
+              `says it, and the thread is there to tell you who you are ` +
+              `answering and what about. Where the two disagree -- the ` +
+              `instruction declines something the thread proposes, say -- ` +
+              `the instruction is what the user wants said. Carry it out in ` +
+              `the reply itself; do not describe it or acknowledge having ` +
+              `been asked.`
+            : ``),
         messages: [
           {
             role: "user",
-            content:
-              `Draft a reply to the last message shown in this thread.\n\n` +
-              `${thread}`,
+            content: instruction
+              ? `Draft a reply to the last message shown in this thread, ` +
+                `doing what I have asked for below.\n\n` +
+                `What I want the reply to do:\n${instruction}\n\n` +
+                `${thread}`
+              : `Draft a reply to the last message shown in this thread.\n\n` +
+                `${thread}`,
           },
         ],
       });
