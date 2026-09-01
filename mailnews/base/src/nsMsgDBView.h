@@ -421,6 +421,22 @@ class nsMsgDBView : public nsIMsgDBView,
   void FreeAll(nsTArray<void*>* ptrs);
   void ClearHdrCache();
 
+ public:
+  /**
+   * What this view is spending on the rows it is showing.
+   *
+   * Views are not reachable from anywhere a memory reporter could ask, so
+   * every live one puts itself on a list the reporter walks. Registration is
+   * by raw pointer and paired with the destructor, which is where an entry is
+   * taken off again.
+   */
+  size_t SizeOfIncludingThis(mozilla::MallocSizeOf aMallocSizeOf) const;
+
+  /** Every view currently alive, in the order they were made. */
+  static nsTArray<nsMsgDBView*>& LiveViews();
+
+ protected:
+
   // The message held in each row.
   nsTArray<nsMsgKey> m_keys;
   // Flags for each row, combining nsMsgMessageFlags and MSG_VIEW_FLAGS.

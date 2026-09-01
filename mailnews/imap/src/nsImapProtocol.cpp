@@ -3,6 +3,7 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "nsImapProtocol.h"
+#include "nsIMemoryReporter.h"
 
 #include "msgCore.h"  // for pre-compiled headers
 #include "nsMsgUtils.h"
@@ -510,6 +511,60 @@ class nsImapProtocolMainLoopRunnable final : public mozilla::Runnable {
   RefPtr<nsImapProtocol> mProtocol;
 };
 
+namespace {
+
+MOZ_DEFINE_MALLOC_SIZE_OF(ImapMallocSizeOf)
+
+/**
+ * Reports what the open IMAP connections are holding.
+ *
+ * A connection keeps the UID and flags of every message in the mailbox it has
+ * selected, and any keywords the server reports for them -- which on Gmail is
+ * where labels arrive. That makes it one of the few parts of the mail backend
+ * whose size follows the size of a mailbox rather than what is on screen, and
+ * so worth being able to see rather than argue about.
+ */
+class ImapConnectionReporter final : public nsIMemoryReporter {
+ public:
+  NS_DECL_ISUPPORTS
+
+  NS_IMETHOD CollectReports(nsIHandleReportCallback* aHandleReport,
+                            nsISupports* aData, bool aAnonymize) override {
+    size_t total = 0;
+    for (nsImapProtocol* connection : nsImapProtocol::LiveConnections()) {
+      total += connection->SizeOfIncludingThis(ImapMallocSizeOf);
+    }
+    MOZ_COLLECT_REPORT(
+        "explicit/imap-connections", KIND_HEAP, UNITS_BYTES, total,
+        "IMAP connections: for each, the UID and flags of every message in "
+        "the mailbox it has selected, and the server's keywords for them.");
+    return NS_OK;
+  }
+
+ private:
+  ~ImapConnectionReporter() = default;
+};
+
+NS_IMPL_ISUPPORTS(ImapConnectionReporter, nsIMemoryReporter)
+
+}  // namespace
+
+/* static */
+nsTArray<nsImapProtocol*>& nsImapProtocol::LiveConnections() {
+  MOZ_ASSERT(NS_IsMainThread());
+  static nsTArray<nsImapProtocol*> sLiveConnections;
+  return sLiveConnections;
+}
+
+size_t nsImapProtocol::SizeOfIncludingThis(
+    mozilla::MallocSizeOf aMallocSizeOf) {
+  size_t total = aMallocSizeOf(this);
+  if (m_flagState) {
+    total += m_flagState->SizeOfIncludingThis(aMallocSizeOf);
+  }
+  return total;
+}
+
 nsImapProtocol::nsImapProtocol()
     : nsMsgProtocol(nullptr),
       m_urlReadyToRunMonitor("imapUrlReadyToRun"),
@@ -521,6 +576,18 @@ nsImapProtocol::nsImapProtocol()
       m_passwordReadyMonitor("imapPasswordReady"),
       mMonitor("nsImapProtocol.mMonitor"),
       m_parser(*this) {
+  // Registered with the first connection rather than at startup, so a process
+  // that never speaks IMAP reports nothing.
+  if (LiveConnections().IsEmpty()) {
+    static bool sRegistered = false;
+    if (!sRegistered) {
+      sRegistered = true;
+      mozilla::RegisterStrongMemoryReporter(
+          do_AddRef(new ImapConnectionReporter()));
+    }
+  }
+  LiveConnections().AppendElement(this);
+
   m_urlInProgress = false;
   m_idle = false;
   m_retryUrlOnError = false;
@@ -716,6 +783,7 @@ nsImapProtocol::Initialize(nsIImapHostSessionList* aHostSessionList,
 }
 
 nsImapProtocol::~nsImapProtocol() {
+  LiveConnections().RemoveElement(this);
   PR_Free(m_dataOutputBuf);
 
   // **** We must be out of the thread main loop function

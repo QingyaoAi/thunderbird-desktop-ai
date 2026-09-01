@@ -40,6 +40,8 @@ skip-if = [
   "os == 'win' && msix", # MSIX has a distribution.ini and it's unwritable. Tests fail.
 ]
 
+["test_mailBackendMemoryReporters.js"]
+
 ["test_migrateTryStartTLS.js"]
 
 ["test_mozIconUtils.js"]

@@ -16,6 +16,7 @@
 #include "mozilla/intl/OSPreferences.h"
 #include "mozilla/mailnews/MimeHeaderParser.h"
 #include "mozilla/Preferences.h"
+#include "nsIMemoryReporter.h"
 #include "mozilla/StaticPrefs_mail.h"
 #include "mozilla/StaticPrefs_mailnews.h"
 #include "mozilla/StaticPtr.h"
@@ -128,7 +129,80 @@ NS_INTERFACE_MAP_BEGIN(nsMsgDBView)
   NS_INTERFACE_MAP_ENTRY(nsIJunkMailClassificationListener)
 NS_INTERFACE_MAP_END
 
+namespace {
+
+/**
+ * Reports what the open message views are spending on their rows.
+ *
+ * A view holds three parallel arrays -- a key, a flag word and a threading
+ * level for every row it shows -- so its cost follows the number of messages
+ * in the folder being looked at rather than what is on screen. That is the
+ * whole of it, and it is not much: twelve bytes a row, against the couple of
+ * kilobytes a row the folder's summary costs. Reported so that it can be
+ * ruled out from a number rather than from an argument.
+ */
+MOZ_DEFINE_MALLOC_SIZE_OF(MsgViewMallocSizeOf)
+
+class MsgViewReporter final : public nsIMemoryReporter {
+ public:
+  NS_DECL_ISUPPORTS
+
+  NS_IMETHOD CollectReports(nsIHandleReportCallback* aHandleReport,
+                            nsISupports* aData, bool aAnonymize) override {
+    size_t total = 0;
+    for (const nsMsgDBView* view : nsMsgDBView::LiveViews()) {
+      total += view->SizeOfIncludingThis(MsgViewMallocSizeOf);
+    }
+    // One figure rather than one per view: views come and go with every click,
+    // and a path naming each would churn about:memory without saying more.
+    MOZ_COLLECT_REPORT(
+        "explicit/mail-views", KIND_HEAP, UNITS_BYTES, total,
+        "Row arrays of the open message views: a key, a flag word and a "
+        "threading level for each row shown.");
+    return NS_OK;
+  }
+
+ private:
+  ~MsgViewReporter() = default;
+};
+
+NS_IMPL_ISUPPORTS(MsgViewReporter, nsIMemoryReporter)
+
+}  // namespace
+
+/* static */
+nsTArray<nsMsgDBView*>& nsMsgDBView::LiveViews() {
+  static nsTArray<nsMsgDBView*> sLiveViews;
+  return sLiveViews;
+}
+
+size_t nsMsgDBView::SizeOfIncludingThis(
+    mozilla::MallocSizeOf aMallocSizeOf) const {
+  size_t total = aMallocSizeOf(this);
+  total += m_keys.ShallowSizeOfExcludingThis(aMallocSizeOf);
+  total += m_flags.ShallowSizeOfExcludingThis(aMallocSizeOf);
+  total += m_levels.ShallowSizeOfExcludingThis(aMallocSizeOf);
+  total += m_sortColumns.ShallowSizeOfExcludingThis(aMallocSizeOf);
+  total += m_customColumnHandlerIDs.ShallowSizeOfExcludingThis(aMallocSizeOf);
+  for (const nsString& id : m_customColumnHandlerIDs) {
+    total += id.SizeOfExcludingThisIfUnshared(aMallocSizeOf);
+  }
+  return total;
+}
+
 nsMsgDBView::nsMsgDBView() {
+  // The reporter is registered once, with the first view, rather than at
+  // startup: a process that never opens one has nothing to say.
+  if (LiveViews().IsEmpty()) {
+    static bool sRegistered = false;
+    if (!sRegistered) {
+      sRegistered = true;
+      mozilla::RegisterStrongMemoryReporter(
+          do_AddRef(new MsgViewReporter()));
+    }
+  }
+  LiveViews().AppendElement(this);
+
   // Member initializers and constructor code.
   m_sortValid = false;
   m_checkedCustomColumns = false;
@@ -196,6 +270,7 @@ void nsMsgDBView::InitializeLiterals() {
 }
 
 nsMsgDBView::~nsMsgDBView() {
+  LiveViews().RemoveElement(this);
   if (m_db) m_db->RemoveListener(this);
 }
 

@@ -532,6 +532,18 @@ class nsImapProtocol : public nsIImapProtocol,
   bool m_safeToCloseConnection;
 
   RefPtr<nsImapFlagAndUidState> m_flagState;
+
+ public:
+  /**
+   * Every connection currently alive. Connections are made and destroyed on
+   * the main thread, which is also where a memory reporter asks, so a plain
+   * list needs no locking of its own -- what it points at does, and
+   * nsImapFlagAndUidState takes its own.
+   */
+  static nsTArray<nsImapProtocol*>& LiveConnections();
+  size_t SizeOfIncludingThis(mozilla::MallocSizeOf aMallocSizeOf);
+
+ private:
   nsMsgBiffState m_currentBiffState;
   // manage the IMAP server command tags
   nsCString m_currentServerCommandTag;

@@ -8,6 +8,7 @@
 #include "nsDebug.h"
 #include "nsImapCore.h"
 #include "nsImapFlagAndUidState.h"
+#include "mozilla/MemoryReporting.h"
 #include "prcmon.h"
 #include "nspr.h"
 
@@ -314,4 +315,22 @@ NS_IMETHODIMP nsImapFlagAndUidState::GetCustomAttribute(
   nsCString val = m_customAttributesHash.Get(key);
   aCustomAttributeValue.Assign(val);
   return NS_OK;
+}
+
+size_t nsImapFlagAndUidState::SizeOfIncludingThis(
+    mozilla::MallocSizeOf aMallocSizeOf) {
+  mozilla::MutexAutoLock lock(mLock);
+  size_t total = aMallocSizeOf(this);
+  total += fUids.ShallowSizeOfExcludingThis(aMallocSizeOf);
+  total += fFlags.ShallowSizeOfExcludingThis(aMallocSizeOf);
+  total += m_customFlagsHash.ShallowSizeOfExcludingThis(aMallocSizeOf);
+  for (const auto& entry : m_customFlagsHash.Values()) {
+    total += entry.SizeOfExcludingThisIfUnshared(aMallocSizeOf);
+  }
+  total += m_customAttributesHash.ShallowSizeOfExcludingThis(aMallocSizeOf);
+  for (const auto& entry : m_customAttributesHash) {
+    total += entry.GetKey().SizeOfExcludingThisIfUnshared(aMallocSizeOf);
+    total += entry.GetData().SizeOfExcludingThisIfUnshared(aMallocSizeOf);
+  }
+  return total;
 }
