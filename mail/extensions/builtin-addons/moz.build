@@ -4,6 +4,12 @@
 
 JAR_MANIFESTS += ["jar.mn"]
 
-DIRS += [
-    "thundermail",
-]
+# Thunderbird Pro's add-on is not built here. Its TBProMenu API fails to
+# instantiate -- ExtensionCommon calls `new module(extension)` on what the
+# module hands back, and this one hands back an object with the class on it
+# rather than the class -- so the menu it exists to add never appears, and
+# every launch logs "module is not a constructor". Being the only built-in
+# add-on, it is also the whole reason an extension process is started, which
+# measured 44MB of private footprint for a service this build cannot sign in
+# to. The account hub's Thundermail sign-up is a separate thing and is left
+# alone.
