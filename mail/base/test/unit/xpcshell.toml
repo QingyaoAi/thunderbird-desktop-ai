@@ -54,8 +54,6 @@ skip-if = [
 
 ["test_state_xulStoreSlice.js"]
 
-["test_summaryDatabaseReaper.js"]
-
 ["test_treeDataAdapter.js"]
 tags = ["dataadapter"]
 

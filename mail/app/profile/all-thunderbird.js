@@ -1687,3 +1687,20 @@ pref("browser.cache.memory.capacity", 32768);
 // points, and the default of 3 is "medium" -- which is 16px, and 16px is
 // 12pt. Saying "3" again would only restate Thunderbird's own default.
 pref("msgcompose.font_face", "Helvetica");
+
+// Let the summary database cache close large folders, not only small ones.
+//
+// MsgDBCacheManager already closes summaries that have gone mail.db.idle_limit
+// without use -- but only those under this size, and the default is a
+// megabyte. DBViewWrapper releases a view's underlying folders on the same
+// test. So the folders that are cheap to hold are the only ones handed back,
+// and every folder above a megabyte that a view has touched stays resident for
+// the session. That is exactly backwards: a summary costs about 2.6KB of
+// memory per message it holds, so the large ones are the whole bill. Two
+// inboxes here account for 297MB of a 657MB process.
+//
+// A threshold no real folder reaches means the cache manager treats every
+// summary alike. What the default was buying is the re-parse on the way back,
+// measured at 530ms for a 46MB summary of sixty-nine thousand messages -- paid
+// only when returning to a folder left alone for five minutes.
+pref("mail.db.keep_open_size", 1073741824);
