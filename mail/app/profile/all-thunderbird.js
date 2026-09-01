@@ -1704,3 +1704,17 @@ pref("msgcompose.font_face", "Helvetica");
 // measured at 530ms for a 46MB summary of sixty-nine thousand messages -- paid
 // only when returning to a folder left alone for five minutes.
 pref("mail.db.keep_open_size", 1073741824);
+
+// Don't fetch the start page into the message pane at launch.
+//
+// It loads https://live.thunderbird.net/.../start with the version, channel,
+// OS and build ID in the query string, and it is on screen only until the
+// first message is clicked. The cost is not the page: it is that a remote
+// origin in the message pane brings up a content process of its own, which
+// then stays for the session. Across four measurements of this profile that
+// process held 96MB, 59MB, 30MB and 29MB -- for a page nobody reads twice.
+//
+// Turning it off leaves the message pane showing account central at launch,
+// which is what it shows a moment later anyway, and keeps an unofficial
+// build's version string off the network.
+pref("mailnews.start_page.enabled", false);
