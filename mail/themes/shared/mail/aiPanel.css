@@ -219,7 +219,12 @@
 .ai-panel-composer {
   display: flex;
   gap: 6px;
-  align-items: flex-end;
+  /* The two buttons beside the box are what set the row's height, and the
+   * box stretches to meet them. Aligned to the end instead, it sat short of
+   * them and the row read as two things of different sizes rather than one
+   * control. Nothing resizes the box from script, and busy swaps Send for
+   * Stop rather than removing it, so the height this settles on is stable. */
+  align-items: stretch;
   padding: 8px;
   border-block-start: 1px solid var(--splitter-color);
 }
@@ -237,6 +242,7 @@
   border-radius: 4px;
   background-color: var(--input-bgcolor, var(--layout-background-0));
   color: inherit;
+  /* A floor only: the stretch above decides the height in practice. */
   min-block-size: 2.6em;
   max-block-size: 8em;
 }
