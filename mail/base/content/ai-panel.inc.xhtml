@@ -41,28 +41,30 @@
        role="log"
        aria-live="polite"></div>
 
-  <div id="ai-panel-actions" class="ai-panel-actions">
-    <button id="ai-panel-draft-reply"
-            class="ai-panel-action"
-            type="button"
-            disabled="disabled"
-            data-l10n-id="ai-panel-draft-reply"></button>
-  </div>
-
   <form id="ai-panel-composer" class="ai-panel-composer">
     <textarea id="ai-panel-input"
               class="ai-panel-input"
               rows="2"
               data-l10n-id="ai-panel-input"></textarea>
-    <button id="ai-panel-send"
-            class="ai-panel-send"
-            type="submit"
-            data-l10n-id="ai-panel-send-button"></button>
-    <button id="ai-panel-stop"
-            class="ai-panel-send ai-panel-stop"
-            type="button"
-            hidden="hidden"
-            data-l10n-id="ai-panel-stop-button"></button>
+    <!-- Both actions sit beside the box they act on. The draft button used
+       - to be in a row above it, which read as belonging to the transcript
+       - while quietly consuming whatever was typed below. -->
+    <div id="ai-panel-actions" class="ai-panel-actions">
+      <button id="ai-panel-send"
+              class="ai-panel-send"
+              type="submit"
+              data-l10n-id="ai-panel-send-button"></button>
+      <button id="ai-panel-stop"
+              class="ai-panel-send ai-panel-stop"
+              type="button"
+              hidden="hidden"
+              data-l10n-id="ai-panel-stop-button"></button>
+      <button id="ai-panel-draft-reply"
+              class="ai-panel-action"
+              type="button"
+              disabled="disabled"
+              data-l10n-id="ai-panel-draft-reply"></button>
+    </div>
   </form>
 
 </div>

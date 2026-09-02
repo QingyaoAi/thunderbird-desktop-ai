@@ -142,13 +142,24 @@ export const AIPanel = {
     this.updateDraftButton();
 
     // Enter sends, Shift+Enter makes a new line -- the convention for this
-    // kind of composer.
+    // kind of composer. Cmd or Ctrl with it drafts a reply instead, which is
+    // the convention for "the other thing this box can do".
     this.input.addEventListener("keydown", event => {
-      if (event.key == "Enter" && !event.shiftKey) {
-        event.preventDefault();
-        this.send();
+      if (event.key != "Enter" || event.shiftKey) {
+        return;
       }
+      if (event.metaKey || event.ctrlKey) {
+        event.preventDefault();
+        this.draftReply();
+        return;
+      }
+      event.preventDefault();
+      this.send();
     });
+
+    // What the draft button offers depends on whether there is anything to
+    // steer it with, so it is re-labelled as you type.
+    this.input.addEventListener("input", () => this.updateDraftButton());
 
     await this.refreshConfigured();
   },
@@ -997,10 +1008,27 @@ export const AIPanel = {
     // While a draft is running the button is what cancels it, so it stays
     // enabled whatever the selection has moved on to.
     const drafting = !!this._draftAbort;
-    this.draftButton.disabled = !drafting && !this._replyTarget();
+    const target = this._replyTarget();
+    this.draftButton.disabled = !drafting && !target;
+
+    // Three things the button can be, and it says which: it is stopping a
+    // draft, it will use what you have typed, or it will read the thread and
+    // decide for itself. Left as one label, the difference between the last
+    // two was invisible, which is what made the box's second purpose a
+    // secret.
+    let id = "ai-panel-draft-reply";
+    if (drafting) {
+      id = "ai-panel-draft-stop";
+    } else if (this.input?.value.trim()) {
+      id = "ai-panel-draft-with-instruction";
+    }
+    document.l10n.setAttributes(this.draftButton, id);
+
+    // The placeholder is the other half of saying so: with a message in
+    // front of you the box has two uses, and with none it has one.
     document.l10n.setAttributes(
-      this.draftButton,
-      drafting ? "ai-panel-draft-stop" : "ai-panel-draft-reply"
+      this.input,
+      target ? "ai-panel-input-with-message" : "ai-panel-input"
     );
   },
 
@@ -1031,6 +1059,12 @@ export const AIPanel = {
     if (instruction) {
       this.input.value = "";
       this._addTurn("user").textContent = instruction;
+      // Into the history as well, not only onto the screen. Shown but not
+      // remembered, a follow-up like "make that softer" would be answered by
+      // a model that had never seen what was asked for, while the transcript
+      // above it said otherwise.
+      this._messages.push({ role: "user", content: instruction });
+      this.updateDraftButton();
     }
 
     const answerBody = this._addTurn("assistant");

@@ -267,16 +267,31 @@
   color: var(--layout-color-1);
 }
 
-/* -- actions -- */
+/* -- actions --
+ *
+ * Stacked beside the composer rather than in a row of their own above it:
+ * both act on what is in the box, and the box should look like it belongs
+ * to them. Send is on top because it is the one Enter reaches.
+ */
 
 .ai-panel-actions {
   display: flex;
-  padding: 6px 8px 0;
+  flex-direction: column;
+  /* Never shrink: these are the point of the row. */
+  flex: none;
+  gap: var(--space-xsmall);
+  /* Wide enough for either label without the two disagreeing as one
+   * changes, narrow enough to leave the box most of a narrow pane. */
+  inline-size: 7.5em;
+}
+
+.ai-panel-actions > .ai-panel-send {
+  inline-size: 100%;
 }
 
 .ai-panel-action {
   appearance: none;
-  flex: 1 1 0;
+  inline-size: 100%;
   min-inline-size: 0;
   /* Long labels ellipsize rather than forcing the button wider than the
    * pane, which used to push it out of view. */

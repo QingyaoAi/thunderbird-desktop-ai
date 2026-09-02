@@ -902,6 +902,12 @@ ai-panel-input =
     .placeholder = Ask about your mail…
     .aria-label = Message to the assistant
 
+# Used instead of the above while a message is selected, when what is typed
+# can either be a question or an instruction for a drafted reply.
+ai-panel-input-with-message =
+    .placeholder = Ask about your mail, or say how to reply…
+    .aria-label = Message to the assistant
+
 ai-panel-send-button = Send
 
 ai-panel-stop-button = Stop
@@ -928,11 +934,15 @@ ai-panel-url-invalid = The base URL must start with http:// or https://.
 
 ai-panel-key-prompt = API key for { $provider }. It is stored with your saved passwords, not in a file.
 
-# The box below the transcript doubles as an instruction for the draft:
-# “decline politely”, “ask when they need it by”. The title says so,
-# since there is nothing on screen that would otherwise suggest it.
-ai-panel-draft-reply = Draft reply to selected thread
-    .title = Draft a reply to the selected thread. Anything typed in the box below steers it — for example “decline politely” or “ask for another week”.
+# Shown on the draft button when the composer is empty, so the reply is
+# written from the thread alone.
+ai-panel-draft-reply = Draft reply
+    .title = Read the selected thread and draft a reply to it.
+
+# Shown on the same button when something has been typed, which is used as an
+# instruction for the reply — “decline politely”, “ask for another week”.
+ai-panel-draft-with-instruction = Draft with this
+    .title = Draft a reply to the selected thread, doing what you have typed.
 
 ai-panel-draft-stop = Stop drafting
 
