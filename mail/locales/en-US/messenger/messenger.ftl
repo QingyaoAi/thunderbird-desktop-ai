@@ -893,6 +893,7 @@ ai-pane-status-button =
 ai-panel-title = AI Assistant
 
 ai-panel-close-button = Close
+    .title = Close the AI panel
 
 # Chooses which configured endpoint requests go to. The options are the
 # profile names from ai-config.json, plus an entry for adding another.
@@ -912,12 +913,21 @@ ai-panel-model-key = Set API key…
 ai-panel-model-add = Add a model…
 
 ai-panel-model-add-title = Add a model
-ai-panel-model-add-url = Base URL of the API. For an OpenAI-compatible provider this is the address the “/chat/completions” path hangs off; for Anthropic it is the one “/v1/messages” hangs off.
-ai-panel-model-add-format = Which shape does this API speak? Most providers are OpenAI-compatible; choose Anthropic only for Anthropic’s own API.
-ai-panel-model-add-model = Model name, exactly as the provider writes it.
-ai-panel-model-add-name = A name for this entry, which is what the picker will show.
-ai-panel-model-add-taken = There is already a model with that name.
-    .title = Close the AI panel
+
+ai-panel-model-add-format = Which kind of API is this? Nearly everything is OpenAI-compatible — pick Anthropic only for Anthropic’s own API.
+
+# Shown when OpenAI-compatible was chosen. "/chat/completions" is appended to
+# whatever is entered, so the version segment belongs in it.
+ai-panel-model-add-url-openai = Address of the API, including the version at the end — usually “/v1”. Copy it from the provider’s documentation.
+    Examples: https://api.openai.com/v1 · http://web.example.com:33658/v1
+
+# Shown when Anthropic was chosen. "/v1/messages" is appended, so the version
+# must not already be there.
+ai-panel-model-add-url-anthropic = Address of the API, without a version at the end — “/v1/messages” is added for you.
+    Example: https://api.anthropic.com
+
+ai-panel-model-add-model = Model name, copied exactly from the provider. This also names the entry in the list.
+    Examples: deepseek-v4-flash · qwen3.5-122b · claude-opus-5
 
 ai-panel-clear-button = Clear
     .title = Clear this conversation

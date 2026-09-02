@@ -246,34 +246,25 @@ export const AIPanel = {
 
     const [
       title,
-      urlMessage,
-      badUrl,
       formatMessage,
+      openAiUrlMessage,
+      anthropicUrlMessage,
+      badUrl,
       modelMessage,
-      nameMessage,
-      taken,
     ] = await document.l10n.formatValues([
       { id: "ai-panel-model-add-title" },
-      { id: "ai-panel-model-add-url" },
-      { id: "ai-panel-url-invalid" },
       { id: "ai-panel-model-add-format" },
+      { id: "ai-panel-model-add-url-openai" },
+      { id: "ai-panel-model-add-url-anthropic" },
+      { id: "ai-panel-url-invalid" },
       { id: "ai-panel-model-add-model" },
-      { id: "ai-panel-model-add-name" },
-      { id: "ai-panel-model-add-taken" },
     ]);
 
-    const url = { value: "https://" };
-    if (!Services.prompt.prompt(window, title, urlMessage, url, null, {})) {
-      return;
-    }
-    const baseUrl = url.value.trim().replace(/\/+$/, "");
-    if (!/^https?:\/\//i.test(baseUrl)) {
-      Services.prompt.alert(window, title, badUrl);
-      return;
-    }
-
-    // Listed in the order they are named in the dialog, so the index maps to
-    // a format without a lookup table to keep in step.
+    // Format first, so the address question can say what that format expects.
+    // Whether the base URL ends in "/v1" is the thing people get wrong, and
+    // the answer differs: an OpenAI-compatible base has the version in it and
+    // "chat/completions" is appended, while Anthropic's does not and
+    // "v1/messages" is appended.
     const formats = [lazy.AIFormat.OPENAI, lazy.AIFormat.ANTHROPIC];
     const chosen = { value: 0 };
     if (
@@ -287,6 +278,27 @@ export const AIPanel = {
     ) {
       return;
     }
+    const format = formats[chosen.value];
+    const anthropic = format == lazy.AIFormat.ANTHROPIC;
+
+    const url = { value: anthropic ? "https://api.anthropic.com" : "" };
+    if (
+      !Services.prompt.prompt(
+        window,
+        title,
+        anthropic ? anthropicUrlMessage : openAiUrlMessage,
+        url,
+        null,
+        {}
+      )
+    ) {
+      return;
+    }
+    const baseUrl = url.value.trim().replace(/\/+$/, "");
+    if (!/^https?:\/\//i.test(baseUrl)) {
+      Services.prompt.alert(window, title, badUrl);
+      return;
+    }
 
     const modelName = { value: "" };
     if (
@@ -294,35 +306,27 @@ export const AIPanel = {
     ) {
       return;
     }
-    if (!modelName.value.trim()) {
+    const chosenModel = modelName.value.trim();
+    if (!chosenModel) {
       return;
     }
 
-    // Prefilled with the model, which is what a profile is normally called:
-    // the provider is already implied by the model and the base URL. Left as
-    // it is, that is the name; it stays editable for the case of two entries
-    // differing by something else, like a key or a token budget.
-    const profileName = { value: modelName.value.trim() };
-    if (
-      !Services.prompt.prompt(window, title, nameMessage, profileName, null, {})
-    ) {
-      return;
-    }
-    if (!profileName.value.trim()) {
-      return;
-    }
-
-    const profiles = await lazy.AIConfig.listProfiles();
-    if (profiles.some(entry => entry.name == profileName.value.trim())) {
-      Services.prompt.alert(window, title, taken);
-      return;
+    // The model is the name. Asking for both amounted to typing the same
+    // thing twice; where two entries really do share a model -- the same one
+    // at two endpoints -- the host is what tells them apart.
+    const taken = (await lazy.AIConfig.listProfiles()).map(entry => entry.name);
+    let profileName = chosenModel;
+    for (let n = 1; taken.includes(profileName); n++) {
+      const host = new URL(baseUrl).host;
+      profileName =
+        n == 1 ? `${chosenModel} (${host})` : `${chosenModel} (${host}) ${n}`;
     }
 
     await lazy.AIConfig.addProfile({
-      name: profileName.value.trim(),
-      format: formats[chosen.value],
+      name: profileName,
+      format,
       baseUrl,
-      model: modelName.value.trim(),
+      model: chosenModel,
     });
 
     await this.refreshProfiles();
