@@ -39,6 +39,15 @@ const LOGIN_ORIGIN = "chrome://messenger/ai";
  */
 const DEFAULT_CONFIG = {
   activeProfile: "default",
+  // One entry per endpoint worth switching between. The set is small on
+  // purpose: these are the ones whose base URL and model name are known to
+  // be right, and anything else is a few lines added to ai-config.json,
+  // which is read the same way.
+  //
+  // Note on temperature: it is left undefined throughout, and that is not
+  // only a matter of deferring to the provider. Anthropic's current models
+  // reject the field outright with a 400, so a value set here would break
+  // those profiles rather than tune them.
   profiles: {
     default: {
       label: "DeepSeek (OpenAI-compatible)",
@@ -48,6 +57,33 @@ const DEFAULT_CONFIG = {
       maxTokens: 2048,
       // Left undefined so the provider's own default applies unless the
       // user opts into a specific value.
+      temperature: undefined,
+    },
+    claude: {
+      label: "Claude (Anthropic)",
+      format: AIFormat.ANTHROPIC,
+      baseUrl: "https://api.anthropic.com",
+      model: "claude-opus-5",
+      maxTokens: 4096,
+      temperature: undefined,
+    },
+    "claude-fast": {
+      label: "Claude Haiku (Anthropic)",
+      format: AIFormat.ANTHROPIC,
+      baseUrl: "https://api.anthropic.com",
+      model: "claude-haiku-4-5",
+      maxTokens: 4096,
+      temperature: undefined,
+    },
+    local: {
+      // Ollama and LM Studio both answer the OpenAI shape on this port. The
+      // model name is whatever has been pulled locally, so it is left as
+      // something plainly wrong rather than a guess that fails obscurely.
+      label: "Local (OpenAI-compatible)",
+      format: AIFormat.OPENAI,
+      baseUrl: "http://localhost:11434/v1",
+      model: "set-me-in-ai-config.json",
+      maxTokens: 2048,
       temperature: undefined,
     },
   },
@@ -164,6 +200,43 @@ export const AIConfig = {
       );
     }
     return { name, ...profile };
+  },
+
+  /**
+   * Every profile, in the order they appear in the file, with the active one
+   * marked. For a switcher, which needs to show what is there rather than
+   * only what is chosen.
+   *
+   * @returns {Promise<Array<{name: string, label: string, active: boolean}>>}
+   */
+  async listProfiles() {
+    const config = await this.read();
+    return Object.entries(config.profiles ?? {}).map(([name, profile]) => ({
+      name,
+      label: profile.label || name,
+      active: name === config.activeProfile,
+    }));
+  },
+
+  /**
+   * Switch which profile requests go to.
+   *
+   * Writes the file rather than holding the choice in memory: a model picked
+   * in the panel should still be the one in use tomorrow, and the file stays
+   * the single account of what is configured.
+   *
+   * @param {string} name - A key of `profiles`.
+   * @returns {Promise<void>}
+   */
+  async setActiveProfile(name) {
+    const config = await this.read();
+    if (!config.profiles?.[name]) {
+      throw new Error(`No AI profile named "${name}" is configured.`);
+    }
+    if (config.activeProfile === name) {
+      return;
+    }
+    await this.save({ ...config, activeProfile: name });
   },
 
   // -- API keys -----------------------------------------------------------

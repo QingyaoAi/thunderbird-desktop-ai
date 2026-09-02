@@ -229,6 +229,22 @@
   border-block-start: 1px solid var(--splitter-color);
 }
 
+/* The endpoint in use, in the header beside the buttons that act on it.
+ * Shrinks before the buttons do, since a truncated model name is still
+ * recognisable and a truncated icon button is not. */
+.ai-panel-model {
+  flex: 0 1 auto;
+  min-inline-size: 0;
+  max-inline-size: 14em;
+  font: inherit;
+  font-size: 0.85rem;
+  padding: var(--space-xxsmall) var(--space-xsmall);
+  border: 1px solid var(--splitter-color);
+  border-radius: var(--border-radius-small);
+  background-color: var(--layout-background-2);
+  color: inherit;
+}
+
 .ai-panel-input {
   flex: 1 1 0;
   /* A flex item will not shrink below its content without this, which

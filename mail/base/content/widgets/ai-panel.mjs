@@ -100,6 +100,11 @@ export const AIPanel = {
     this.stopButton = document.getElementById("ai-panel-stop");
     this.setupNotice = document.getElementById("ai-panel-setup");
     this.actions = document.getElementById("ai-panel-actions");
+    this.modelPicker = document.getElementById("ai-panel-model");
+
+    this.modelPicker.addEventListener("change", () =>
+      this.switchProfile(this.modelPicker.value)
+    );
 
     this.form.addEventListener("submit", event => {
       event.preventDefault();
@@ -161,7 +166,60 @@ export const AIPanel = {
     // steer it with, so it is re-labelled as you type.
     this.input.addEventListener("input", () => this.updateDraftButton());
 
+    await this.refreshProfiles();
     await this.refreshConfigured();
+  },
+
+  /**
+   * Fill the picker from the config file and mark the profile in use.
+   *
+   * Rebuilt rather than updated, because the file is editable by hand while
+   * the panel is open and a profile added there should appear here.
+   */
+  async refreshProfiles() {
+    let profiles = [];
+    try {
+      profiles = await lazy.AIConfig.listProfiles();
+    } catch (ex) {
+      console.error("Could not read the AI profiles:", ex);
+    }
+
+    this.modelPicker.replaceChildren();
+    for (const profile of profiles) {
+      const option = document.createElement("option");
+      option.value = profile.name;
+      option.textContent = profile.label;
+      option.selected = profile.active;
+      this.modelPicker.appendChild(option);
+    }
+    // With one endpoint there is nothing to choose between, and a picker
+    // that cannot pick is furniture.
+    this.modelPicker.hidden = profiles.length < 2;
+  },
+
+  /**
+   * Send subsequent requests to another profile.
+   *
+   * The conversation is left alone. Models differ in what they will say but
+   * not in how the exchange is shaped, so there is nothing to discard --
+   * and switching to compare two answers to the same question is the
+   * obvious reason to switch at all.
+   *
+   * @param {string} name
+   */
+  async switchProfile(name) {
+    try {
+      await lazy.AIConfig.setActiveProfile(name);
+    } catch (ex) {
+      console.error("Could not switch AI profile:", ex);
+      await this.refreshProfiles();
+      return;
+    }
+
+    // A profile that has no key yet shows the setup notice instead of the
+    // composer, which is the same state a first run is in.
+    await this.refreshConfigured();
+    this.updateDraftButton();
   },
 
   /**

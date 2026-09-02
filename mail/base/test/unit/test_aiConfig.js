@@ -188,3 +188,73 @@ add_task(async function test_isConfigured_requires_a_key() {
     "requesting options without a key explains what to do"
   );
 });
+
+add_task(async function test_shipped_profiles_are_switchable() {
+  const profiles = await AIConfig.listProfiles();
+
+  Assert.greater(
+    profiles.length,
+    1,
+    "more than one endpoint should be offered, or there is nothing to switch"
+  );
+  Assert.equal(
+    profiles.filter(p => p.active).length,
+    1,
+    "exactly one profile should be marked active"
+  );
+  Assert.ok(
+    profiles.every(p => p.label),
+    "every profile should have something to show in a picker"
+  );
+});
+
+add_task(async function test_switching_changes_what_requests_use() {
+  const before = await AIConfig.activeProfile();
+  const other = (await AIConfig.listProfiles()).find(p => !p.active);
+
+  await AIConfig.setActiveProfile(other.name);
+
+  const after = await AIConfig.activeProfile();
+  Assert.equal(after.name, other.name, "the chosen profile becomes active");
+  Assert.notEqual(after.model, before.model, "and requests go to its model");
+
+  // Written through, not held in memory: the choice has to survive a restart.
+  AIConfig.reload();
+  Assert.equal(
+    (await AIConfig.activeProfile()).name,
+    other.name,
+    "the choice is still there after dropping the cache"
+  );
+
+  await AIConfig.setActiveProfile(before.name);
+});
+
+add_task(async function test_switching_to_an_unknown_profile_is_refused() {
+  const before = await AIConfig.activeProfile();
+
+  await Assert.rejects(
+    AIConfig.setActiveProfile("no-such-profile"),
+    /No AI profile named/,
+    "a name that is not configured should be refused"
+  );
+  Assert.equal(
+    (await AIConfig.activeProfile()).name,
+    before.name,
+    "and the active profile should be left alone"
+  );
+});
+
+/**
+ * Anthropic's current models reject `temperature` outright, so a value set in
+ * a shipped profile would break it rather than tune it.
+ */
+add_task(async function test_shipped_profiles_leave_temperature_unset() {
+  const config = await AIConfig.read();
+  for (const [name, profile] of Object.entries(config.profiles)) {
+    Assert.equal(
+      profile.temperature,
+      undefined,
+      `the ${name} profile should not set a temperature`
+    );
+  }
+});

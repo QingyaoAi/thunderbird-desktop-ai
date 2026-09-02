@@ -893,6 +893,12 @@ ai-pane-status-button =
 ai-panel-title = AI Assistant
 
 ai-panel-close-button = Close
+
+# Chooses which configured endpoint requests go to. Hidden when only one is
+# configured. The options are the profile labels from ai-config.json.
+ai-panel-model =
+    .title = Which model to use
+    .aria-label = Model
     .title = Close the AI panel
 
 ai-panel-clear-button = Clear
