@@ -553,6 +553,17 @@ class ImapConnectionReporter final : public nsIMemoryReporter {
         "explicit/imap-connections/attributes", KIND_HEAP, UNITS_BYTES,
         totals.mAttributes,
         "Per-message custom attributes reported by the server.");
+
+    // The bytes above are per connection, so without knowing how many there
+    // are the figure cannot be read: a large number can mean one connection
+    // holding a large mailbox, or many connections that should have gone.
+    MOZ_COLLECT_REPORT(
+        "imap-connection-count", KIND_OTHER, UNITS_COUNT,
+        int64_t(nsImapProtocol::LiveConnections().Length()),
+        "How many IMAP connection objects are alive. A server keeps up to "
+        "mail.server.<id>.max_cached_connections of them, so substantially "
+        "more than that across the accounts means they are outliving their "
+        "use.");
     return NS_OK;
   }
 
