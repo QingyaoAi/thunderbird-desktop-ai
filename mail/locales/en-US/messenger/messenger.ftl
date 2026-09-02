@@ -894,11 +894,21 @@ ai-panel-title = AI Assistant
 
 ai-panel-close-button = Close
 
-# Chooses which configured endpoint requests go to. Hidden when only one is
-# configured. The options are the profile labels from ai-config.json.
+# Chooses which configured endpoint requests go to. The options are the
+# profile names from ai-config.json, plus an entry for adding another.
 ai-panel-model =
     .title = Which model to use
     .aria-label = Model
+
+# The last entry in the model picker, which starts the questions below.
+ai-panel-model-add = Add a model…
+
+ai-panel-model-add-title = Add a model
+ai-panel-model-add-url = Base URL of the API. For an OpenAI-compatible provider this is the address the “/chat/completions” path hangs off; for Anthropic it is the one “/v1/messages” hangs off.
+ai-panel-model-add-format = Which shape does this API speak? Most providers are OpenAI-compatible; choose Anthropic only for Anthropic’s own API.
+ai-panel-model-add-model = Model name, exactly as the provider writes it.
+ai-panel-model-add-name = A name for this entry, which is what the picker will show.
+ai-panel-model-add-taken = There is already a model with that name.
     .title = Close the AI panel
 
 ai-panel-clear-button = Clear

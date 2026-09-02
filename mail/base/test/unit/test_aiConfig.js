@@ -19,7 +19,7 @@ const { AIFormat } = ChromeUtils.importESModule(
   "resource:///modules/AIProvider.sys.mjs"
 );
 
-const PROFILE = "default";
+const PROFILE = "deepseek";
 
 add_setup(async function () {
   do_get_profile();
@@ -189,58 +189,88 @@ add_task(async function test_isConfigured_requires_a_key() {
   );
 });
 
-add_task(async function test_shipped_profiles_are_switchable() {
-  const profiles = await AIConfig.listProfiles();
+add_task(async function test_only_one_endpoint_is_shipped() {
+  await AIConfig.save(AIConfig.DEFAULT_CONFIG);
+  AIConfig.reload();
 
-  Assert.greater(
-    profiles.length,
-    1,
-    "more than one endpoint should be offered, or there is nothing to switch"
+  const profiles = await AIConfig.listProfiles();
+  Assert.deepEqual(
+    profiles.map(p => p.name),
+    [PROFILE],
+    "nothing is preset beyond the one endpoint, since the rest would be a guess"
   );
+  Assert.ok(profiles[0].active, "and it is the one in use");
+});
+
+add_task(async function test_adding_an_endpoint_selects_it() {
+  await AIConfig.addProfile({
+    name: "My Claude",
+    format: AIFormat.ANTHROPIC,
+    baseUrl: "https://api.anthropic.com/",
+    model: "claude-opus-5",
+  });
+
+  const active = await AIConfig.activeProfile();
+  Assert.equal(active.name, "My Claude", "adding one is how you choose it");
+  Assert.equal(active.format, AIFormat.ANTHROPIC, "the format is kept");
   Assert.equal(
-    profiles.filter(p => p.active).length,
-    1,
-    "exactly one profile should be marked active"
+    active.baseUrl,
+    "https://api.anthropic.com",
+    "a trailing slash is trimmed, since the paths are joined onto this"
   );
-  Assert.ok(
-    profiles.every(p => p.label),
-    "every profile should have something to show in a picker"
-  );
+  Assert.equal(active.model, "claude-opus-5", "the model is kept");
+  Assert.equal(active.maxTokens, 2048, "and the fields not asked for default");
+
+  // Written through, so the choice survives a restart.
+  AIConfig.reload();
+  Assert.equal((await AIConfig.activeProfile()).name, "My Claude");
 });
 
 add_task(async function test_switching_changes_what_requests_use() {
-  const before = await AIConfig.activeProfile();
-  const other = (await AIConfig.listProfiles()).find(p => !p.active);
-
-  await AIConfig.setActiveProfile(other.name);
-
-  const after = await AIConfig.activeProfile();
-  Assert.equal(after.name, other.name, "the chosen profile becomes active");
-  Assert.notEqual(after.model, before.model, "and requests go to its model");
-
-  // Written through, not held in memory: the choice has to survive a restart.
-  AIConfig.reload();
+  await AIConfig.setActiveProfile(PROFILE);
   Assert.equal(
-    (await AIConfig.activeProfile()).name,
-    other.name,
-    "the choice is still there after dropping the cache"
+    (await AIConfig.activeProfile()).model,
+    "deepseek-v4-flash",
+    "switching back changes which model requests go to"
   );
 
-  await AIConfig.setActiveProfile(before.name);
+  await AIConfig.setActiveProfile("My Claude");
+  Assert.equal((await AIConfig.activeProfile()).model, "claude-opus-5");
 });
 
-add_task(async function test_switching_to_an_unknown_profile_is_refused() {
-  const before = await AIConfig.activeProfile();
+add_task(async function test_removing_an_endpoint_falls_back() {
+  await AIConfig.setApiKey("My Claude", "sk-claude");
+  await AIConfig.removeProfile("My Claude");
 
-  await Assert.rejects(
-    AIConfig.setActiveProfile("no-such-profile"),
-    /No AI profile named/,
-    "a name that is not configured should be refused"
-  );
+  const profiles = await AIConfig.listProfiles();
+  Assert.ok(!profiles.some(p => p.name == "My Claude"), "the profile is gone");
   Assert.equal(
     (await AIConfig.activeProfile()).name,
-    before.name,
-    "and the active profile should be left alone"
+    PROFILE,
+    "and something else is active, rather than a dangling selection"
+  );
+  Assert.equal(
+    await AIConfig.getApiKey("My Claude"),
+    null,
+    "its key goes with it, rather than being left in the login manager"
+  );
+});
+
+add_task(async function test_an_incomplete_endpoint_is_refused() {
+  await Assert.rejects(
+    AIConfig.addProfile({ name: "Half", format: AIFormat.OPENAI }),
+    /needs a name, format, base URL and model/,
+    "a profile missing what a request needs is refused"
+  );
+  await Assert.rejects(
+    AIConfig.addProfile({
+      name: "Odd",
+      format: "smoke-signals",
+      baseUrl: "https://example.com",
+      model: "m",
+    }),
+    /not a wire format/,
+    "and so is one this cannot speak to"
   );
 });
 
@@ -248,7 +278,7 @@ add_task(async function test_switching_to_an_unknown_profile_is_refused() {
  * Anthropic's current models reject `temperature` outright, so a value set in
  * a shipped profile would break it rather than tune it.
  */
-add_task(async function test_shipped_profiles_leave_temperature_unset() {
+add_task(async function test_shipped_profile_leaves_temperature_unset() {
   const config = await AIConfig.read();
   for (const [name, profile] of Object.entries(config.profiles)) {
     Assert.equal(

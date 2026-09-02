@@ -37,54 +37,32 @@ const LOGIN_ORIGIN = "chrome://messenger/ai";
  * There is no key here and no key is implied: until one is set, the panel
  * stays off and nothing is sent anywhere.
  */
+/**
+ * Defaults for the fields a profile need not state. What makes a profile an
+ * endpoint -- format, baseUrl, model -- is never defaulted here; it is asked
+ * for when one is added.
+ */
+const PROFILE_FIELD_DEFAULTS = {
+  maxTokens: 2048,
+  // Left undefined so the provider's own default applies. It also has to
+  // stay unset for Anthropic, whose current models reject the field with a
+  // 400 rather than ignoring it.
+  temperature: undefined,
+};
+
 const DEFAULT_CONFIG = {
-  activeProfile: "default",
-  // One entry per endpoint worth switching between. The set is small on
-  // purpose: these are the ones whose base URL and model name are known to
-  // be right, and anything else is a few lines added to ai-config.json,
-  // which is read the same way.
-  //
-  // Note on temperature: it is left undefined throughout, and that is not
-  // only a matter of deferring to the provider. Anthropic's current models
-  // reject the field outright with a 400, so a value set here would break
-  // those profiles rather than tune them.
+  activeProfile: "deepseek",
+  // One, and named for what it is. A longer preset list would be a guess at
+  // which providers this user has an account with, and one that goes stale
+  // as model names change; the rest are added from the panel, which asks for
+  // the four things a request needs and nothing else.
   profiles: {
-    default: {
+    deepseek: {
+      ...PROFILE_FIELD_DEFAULTS,
       label: "DeepSeek (OpenAI-compatible)",
       format: AIFormat.OPENAI,
       baseUrl: "https://api.deepseek.com",
       model: "deepseek-v4-flash",
-      maxTokens: 2048,
-      // Left undefined so the provider's own default applies unless the
-      // user opts into a specific value.
-      temperature: undefined,
-    },
-    claude: {
-      label: "Claude (Anthropic)",
-      format: AIFormat.ANTHROPIC,
-      baseUrl: "https://api.anthropic.com",
-      model: "claude-opus-5",
-      maxTokens: 4096,
-      temperature: undefined,
-    },
-    "claude-fast": {
-      label: "Claude Haiku (Anthropic)",
-      format: AIFormat.ANTHROPIC,
-      baseUrl: "https://api.anthropic.com",
-      model: "claude-haiku-4-5",
-      maxTokens: 4096,
-      temperature: undefined,
-    },
-    local: {
-      // Ollama and LM Studio both answer the OpenAI shape on this port. The
-      // model name is whatever has been pulled locally, so it is left as
-      // something plainly wrong rather than a guess that fails obscurely.
-      label: "Local (OpenAI-compatible)",
-      format: AIFormat.OPENAI,
-      baseUrl: "http://localhost:11434/v1",
-      model: "set-me-in-ai-config.json",
-      maxTokens: 2048,
-      temperature: undefined,
     },
   },
   // How much mail a single question may pull in as context. Trades cost and
@@ -122,10 +100,10 @@ function mergeWithDefaults(userConfig) {
     context: { ...DEFAULT_CONFIG.context, ...(userConfig?.context ?? {}) },
     profiles: { ...DEFAULT_CONFIG.profiles, ...(userConfig?.profiles ?? {}) },
   };
-  // Merge each profile over the shipped default profile too, so a user
-  // profile that only overrides `model` still has a baseUrl and format.
+  // Merge each profile over the shipped one too, so a profile written by hand
+  // that only overrides `model` still has a baseUrl and format.
   for (const [name, profile] of Object.entries(merged.profiles)) {
-    merged.profiles[name] = { ...DEFAULT_CONFIG.profiles.default, ...profile };
+    merged.profiles[name] = { ...DEFAULT_CONFIG.profiles.deepseek, ...profile };
   }
   return merged;
 }
@@ -237,6 +215,56 @@ export const AIConfig = {
       return;
     }
     await this.save({ ...config, activeProfile: name });
+  },
+
+  /**
+   * Add a profile and make it the active one.
+   *
+   * @param {object} profile
+   * @param {string} profile.name - Both the key and what a picker shows.
+   * @param {string} profile.format - One of AIFormat.
+   * @param {string} profile.baseUrl
+   * @param {string} profile.model
+   * @returns {Promise<void>}
+   */
+  async addProfile({ name, format, baseUrl, model }) {
+    if (!name || !format || !baseUrl || !model) {
+      throw new Error("A profile needs a name, format, base URL and model.");
+    }
+    if (!Object.values(AIFormat).includes(format)) {
+      throw new Error(`"${format}" is not a wire format this can speak.`);
+    }
+    const config = await this.read();
+    config.profiles[name] = {
+      ...PROFILE_FIELD_DEFAULTS,
+      label: name,
+      format,
+      baseUrl: baseUrl.replace(/\/+$/, ""),
+      model,
+    };
+    // Adding one is how you say you want to use it -- there is no separate
+    // step, and on a fresh profile it is the only one there is.
+    config.activeProfile = name;
+    await this.save(config);
+  },
+
+  /**
+   * Forget a profile and its key.
+   *
+   * @param {string} name
+   * @returns {Promise<void>}
+   */
+  async removeProfile(name) {
+    const config = await this.read();
+    if (!config.profiles?.[name]) {
+      return;
+    }
+    delete config.profiles[name];
+    if (config.activeProfile === name) {
+      config.activeProfile = Object.keys(config.profiles)[0] ?? "";
+    }
+    await this.save(config);
+    await this.clearApiKey(name);
   },
 
   // -- API keys -----------------------------------------------------------

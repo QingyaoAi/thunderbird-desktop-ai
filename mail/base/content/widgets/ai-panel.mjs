@@ -22,6 +22,7 @@ const lazy = {};
 ChromeUtils.defineESModuleGetters(lazy, {
   AIConfig: "resource:///modules/AIConfig.sys.mjs",
   AIMailContext: "resource:///modules/AIMailContext.sys.mjs",
+  AIFormat: "resource:///modules/AIProvider.sys.mjs",
   AIProvider: "resource:///modules/AIProvider.sys.mjs",
   MailServices: "resource:///modules/MailServices.sys.mjs",
   openLinkExternally: "resource:///modules/LinkHelper.sys.mjs",
@@ -68,6 +69,9 @@ function isKeywordLike(question) {
  */
 const SIDE_CALL_MAX_TOKENS = 2048;
 
+/** Picker value standing for "add one", which no profile name can collide with. */
+const ADD_PROFILE = "\u0000add";
+
 export const AIPanel = {
   /** @type {?AbortController} Non-null while a conversation request is in flight. */
   _abort: null,
@@ -102,9 +106,13 @@ export const AIPanel = {
     this.actions = document.getElementById("ai-panel-actions");
     this.modelPicker = document.getElementById("ai-panel-model");
 
-    this.modelPicker.addEventListener("change", () =>
-      this.switchProfile(this.modelPicker.value)
-    );
+    this.modelPicker.addEventListener("change", () => {
+      if (this.modelPicker.value == ADD_PROFILE) {
+        this.addProfile();
+      } else {
+        this.switchProfile(this.modelPicker.value);
+      }
+    });
 
     this.form.addEventListener("submit", event => {
       event.preventDefault();
@@ -192,9 +200,114 @@ export const AIPanel = {
       option.selected = profile.active;
       this.modelPicker.appendChild(option);
     }
-    // With one endpoint there is nothing to choose between, and a picker
-    // that cannot pick is furniture.
-    this.modelPicker.hidden = profiles.length < 2;
+
+    // Adding one lives in the picker rather than beside it, because it is
+    // the same question -- which model -- with one more answer available.
+    const add = document.createElement("option");
+    add.value = ADD_PROFILE;
+    document.l10n.setAttributes(add, "ai-panel-model-add");
+    this.modelPicker.appendChild(add);
+
+    // Never hidden now: with nothing configured it is the way to configure
+    // something, and with one profile it is the way to add a second.
+    this.modelPicker.hidden = false;
+  },
+
+  /**
+   * Ask for an endpoint and add it.
+   *
+   * Four questions, in the order the answers are found: the URL is on the
+   * provider's page, the format follows from which provider it is, the model
+   * name from their list, and the name is whatever the user wants to see in
+   * the picker. The key is asked for last, by the same dialog that changes
+   * it later, so there is one place that ever sees a key.
+   */
+  async addProfile() {
+    // Put the picker back first: the questions can be cancelled, and until
+    // one is answered the selection should still show what is in use.
+    await this.refreshProfiles();
+
+    const [
+      title,
+      urlMessage,
+      badUrl,
+      formatMessage,
+      modelMessage,
+      nameMessage,
+      taken,
+    ] = await document.l10n.formatValues([
+      { id: "ai-panel-model-add-title" },
+      { id: "ai-panel-model-add-url" },
+      { id: "ai-panel-url-invalid" },
+      { id: "ai-panel-model-add-format" },
+      { id: "ai-panel-model-add-model" },
+      { id: "ai-panel-model-add-name" },
+      { id: "ai-panel-model-add-taken" },
+    ]);
+
+    const url = { value: "https://" };
+    if (!Services.prompt.prompt(window, title, urlMessage, url, null, {})) {
+      return;
+    }
+    const baseUrl = url.value.trim().replace(/\/+$/, "");
+    if (!/^https?:\/\//i.test(baseUrl)) {
+      Services.prompt.alert(window, title, badUrl);
+      return;
+    }
+
+    // Listed in the order they are named in the dialog, so the index maps to
+    // a format without a lookup table to keep in step.
+    const formats = [lazy.AIFormat.OPENAI, lazy.AIFormat.ANTHROPIC];
+    const chosen = { value: 0 };
+    if (
+      !Services.prompt.select(
+        window,
+        title,
+        formatMessage,
+        ["OpenAI-compatible", "Anthropic"],
+        chosen
+      )
+    ) {
+      return;
+    }
+
+    const modelName = { value: "" };
+    if (
+      !Services.prompt.prompt(window, title, modelMessage, modelName, null, {})
+    ) {
+      return;
+    }
+    if (!modelName.value.trim()) {
+      return;
+    }
+
+    const profileName = { value: "" };
+    if (
+      !Services.prompt.prompt(window, title, nameMessage, profileName, null, {})
+    ) {
+      return;
+    }
+    if (!profileName.value.trim()) {
+      return;
+    }
+
+    const profiles = await lazy.AIConfig.listProfiles();
+    if (profiles.some(entry => entry.name == profileName.value.trim())) {
+      Services.prompt.alert(window, title, taken);
+      return;
+    }
+
+    await lazy.AIConfig.addProfile({
+      name: profileName.value.trim(),
+      format: formats[chosen.value],
+      baseUrl,
+      model: modelName.value.trim(),
+    });
+
+    await this.refreshProfiles();
+    // Straight on to the key, since a profile without one cannot be used and
+    // this is the moment the user is thinking about this endpoint.
+    await this.promptForConnection();
   },
 
   /**
@@ -205,11 +318,11 @@ export const AIPanel = {
    * and switching to compare two answers to the same question is the
    * obvious reason to switch at all.
    *
-   * @param {string} name
+   * @param {string} profileName
    */
-  async switchProfile(name) {
+  async switchProfile(profileName) {
     try {
-      await lazy.AIConfig.setActiveProfile(name);
+      await lazy.AIConfig.setActiveProfile(profileName);
     } catch (ex) {
       console.error("Could not switch AI profile:", ex);
       await this.refreshProfiles();
