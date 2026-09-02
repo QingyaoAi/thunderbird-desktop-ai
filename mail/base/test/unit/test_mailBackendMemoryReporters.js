@@ -30,7 +30,8 @@ function reported(path) {
   return new Promise(resolve => {
     manager.getReports(
       (process, reportPath, kind, units, amount) => {
-        if (reportPath == path) {
+        // Prefixes, so a report that is later broken into parts still totals.
+        if (reportPath == path || reportPath.startsWith(path + "/")) {
           seen = true;
           total += amount;
         }
@@ -80,4 +81,20 @@ add_task(async function testImapConnectionIsReported() {
     "an IMAP connection should report what it holds"
   );
   Assert.greater(connections, 0, "the report should not be empty");
+
+  // The parts are what makes the figure actionable: a mailbox's size and the
+  // server's keywords for it grow for different reasons.
+  const messageState = await reported(
+    "explicit/imap-connections/message-state"
+  );
+  Assert.greater(
+    messageState,
+    0,
+    "a selected mailbox should report its per-message state"
+  );
+  Assert.notEqual(
+    await reported("explicit/imap-connections/keywords"),
+    null,
+    "keywords should be reported even when the server sends none"
+  );
 });

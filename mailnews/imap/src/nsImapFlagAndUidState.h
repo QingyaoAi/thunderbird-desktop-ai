@@ -35,14 +35,24 @@ class nsImapFlagAndUidState : public nsIImapFlagAndUidState {
   uint32_t GetNumAdded() { return fNumAdded; }
 
   /**
-   * What this connection is holding for the mailbox it has selected: a UID and
-   * a flag word for every message in it, plus whatever keywords the server
-   * reports per message -- Gmail's labels arrive this way.
+   * What this connection is holding for the mailbox it has selected.
+   *
+   * Split, because the parts grow for different reasons and only one of them
+   * can be done anything about. mMessages is a UID and a flag word for every
+   * message in the mailbox -- six bytes each, fixed by how big the mailbox is.
+   * mKeywords is whatever the server reports per message, which on Gmail is
+   * where labels arrive, as a string per message; that one follows how the
+   * mail is organised rather than how much of it there is.
    *
    * Takes mLock, because the IMAP thread writes these while the main thread is
    * the one that asks.
    */
-  size_t SizeOfIncludingThis(mozilla::MallocSizeOf aMallocSizeOf);
+  struct SizeParts {
+    size_t mMessages = 0;
+    size_t mKeywords = 0;
+    size_t mAttributes = 0;
+  };
+  SizeParts SizeOfParts(mozilla::MallocSizeOf aMallocSizeOf);
 
  private:
   virtual ~nsImapFlagAndUidState();

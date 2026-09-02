@@ -530,14 +530,29 @@ class ImapConnectionReporter final : public nsIMemoryReporter {
 
   NS_IMETHOD CollectReports(nsIHandleReportCallback* aHandleReport,
                             nsISupports* aData, bool aAnonymize) override {
-    size_t total = 0;
+    nsImapFlagAndUidState::SizeParts totals;
     for (nsImapProtocol* connection : nsImapProtocol::LiveConnections()) {
-      total += connection->SizeOfIncludingThis(ImapMallocSizeOf);
+      auto parts = connection->SizeOfParts(ImapMallocSizeOf);
+      totals.mMessages += parts.mMessages;
+      totals.mKeywords += parts.mKeywords;
+      totals.mAttributes += parts.mAttributes;
     }
+
     MOZ_COLLECT_REPORT(
-        "explicit/imap-connections", KIND_HEAP, UNITS_BYTES, total,
-        "IMAP connections: for each, the UID and flags of every message in "
-        "the mailbox it has selected, and the server's keywords for them.");
+        "explicit/imap-connections/message-state", KIND_HEAP, UNITS_BYTES,
+        totals.mMessages,
+        "A UID and a flag word for every message in each selected mailbox. "
+        "Six bytes a message, so this follows how large the mailboxes are.");
+    MOZ_COLLECT_REPORT(
+        "explicit/imap-connections/keywords", KIND_HEAP, UNITS_BYTES,
+        totals.mKeywords,
+        "The server's keywords for those messages, a string per message. On "
+        "Gmail this is where labels arrive, so it follows how the mail is "
+        "organised rather than how much of it there is.");
+    MOZ_COLLECT_REPORT(
+        "explicit/imap-connections/attributes", KIND_HEAP, UNITS_BYTES,
+        totals.mAttributes,
+        "Per-message custom attributes reported by the server.");
     return NS_OK;
   }
 
@@ -556,13 +571,14 @@ nsTArray<nsImapProtocol*>& nsImapProtocol::LiveConnections() {
   return sLiveConnections;
 }
 
-size_t nsImapProtocol::SizeOfIncludingThis(
+nsImapFlagAndUidState::SizeParts nsImapProtocol::SizeOfParts(
     mozilla::MallocSizeOf aMallocSizeOf) {
-  size_t total = aMallocSizeOf(this);
+  nsImapFlagAndUidState::SizeParts parts;
   if (m_flagState) {
-    total += m_flagState->SizeOfIncludingThis(aMallocSizeOf);
+    parts = m_flagState->SizeOfParts(aMallocSizeOf);
   }
-  return total;
+  parts.mMessages += aMallocSizeOf(this);
+  return parts;
 }
 
 nsImapProtocol::nsImapProtocol()

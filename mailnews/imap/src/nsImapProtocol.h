@@ -541,7 +541,8 @@ class nsImapProtocol : public nsIImapProtocol,
    * nsImapFlagAndUidState takes its own.
    */
   static nsTArray<nsImapProtocol*>& LiveConnections();
-  size_t SizeOfIncludingThis(mozilla::MallocSizeOf aMallocSizeOf);
+  nsImapFlagAndUidState::SizeParts SizeOfParts(
+      mozilla::MallocSizeOf aMallocSizeOf);
 
  private:
   nsMsgBiffState m_currentBiffState;

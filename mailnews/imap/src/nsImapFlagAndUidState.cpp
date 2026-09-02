@@ -317,20 +317,28 @@ NS_IMETHODIMP nsImapFlagAndUidState::GetCustomAttribute(
   return NS_OK;
 }
 
-size_t nsImapFlagAndUidState::SizeOfIncludingThis(
+nsImapFlagAndUidState::SizeParts nsImapFlagAndUidState::SizeOfParts(
     mozilla::MallocSizeOf aMallocSizeOf) {
   mozilla::MutexAutoLock lock(mLock);
-  size_t total = aMallocSizeOf(this);
-  total += fUids.ShallowSizeOfExcludingThis(aMallocSizeOf);
-  total += fFlags.ShallowSizeOfExcludingThis(aMallocSizeOf);
-  total += m_customFlagsHash.ShallowSizeOfExcludingThis(aMallocSizeOf);
+  SizeParts parts;
+
+  parts.mMessages = aMallocSizeOf(this);
+  parts.mMessages += fUids.ShallowSizeOfExcludingThis(aMallocSizeOf);
+  parts.mMessages += fFlags.ShallowSizeOfExcludingThis(aMallocSizeOf);
+
+  parts.mKeywords = m_customFlagsHash.ShallowSizeOfExcludingThis(aMallocSizeOf);
   for (const auto& entry : m_customFlagsHash.Values()) {
-    total += entry.SizeOfExcludingThisIfUnshared(aMallocSizeOf);
+    parts.mKeywords += entry.SizeOfExcludingThisIfUnshared(aMallocSizeOf);
   }
-  total += m_customAttributesHash.ShallowSizeOfExcludingThis(aMallocSizeOf);
+
+  parts.mAttributes =
+      m_customAttributesHash.ShallowSizeOfExcludingThis(aMallocSizeOf);
   for (const auto& entry : m_customAttributesHash) {
-    total += entry.GetKey().SizeOfExcludingThisIfUnshared(aMallocSizeOf);
-    total += entry.GetData().SizeOfExcludingThisIfUnshared(aMallocSizeOf);
+    parts.mAttributes +=
+        entry.GetKey().SizeOfExcludingThisIfUnshared(aMallocSizeOf);
+    parts.mAttributes +=
+        entry.GetData().SizeOfExcludingThisIfUnshared(aMallocSizeOf);
   }
-  return total;
+
+  return parts;
 }
