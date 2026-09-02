@@ -1103,7 +1103,13 @@ export const AIPanel = {
           `You draft email replies as ${me}. Write only the body of the ` +
           `reply: no subject line, no "To:" header, no quoted original, ` +
           `and no commentary about what you wrote. Match the tone of the ` +
-          `conversation. Be direct and concise. If the thread asks ` +
+          `conversation, and write in the language the message you are ` +
+          `replying to is written in -- not the language of these ` +
+          `instructions, and not the language the user writes their own ` +
+          `instruction in. Someone who reads mail in two languages will ` +
+          `write you an instruction in whichever comes to hand, and the ` +
+          `reply still has to reach its recipient in theirs. ` +
+          `Be direct and concise. If the thread asks ` +
           `questions, answer them. If something genuinely cannot be ` +
           `answered without information you do not have, leave a clearly ` +
           `marked [TODO] for the user rather than inventing it.` +
