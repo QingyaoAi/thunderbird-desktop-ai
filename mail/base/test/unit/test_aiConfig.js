@@ -349,8 +349,8 @@ add_task(async function test_a_repurposed_default_is_left_alone() {
   const profiles = (await AIConfig.listProfiles()).map(p => p.name).sort();
   Assert.deepEqual(
     profiles,
-    [PROFILE, "default"],
-    "it stays as it is, beside the shipped profile"
+    ["default"],
+    "it stays as it is, and the shipped profile is not merged in beside it"
   );
   Assert.equal(
     (await AIConfig.activeProfile()).baseUrl,
@@ -385,5 +385,32 @@ add_task(async function test_the_interim_name_is_renamed_too() {
     profiles[0].label,
     PROFILE,
     "and is relabelled, since the old label named the provider not the model"
+  );
+});
+
+add_task(async function test_a_removed_profile_stays_removed() {
+  // The shipped profile seeds a config that has none. Merged in on every
+  // read instead, deleting it would not stick and it would be the one
+  // endpoint nobody could get rid of.
+  await AIConfig.save(AIConfig.DEFAULT_CONFIG);
+  AIConfig.reload();
+  Assert.deepEqual(
+    (await AIConfig.listProfiles()).map(p => p.name),
+    [PROFILE],
+    "it is there to begin with"
+  );
+
+  await AIConfig.removeProfile(PROFILE);
+  AIConfig.reload();
+
+  Assert.deepEqual(
+    (await AIConfig.listProfiles()).map(p => p.name),
+    [],
+    "and stays gone after the file is read again"
+  );
+  Assert.equal(
+    await AIConfig.isConfigured(),
+    false,
+    "with nothing left, the panel asks to be set up rather than half-working"
   );
 });

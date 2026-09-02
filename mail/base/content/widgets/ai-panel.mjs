@@ -75,6 +75,7 @@ const SIDE_CALL_MAX_TOKENS = 2048;
  */
 const ADD_PROFILE = "\u0000add";
 const SET_KEY = "\u0000key";
+const REMOVE_PROFILE = "\u0000remove";
 
 export const AIPanel = {
   /** @type {?AbortController} Non-null while a conversation request is in flight. */
@@ -115,10 +116,13 @@ export const AIPanel = {
         case ADD_PROFILE:
           this.addProfile();
           break;
+        case REMOVE_PROFILE:
+          this.removeProfile();
+          break;
         case SET_KEY:
           // Put the selection back before asking: the dialog can be
           // cancelled, and the picker should go on showing what is in use.
-          this.refreshProfiles().then(() => this.promptForConnection());
+          this.refreshProfiles().then(() => this.promptForKey());
           break;
         default:
           this.switchProfile(this.modelPicker.value);
@@ -147,7 +151,7 @@ export const AIPanel = {
       .addEventListener("click", () => AIPanelUI.toggle(false));
     document
       .getElementById("ai-panel-setup-key")
-      .addEventListener("click", () => this.promptForConnection());
+      .addEventListener("click", () => this.setUp());
     this.draftButton.addEventListener("click", () => {
       if (this._draftAbort) {
         this.cancelDraft();
@@ -217,6 +221,7 @@ export const AIPanel = {
     for (const [value, id] of [
       [SET_KEY, "ai-panel-model-key"],
       [ADD_PROFILE, "ai-panel-model-add"],
+      [REMOVE_PROFILE, "ai-panel-model-remove"],
     ]) {
       const option = document.createElement("option");
       option.value = value;
@@ -228,6 +233,37 @@ export const AIPanel = {
     // Never hidden now: with nothing configured it is the way to configure
     // something, and with one profile it is the way to add a second.
     this.modelPicker.hidden = false;
+  },
+
+  /**
+   * Forget the endpoint currently selected, once it is confirmed.
+   *
+   * Confirmed because it takes the stored key with it, which is the part
+   * that cannot be typed again from memory.
+   */
+  async removeProfile() {
+    // Back to showing what is in use: the confirmation can be declined.
+    await this.refreshProfiles();
+
+    let active;
+    try {
+      active = await lazy.AIConfig.activeProfile();
+    } catch (ex) {
+      return;
+    }
+
+    const [title, message] = await document.l10n.formatValues([
+      { id: "ai-panel-model-remove-title" },
+      { id: "ai-panel-model-remove-confirm", args: { model: active.name } },
+    ]);
+    if (!Services.prompt.confirm(window, title, message)) {
+      return;
+    }
+
+    await lazy.AIConfig.removeProfile(active.name);
+    await this.refreshProfiles();
+    await this.refreshConfigured();
+    this.updateDraftButton();
   },
 
   /**
@@ -332,7 +368,7 @@ export const AIPanel = {
     await this.refreshProfiles();
     // Straight on to the key, since a profile without one cannot be used and
     // this is the moment the user is thinking about this endpoint.
-    await this.promptForConnection();
+    await this.promptForKey();
   },
 
   /**
@@ -757,28 +793,51 @@ export const AIPanel = {
    * stored in the login manager; the base URL is not secret and goes in
    * ai-config.json.
    */
-  async promptForConnection() {
-    const profile = await lazy.AIConfig.activeProfile();
-    const provider = profile.label ?? profile.name;
-    const [title, urlMessage, keyMessage, badUrl] =
-      await document.l10n.formatValues([
-        { id: "ai-panel-key-title" },
-        { id: "ai-panel-url-prompt", args: { provider } },
-        { id: "ai-panel-key-prompt", args: { provider } },
-        { id: "ai-panel-url-invalid" },
-      ]);
+  /**
+   * Whatever the panel needs next to become usable.
+   *
+   * With an endpoint configured that is its key; with none -- which is a
+   * fresh install, and also what removing the last one leaves -- it is the
+   * endpoint itself. One button, because from the notice's side there is one
+   * thing wrong and the difference is not the reader's to know.
+   */
+  async setUp() {
+    const profiles = await lazy.AIConfig.listProfiles();
+    if (profiles.length) {
+      await this.promptForKey();
+    } else {
+      await this.addProfile();
+    }
+  },
 
-    const url = { value: profile.baseUrl ?? "" };
-    if (!Services.prompt.prompt(window, title, urlMessage, url, null, {})) {
+  /**
+   * Ask for the API key of the profile currently selected.
+   *
+   * Only the key. This used to ask for the base URL first and then the key,
+   * which made sense when it was the one dialog behind a "Key" button and
+   * the only way to correct either. Called at the end of adding a model, it
+   * asked for the address a second time -- so the obvious thing to do,
+   * typing the key into the first field it offered, was met with a
+   * complaint that a key does not begin with "http".
+   *
+   * The address is asked for once, where it is chosen. Changing it later is
+   * removing the entry and adding it again, which is two questions rather
+   * than one and does not put an address field in front of someone who came
+   * to type a key.
+   */
+  async promptForKey() {
+    let profile;
+    try {
+      profile = await lazy.AIConfig.activeProfile();
+    } catch (ex) {
+      // Nothing is selected, so there is nothing to hold a key.
       return;
     }
-    const baseUrl = url.value.trim().replace(/\/+$/, "");
-    if (!/^https?:\/\//i.test(baseUrl)) {
-      // Anything else would fail later as an opaque network error, with
-      // nothing pointing back at what was typed here.
-      Services.prompt.alert(window, title, badUrl);
-      return;
-    }
+
+    const [title, keyMessage] = await document.l10n.formatValues([
+      { id: "ai-panel-key-title" },
+      { id: "ai-panel-key-prompt", args: { provider: profile.name } },
+    ]);
 
     // Prefilled with the stored key, so pressing Enter keeps it and the
     // dialog also answers "which key is this profile using".
@@ -789,11 +848,6 @@ export const AIPanel = {
       return;
     }
 
-    if (baseUrl != profile.baseUrl) {
-      const config = await lazy.AIConfig.read();
-      config.profiles[profile.name].baseUrl = baseUrl;
-      await lazy.AIConfig.save(config);
-    }
     // Whatever is left in the field wins, including nothing: clearing it is
     // how a key gets removed.
     await lazy.AIConfig.setApiKey(profile.name, key.value.trim());

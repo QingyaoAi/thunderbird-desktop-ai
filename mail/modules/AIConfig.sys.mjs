@@ -163,7 +163,11 @@ function mergeWithDefaults(userConfig) {
     ...DEFAULT_CONFIG,
     ...userConfig,
     context: { ...DEFAULT_CONFIG.context, ...(userConfig?.context ?? {}) },
-    profiles: { ...DEFAULT_CONFIG.profiles, ...(userConfig?.profiles ?? {}) },
+    // The shipped profile seeds a config that has none; it is not merged into
+    // one that does. Merged every time, a deleted profile would come back on
+    // the next read, and the one endpoint nobody can remove would be the one
+    // they were given.
+    profiles: userConfig?.profiles ?? { ...DEFAULT_CONFIG.profiles },
   };
   // Merge each profile over the shipped one too, so a profile written by hand
   // that only overrides `model` still has a baseUrl and format.

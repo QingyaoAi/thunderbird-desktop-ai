@@ -912,6 +912,13 @@ ai-panel-model-key = Set API key…
 # Starts the questions below.
 ai-panel-model-add = Add a model…
 
+# Forgets the model currently selected, and its stored key with it.
+ai-panel-model-remove = Remove this model…
+
+ai-panel-model-remove-title = Remove model
+# $model is the name of the entry being removed, which is its model name.
+ai-panel-model-remove-confirm = Remove “{ $model }”? Its API key is deleted too.
+
 ai-panel-model-add-title = Add a model
 
 ai-panel-model-add-format = Which kind of API is this? Nearly everything is OpenAI-compatible — pick Anthropic only for Anthropic’s own API.
@@ -962,7 +969,6 @@ ai-panel-setup-key-button = Set API key…
 ai-panel-key-title = AI provider API key
 
 # $provider is the configured provider's label, e.g. "DeepSeek".
-ai-panel-url-prompt = Base URL for { $provider }.
 ai-panel-url-invalid = The base URL must start with http:// or https://.
 
 ai-panel-key-prompt = API key for { $provider }. It is stored with your saved passwords, not in a file.
