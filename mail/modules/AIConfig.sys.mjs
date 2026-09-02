@@ -50,16 +50,20 @@ const PROFILE_FIELD_DEFAULTS = {
   temperature: undefined,
 };
 
+const SHIPPED_PROFILE_NAME = "deepseek-v4-flash";
+
 const DEFAULT_CONFIG = {
-  activeProfile: "deepseek",
+  activeProfile: "deepseek-v4-flash",
   // One, and named for what it is. A longer preset list would be a guess at
   // which providers this user has an account with, and one that goes stale
   // as model names change; the rest are added from the panel, which asks for
   // the four things a request needs and nothing else.
   profiles: {
-    deepseek: {
+    // Keyed and labelled by the model, which is what you are choosing when
+    // you pick one -- the provider is implied by it and by the base URL.
+    "deepseek-v4-flash": {
       ...PROFILE_FIELD_DEFAULTS,
-      label: "DeepSeek (OpenAI-compatible)",
+      label: "deepseek-v4-flash",
       format: AIFormat.OPENAI,
       baseUrl: "https://api.deepseek.com",
       model: "deepseek-v4-flash",
@@ -80,55 +84,65 @@ const DEFAULT_CONFIG = {
 };
 
 /**
- * Rename a "default" profile written by an earlier version to "deepseek".
+ * Rename a profile written under an older name to the model it points at.
  *
- * The shipped profile used to be keyed "default"; it is now keyed for the
- * provider it points at. Without this, a file written before the rename
- * keeps its own "default" while the shipped "deepseek" merges in beside it,
- * and the picker offers DeepSeek twice.
+ * The shipped profile has been keyed "default", then "deepseek", and is now
+ * keyed for its model. Without this, a file written under an earlier name
+ * keeps it while the shipped profile merges in beside it, and the picker
+ * offers the same endpoint twice.
  *
- * Only a profile still pointing at DeepSeek is renamed. Someone who repurposed
- * "default" for another endpoint has two genuinely different profiles, and
- * relabelling one of them DeepSeek would be a lie rather than a tidy-up.
+ * Only a profile still pointing at the shipped host is renamed. Someone who
+ * repurposed one of those names for another endpoint has a genuinely
+ * different profile, and renaming it after DeepSeek's model would be a lie
+ * rather than a tidy-up.
  *
  * @param {object} config - Parsed file, modified in place.
  * @returns {Promise<boolean>} Whether anything was changed.
  */
-async function migrateDefaultProfileName(config) {
-  const old = config?.profiles?.default;
-  if (!old || config.profiles.deepseek) {
-    return false;
-  }
-  let host;
-  try {
-    host = new URL(old.baseUrl ?? DEFAULT_CONFIG.profiles.deepseek.baseUrl)
-      .hostname;
-  } catch (ex) {
-    return false;
-  }
-  if (host != new URL(DEFAULT_CONFIG.profiles.deepseek.baseUrl).hostname) {
-    return false;
-  }
-
-  config.profiles.deepseek = old;
-  delete config.profiles.default;
-  if (config.activeProfile === "default" || !config.activeProfile) {
-    config.activeProfile = "deepseek";
-  }
-
-  // The key is stored against the profile name, so it has to move too or the
-  // renamed profile looks unconfigured and asks for a key it already has.
-  try {
-    const key = await AIConfig.getApiKey("default");
-    if (key) {
-      await AIConfig.setApiKey("deepseek", key);
-      await AIConfig.clearApiKey("default");
+async function migrateProfileName(config) {
+  const shippedHost = new URL(SHIPPED_PROFILE.baseUrl).hostname;
+  for (const oldName of ["default", "deepseek"]) {
+    const old = config?.profiles?.[oldName];
+    if (!old || config.profiles[SHIPPED_PROFILE_NAME]) {
+      continue;
     }
-  } catch (ex) {
-    console.error("Could not move the stored key to the renamed profile:", ex);
+    let host;
+    try {
+      host = new URL(old.baseUrl ?? SHIPPED_PROFILE.baseUrl).hostname;
+    } catch (ex) {
+      continue;
+    }
+    if (host != shippedHost) {
+      continue;
+    }
+
+    config.profiles[SHIPPED_PROFILE_NAME] = {
+      ...old,
+      label: SHIPPED_PROFILE_NAME,
+    };
+    delete config.profiles[oldName];
+    if (config.activeProfile === oldName || !config.activeProfile) {
+      config.activeProfile = SHIPPED_PROFILE_NAME;
+    }
+
+    // The key is stored against the profile name, so it has to move too or
+    // the renamed profile looks unconfigured and asks for one it already has.
+    try {
+      const key = await AIConfig.getApiKey(oldName);
+      if (key) {
+        await AIConfig.setApiKey(SHIPPED_PROFILE_NAME, key);
+        await AIConfig.clearApiKey(oldName);
+      }
+    } catch (ex) {
+      console.error("Could not move the key to the renamed profile:", ex);
+    }
+    return true;
   }
-  return true;
+  return false;
 }
+
+/** The one profile shipped, for filling in fields a hand-written one omits. */
+const SHIPPED_PROFILE = DEFAULT_CONFIG.profiles[SHIPPED_PROFILE_NAME];
 
 /**
  * @returns {string} Path to the config file, which may not exist yet.
@@ -154,7 +168,7 @@ function mergeWithDefaults(userConfig) {
   // Merge each profile over the shipped one too, so a profile written by hand
   // that only overrides `model` still has a baseUrl and format.
   for (const [name, profile] of Object.entries(merged.profiles)) {
-    merged.profiles[name] = { ...DEFAULT_CONFIG.profiles.deepseek, ...profile };
+    merged.profiles[name] = { ...SHIPPED_PROFILE, ...profile };
   }
   return merged;
 }
@@ -194,7 +208,7 @@ export const AIConfig = {
       parsed = {};
     }
 
-    const migrated = await migrateDefaultProfileName(parsed);
+    const migrated = await migrateProfileName(parsed);
     if (migrated) {
       await this.save(parsed);
       return this._cache;

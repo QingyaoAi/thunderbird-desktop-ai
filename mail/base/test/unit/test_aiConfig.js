@@ -19,7 +19,7 @@ const { AIFormat } = ChromeUtils.importESModule(
   "resource:///modules/AIProvider.sys.mjs"
 );
 
-const PROFILE = "deepseek";
+const PROFILE = "deepseek-v4-flash";
 
 add_setup(async function () {
   do_get_profile();
@@ -356,5 +356,34 @@ add_task(async function test_a_repurposed_default_is_left_alone() {
     (await AIConfig.activeProfile()).baseUrl,
     "https://api.example.com/v1",
     "and is still the one selected"
+  );
+});
+
+add_task(async function test_the_interim_name_is_renamed_too() {
+  // The shipped profile was briefly keyed "deepseek" before being keyed for
+  // its model, so a file written in between needs the same treatment.
+  await AIConfig.save({
+    activeProfile: "deepseek",
+    profiles: {
+      deepseek: {
+        label: "DeepSeek (OpenAI-compatible)",
+        format: AIFormat.OPENAI,
+        baseUrl: "https://api.deepseek.com",
+        model: "deepseek-v4-flash",
+      },
+    },
+  });
+  AIConfig.reload();
+
+  const profiles = await AIConfig.listProfiles();
+  Assert.deepEqual(
+    profiles.map(p => p.name),
+    [PROFILE],
+    "the interim name is renamed rather than kept beside the shipped one"
+  );
+  Assert.equal(
+    profiles[0].label,
+    PROFILE,
+    "and is relabelled, since the old label named the provider not the model"
   );
 });

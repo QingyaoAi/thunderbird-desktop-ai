@@ -69,8 +69,12 @@ function isKeywordLike(question) {
  */
 const SIDE_CALL_MAX_TOKENS = 2048;
 
-/** Picker value standing for "add one", which no profile name can collide with. */
+/**
+ * Picker values standing for the two actions rather than a profile. The NUL
+ * prefix is so no profile name can ever collide with one.
+ */
 const ADD_PROFILE = "\u0000add";
+const SET_KEY = "\u0000key";
 
 export const AIPanel = {
   /** @type {?AbortController} Non-null while a conversation request is in flight. */
@@ -107,10 +111,17 @@ export const AIPanel = {
     this.modelPicker = document.getElementById("ai-panel-model");
 
     this.modelPicker.addEventListener("change", () => {
-      if (this.modelPicker.value == ADD_PROFILE) {
-        this.addProfile();
-      } else {
-        this.switchProfile(this.modelPicker.value);
+      switch (this.modelPicker.value) {
+        case ADD_PROFILE:
+          this.addProfile();
+          break;
+        case SET_KEY:
+          // Put the selection back before asking: the dialog can be
+          // cancelled, and the picker should go on showing what is in use.
+          this.refreshProfiles().then(() => this.promptForConnection());
+          break;
+        default:
+          this.switchProfile(this.modelPicker.value);
       }
     });
 
@@ -134,9 +145,6 @@ export const AIPanel = {
     document
       .getElementById("ai-panel-close")
       .addEventListener("click", () => AIPanelUI.toggle(false));
-    document
-      .getElementById("ai-panel-key")
-      .addEventListener("click", () => this.promptForConnection());
     document
       .getElementById("ai-panel-setup-key")
       .addEventListener("click", () => this.promptForConnection());
@@ -201,12 +209,21 @@ export const AIPanel = {
       this.modelPicker.appendChild(option);
     }
 
-    // Adding one lives in the picker rather than beside it, because it is
-    // the same question -- which model -- with one more answer available.
-    const add = document.createElement("option");
-    add.value = ADD_PROFILE;
-    document.l10n.setAttributes(add, "ai-panel-model-add");
-    this.modelPicker.appendChild(add);
+    // The two things you can do to the list live in it rather than beside
+    // it: both are the same question -- which model -- with more answers.
+    // Grouped, so they read as actions and not as further endpoints.
+    const actions = document.createElement("optgroup");
+    document.l10n.setAttributes(actions, "ai-panel-model-actions");
+    for (const [value, id] of [
+      [SET_KEY, "ai-panel-model-key"],
+      [ADD_PROFILE, "ai-panel-model-add"],
+    ]) {
+      const option = document.createElement("option");
+      option.value = value;
+      document.l10n.setAttributes(option, id);
+      actions.appendChild(option);
+    }
+    this.modelPicker.appendChild(actions);
 
     // Never hidden now: with nothing configured it is the way to configure
     // something, and with one profile it is the way to add a second.
@@ -281,7 +298,11 @@ export const AIPanel = {
       return;
     }
 
-    const profileName = { value: "" };
+    // Prefilled with the model, which is what a profile is normally called:
+    // the provider is already implied by the model and the base URL. Left as
+    // it is, that is the name; it stays editable for the case of two entries
+    // differing by something else, like a key or a token budget.
+    const profileName = { value: modelName.value.trim() };
     if (
       !Services.prompt.prompt(window, title, nameMessage, profileName, null, {})
     ) {

@@ -900,7 +900,15 @@ ai-panel-model =
     .title = Which model to use
     .aria-label = Model
 
-# The last entry in the model picker, which starts the questions below.
+# Heading over the picker's last two entries, which act on the list rather
+# than being things in it.
+ai-panel-model-actions =
+    .label = Manage
+
+# Sets or replaces the API key of the model currently selected.
+ai-panel-model-key = Set API key…
+
+# Starts the questions below.
 ai-panel-model-add = Add a model…
 
 ai-panel-model-add-title = Add a model
@@ -939,7 +947,6 @@ ai-panel-setup-hint = Your provider is already configured in ai-config.json. Add
 
 ai-panel-setup-key-button = Set API key…
 
-ai-panel-key-button = Key
     .title = Set or change the API key
 
 ai-panel-key-title = AI provider API key
