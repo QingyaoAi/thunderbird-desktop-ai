@@ -80,6 +80,57 @@ const DEFAULT_CONFIG = {
 };
 
 /**
+ * Rename a "default" profile written by an earlier version to "deepseek".
+ *
+ * The shipped profile used to be keyed "default"; it is now keyed for the
+ * provider it points at. Without this, a file written before the rename
+ * keeps its own "default" while the shipped "deepseek" merges in beside it,
+ * and the picker offers DeepSeek twice.
+ *
+ * Only a profile still pointing at DeepSeek is renamed. Someone who repurposed
+ * "default" for another endpoint has two genuinely different profiles, and
+ * relabelling one of them DeepSeek would be a lie rather than a tidy-up.
+ *
+ * @param {object} config - Parsed file, modified in place.
+ * @returns {Promise<boolean>} Whether anything was changed.
+ */
+async function migrateDefaultProfileName(config) {
+  const old = config?.profiles?.default;
+  if (!old || config.profiles.deepseek) {
+    return false;
+  }
+  let host;
+  try {
+    host = new URL(old.baseUrl ?? DEFAULT_CONFIG.profiles.deepseek.baseUrl)
+      .hostname;
+  } catch (ex) {
+    return false;
+  }
+  if (host != new URL(DEFAULT_CONFIG.profiles.deepseek.baseUrl).hostname) {
+    return false;
+  }
+
+  config.profiles.deepseek = old;
+  delete config.profiles.default;
+  if (config.activeProfile === "default" || !config.activeProfile) {
+    config.activeProfile = "deepseek";
+  }
+
+  // The key is stored against the profile name, so it has to move too or the
+  // renamed profile looks unconfigured and asks for a key it already has.
+  try {
+    const key = await AIConfig.getApiKey("default");
+    if (key) {
+      await AIConfig.setApiKey("deepseek", key);
+      await AIConfig.clearApiKey("default");
+    }
+  } catch (ex) {
+    console.error("Could not move the stored key to the renamed profile:", ex);
+  }
+  return true;
+}
+
+/**
  * @returns {string} Path to the config file, which may not exist yet.
  */
 function configPath() {
@@ -141,6 +192,12 @@ export const AIConfig = {
         ex
       );
       parsed = {};
+    }
+
+    const migrated = await migrateDefaultProfileName(parsed);
+    if (migrated) {
+      await this.save(parsed);
+      return this._cache;
     }
 
     this._cache = mergeWithDefaults(parsed);

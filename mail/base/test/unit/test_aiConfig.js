@@ -288,3 +288,73 @@ add_task(async function test_shipped_profile_leaves_temperature_unset() {
     );
   }
 });
+
+add_task(async function test_old_default_profile_is_renamed() {
+  // What a file written before the rename looks like, key and all.
+  await AIConfig.save({
+    activeProfile: "default",
+    profiles: {
+      default: {
+        label: "DeepSeek (OpenAI-compatible)",
+        format: AIFormat.OPENAI,
+        baseUrl: "https://api.deepseek.com",
+        model: "deepseek-v4-flash",
+      },
+    },
+  });
+  await AIConfig.setApiKey("default", "sk-carried-over");
+  AIConfig.reload();
+
+  const profiles = await AIConfig.listProfiles();
+  Assert.deepEqual(
+    profiles.map(p => p.name),
+    [PROFILE],
+    "the old name is gone rather than sitting beside the shipped one"
+  );
+  Assert.equal(
+    (await AIConfig.activeProfile()).name,
+    PROFILE,
+    "and the selection followed it"
+  );
+  Assert.equal(
+    await AIConfig.getApiKey(PROFILE),
+    "sk-carried-over",
+    "the key moved too, or the profile would ask for one it already has"
+  );
+  Assert.equal(
+    await AIConfig.getApiKey("default"),
+    null,
+    "and is not left behind under the old name"
+  );
+
+  await AIConfig.clearApiKey(PROFILE);
+});
+
+add_task(async function test_a_repurposed_default_is_left_alone() {
+  // Someone who pointed "default" at something else has two real profiles,
+  // and calling one of them DeepSeek would be a lie rather than a tidy-up.
+  await AIConfig.save({
+    activeProfile: "default",
+    profiles: {
+      default: {
+        label: "Something else",
+        format: AIFormat.OPENAI,
+        baseUrl: "https://api.example.com/v1",
+        model: "some-model",
+      },
+    },
+  });
+  AIConfig.reload();
+
+  const profiles = (await AIConfig.listProfiles()).map(p => p.name).sort();
+  Assert.deepEqual(
+    profiles,
+    [PROFILE, "default"],
+    "it stays as it is, beside the shipped profile"
+  );
+  Assert.equal(
+    (await AIConfig.activeProfile()).baseUrl,
+    "https://api.example.com/v1",
+    "and is still the one selected"
+  );
+});

@@ -39,16 +39,19 @@
   row-gap: 4px;
 }
 
+/* Kept for the pane's accessible name, but not drawn: the header has room
+ * for one wide thing beside the buttons, and which model is answering is
+ * worth more there than the word "Assistant". */
 .ai-panel-title {
-  flex: 1;
-  margin: 0;
-  font-size: 1rem;
-  font-weight: 600;
-  /* The pane is narrow and shares its header with three buttons, so the
-   * title has to give way rather than wrap onto a second line. */
-  white-space: nowrap;
+  position: absolute;
   overflow: hidden;
-  text-overflow: ellipsis;
+  inline-size: 1px;
+  block-size: 1px;
+  margin: -1px;
+  padding: 0;
+  border: 0;
+  clip-path: inset(50%);
+  white-space: nowrap;
   min-inline-size: 0;
 }
 
@@ -233,9 +236,10 @@
  * Shrinks before the buttons do, since a truncated model name is still
  * recognisable and a truncated icon button is not. */
 .ai-panel-model {
-  flex: 0 1 auto;
+  /* Takes the width the title used to, and gives it back to the buttons
+   * first: a clipped model name is still readable, a clipped button is not. */
+  flex: 1 1 auto;
   min-inline-size: 0;
-  max-inline-size: 14em;
   font: inherit;
   font-size: 0.85rem;
   padding: var(--space-xxsmall) var(--space-xsmall);
