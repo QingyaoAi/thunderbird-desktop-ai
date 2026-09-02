@@ -110,7 +110,7 @@ class MozAttachmentlist extends MozElements.RichListBox {
   }
 
   getIndexOfFirstVisibleRow() {
-    if (this._childNodes.length == 0) {
+    if (!this._childNodes.length) {
       return -1;
     }
 
@@ -250,6 +250,27 @@ class MozAttachmentlist extends MozElements.RichListBox {
   }
 
   /**
+   * The size, in CSS pixels, to request attachment icons at.
+   *
+   * Taken from the stylesheet rather than fixed here, because it has to
+   * agree with the size the icon is displayed at: a moz-icon is rendered at
+   * whatever size it is asked for, so a mismatch shows up as a stretched or
+   * needlessly heavy image. The message pane asks for larger icons than the
+   * compose window; anything that sets no size gets the old 16.
+   *
+   * @returns {number}
+   */
+  get iconSize() {
+    const declared = parseInt(
+      this.documentGlobal
+        .getComputedStyle(this)
+        .getPropertyValue("--attachment-icon-size"),
+      10
+    );
+    return declared > 0 ? declared : 16;
+  }
+
+  /**
    * Refresh the attachment icon using the attachment details.
    *
    * @param {MozRichlistitem} item - The attachment item to refresh the icon
@@ -285,7 +306,7 @@ class MozAttachmentlist extends MozElements.RichListBox {
           iconName = url.fileName;
         }
       }
-      src = makeMozIconSrcSet(iconName, 16, { contentType: type });
+      src = makeMozIconSrcSet(iconName, this.iconSize, { contentType: type });
       srcset = true;
     }
 
@@ -387,6 +408,8 @@ class MozAttachmentlist extends MozElements.RichListBox {
 
   /**
    * Get the attachment item node for the specified nsIMsgAttachment.
+   *
+   * @param aAttachment
    */
   findItemForAttachment(aAttachment) {
     for (let i = 0; i < this.itemCount; i++) {
@@ -426,7 +449,7 @@ class MozAttachmentlist extends MozElements.RichListBox {
   _itemsPerCol(aItemsPerRow) {
     const itemsPerRow = aItemsPerRow || this._itemsPerRow();
 
-    if (this._childNodes.length == 0) {
+    if (!this._childNodes.length) {
       return 0;
     }
 
@@ -446,7 +469,7 @@ class MozAttachmentlist extends MozElements.RichListBox {
    * grid-like effect for the flex-wrapped attachment list.
    */
   setOptimumWidth() {
-    if (this._childNodes.length == 0) {
+    if (!this._childNodes.length) {
       return;
     }
 

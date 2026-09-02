@@ -147,10 +147,20 @@
   text-decoration-line: line-through;
 }
 
+/* The message pane shows its attachments larger than the compose window
+ * does: there they are a list you are working through, here they are one
+ * row under a message and easy to miss entirely. attachment-list.mjs reads
+ * this to know what size to request the icon at, so the two cannot drift --
+ * a moz-icon is drawn at the size it is asked for, and asking for 16 while
+ * showing 24 would only stretch it. */
+#attachmentList {
+  --attachment-icon-size: 48px;
+}
+
 .attachmentcell-icon {
   margin: 1px;
-  inline-size: 16px;
-  block-size: 16px;
+  inline-size: var(--attachment-icon-size, 16px);
+  block-size: var(--attachment-icon-size, 16px);
 }
 
 .attachmentcell-name,
@@ -193,6 +203,11 @@
   -moz-box-ordinal-group: 2;
   border-block-start: 1px solid var(--splitter-color);
   border-block-end: 1px solid var(--splitter-color);
+  /* Tinted so the band reads as its own thing rather than as the first
+   * paragraph of the message. Mixed from the text colour rather than named,
+   * so it darkens a light theme and lightens a dark one without either being
+   * spelled out -- the same way the row hover below is built. */
+  background-color: color-mix(in srgb, currentColor 5%, transparent);
 }
 
 #messagepanebox > #messagepane {
