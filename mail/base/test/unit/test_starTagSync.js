@@ -112,3 +112,38 @@ add_task(async function testTheTagIsCounted() {
     "a message tagged by starring should be counted under Important"
   );
 });
+
+/**
+ * A keyword set on IMAP is a queued command, not a local edit: it can fail
+ * or be dropped, and when it was the message stayed starred and untagged
+ * with nothing watching. Four of two thousand had ended up that way on the
+ * profile this was found on.
+ */
+add_task(async function testAChangeThatDoesNotTakeIsRetried() {
+  // A real transition, which is what schedules the check that follows it.
+  folder.markMessagesFlagged([hdr], false);
+  await TestUtils.waitForCondition(
+    () => !starred() && !keywords().includes(IMPORTANT),
+    "cleared to begin with"
+  );
+  folder.markMessagesFlagged([hdr], true);
+  await TestUtils.waitForCondition(
+    () => keywords().includes(IMPORTANT),
+    "starred and tagged"
+  );
+
+  // Now take the tag off behind the sync's back, the way a dropped IMAP
+  // command leaves it: starred, untagged, and no notification saying so.
+  hdr.setStringProperty("keywords", "");
+  Assert.ok(starred(), "still starred");
+  Assert.ok(!keywords().includes(IMPORTANT), "but the tag is gone");
+
+  // Nothing further is asked for. Only the check scheduled by the star above
+  // can put it right, and it is the whole point of this test that it does.
+  await TestUtils.waitForCondition(
+    () => keywords().includes(IMPORTANT),
+    "the check after a change should notice and put the tag back",
+    60,
+    200
+  );
+});

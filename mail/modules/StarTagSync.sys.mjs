@@ -24,6 +24,13 @@ ChromeUtils.defineESModuleGetters(lazy, {
 /** The red "Important" tag: Thunderbird's first shipped tag. */
 const IMPORTANT_TAG = "$label1";
 
+/**
+ * How long to wait before checking that a change took. Long enough for a
+ * keyword set on IMAP to have gone to the server and come back, short enough
+ * that a star put right is put right while you are still looking at it.
+ */
+const RETRY_DELAY_MS = 5000;
+
 /** How many messages to reconcile before yielding, so startup stays responsive. */
 const RECONCILE_CHUNK = 200;
 
@@ -68,6 +75,14 @@ export const StarTagSync = {
    * @type {Set<string>}
    */
   _applying: new Set(),
+
+  /**
+   * Messages whose change has already been checked up on once, so a change
+   * that will not take does not retry for ever.
+   *
+   * @type {Set<string>}
+   */
+  _retried: new Set(),
 
   start() {
     if (this._started) {
@@ -157,7 +172,42 @@ export const StarTagSync = {
       // Released next turn: some of the notifications this guards against
       // arrive after the calls above return.
       lazy.setTimeout(() => this._applying.delete(key), 0);
+      this._checkItTook(hdr, wanted, key);
     }
+  },
+
+  /**
+   * Look again later, and have one more go if it did not take.
+   *
+   * Setting a keyword on IMAP is a command queued on a connection, not a
+   * local edit: it can fail, and it can be dropped when several are asked
+   * for at once. Nothing was watching for that -- the failure path warned to
+   * the console and left the message starred but untagged, which is exactly
+   * what turned up in practice, four times in two thousand.
+   *
+   * One retry, and only one. If the second attempt does not hold either then
+   * something is refusing the change rather than dropping it, and asking
+   * again for ever would neither fix it nor be noticed.
+   *
+   * @param {nsIMsgDBHdr} hdr
+   * @param {boolean} wanted
+   * @param {string} key
+   */
+  _checkItTook(hdr, wanted, key) {
+    if (this._retried.has(key)) {
+      return;
+    }
+    lazy.setTimeout(() => {
+      // Long enough for a queued IMAP command to have come back.
+      if (isStarred(hdr) == wanted && hasImportantTag(hdr) == wanted) {
+        this._retried.delete(key);
+        return;
+      }
+      this._retried.add(key);
+      this._apply(hdr, wanted);
+      // Kept only long enough to stop this attempt starting another.
+      lazy.setTimeout(() => this._retried.delete(key), RETRY_DELAY_MS);
+    }, RETRY_DELAY_MS);
   },
 
   // -- nsIFolderListener: the star ----------------------------------------
