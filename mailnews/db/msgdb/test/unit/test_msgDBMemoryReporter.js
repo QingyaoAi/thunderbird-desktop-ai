@@ -24,9 +24,10 @@ const { MessageGenerator } = ChromeUtils.importESModule(
 /**
  * Collect the memory reports under explicit/maildb.
  *
+ * @param prefix
  * @returns {Promise<Array<{path: string, amount: integer}>>}
  */
-function collectMailDBReports() {
+function collectReports(prefix = "explicit/maildb/") {
   const manager = Cc["@mozilla.org/memory-reporter-manager;1"].getService(
     Ci.nsIMemoryReporterManager
   );
@@ -34,7 +35,7 @@ function collectMailDBReports() {
   return new Promise(resolve => {
     manager.getReports(
       (process, path, kind, units, amount) => {
-        if (path.startsWith("explicit/maildb/")) {
+        if (path.startsWith(prefix)) {
           found.push({ path, amount });
         }
       },
@@ -70,31 +71,56 @@ add_task(async function testOpenDatabaseIsReported() {
     "every message should be readable"
   );
 
-  const reports = await collectMailDBReports();
+  const reports = await collectReports();
   Assert.greater(reports.length, 0, "a summary should be reported at all");
 
   const mine = reports.filter(r => r.path.includes("reported"));
   Assert.deepEqual(
     mine.map(r => r.path.replace(/^.*\)\//, "")).sort(),
-    ["headers", "mork", "other"],
-    "the summary should be reported in its three parts"
+    ["headers", "other"],
+    "the summary's own allocations should be reported in their two parts"
   );
 
   const part = name => mine.find(r => r.path.endsWith("/" + name)).amount;
   Assert.greater(
-    part("mork"),
-    0,
-    "an open summary should hold a parsed mork store"
-  );
-  Assert.greater(
-    part("mork") + part("headers") + part("other"),
+    part("headers") + part("other"),
     0,
     "the summary should not measure zero bytes in total"
   );
+
+  // Mork's figure comes from its own allocator's running total, which is
+  // right at open and only rises afterwards. It is reported, but not under
+  // explicit/, where it would be claiming part of a heap it can outgrow.
+  const mork = (await collectReports("maildb-mork/")).filter(r =>
+    r.path.includes("reported")
+  );
+  Assert.equal(mork.length, 1, "the mork store is reported for this folder");
+  Assert.greater(mork[0].amount, 0, "and an open one is not zero");
+
   Assert.ok(
     !reports.some(r => r.path.includes("UNKNOWN-FOLDER")),
     "no reporter should have lost track of its database"
   );
+});
 
-  folder.msgDatabase = null;
+/**
+ * The bug that made this worth asserting: mork's count was reported under
+ * explicit/, where it grew past the whole process heap and drove
+ * heap-unclassified negative -- which makes every other figure in the
+ * process unreadable, not just this one.
+ */
+add_task(async function testExplicitStaysWithinTheHeap() {
+  const manager = Cc["@mozilla.org/memory-reporter-manager;1"].getService(
+    Ci.nsIMemoryReporterManager
+  );
+  const explicit = (await collectReports("explicit/maildb/")).reduce(
+    (sum, r) => sum + r.amount,
+    0
+  );
+
+  Assert.lessOrEqual(
+    explicit,
+    manager.heapAllocated,
+    "what maildb claims under explicit/ has to fit in the heap it claims from"
+  );
 });

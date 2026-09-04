@@ -970,20 +970,33 @@ class MsgDBReporter final : public nsIMemoryReporter {
       parts.mOther += GetMallocSize(db);
     }
 
-    // Split, because the two large parts have nothing in common but a folder.
-    // Mork is only given back by closing the summary; headers can be let go
-    // of while it stays open. Reported as one number they suggest one remedy,
-    // and it would be the wrong one for whichever half is actually large.
+    // Mork's figure is deliberately not under explicit/, and not KIND_HEAP.
+    // It comes from orkinHeap's own running total, which is right when a
+    // summary is opened -- opening a 46MB msf moves both it and
+    // heap-allocated by the same 155MB -- and then drifts upward with use:
+    // reading every header adds 6.3MB to it each time while heap-allocated
+    // does not move at all. Left under explicit/ it eventually claimed more
+    // than the whole process heap, which drove heap-unclassified negative and
+    // made every other reading in the process untrustworthy.
+    //
+    // So it is reported as what it is: a floor, accurate at open, and an
+    // over-estimate afterwards by an amount that grows with how much the
+    // folder has been read.
     nsresult rv = aCb->Callback(
-        EmptyCString(), path + "/mork"_ns, nsIMemoryReporter::KIND_HEAP,
-        nsIMemoryReporter::UNITS_BYTES, parts.mMork,
-        "The parsed summary file. Mork reads a store whole and has no working "
-        "lazy-open policy, so this is the price of having the folder open."_ns,
+        EmptyCString(), "maildb-mork/"_ns + path,
+        nsIMemoryReporter::KIND_OTHER, nsIMemoryReporter::UNITS_BYTES,
+        parts.mMork,
+        "The parsed summary file, as counted by mork's own allocator. Mork "
+        "reads a store whole, so this is the price of having the folder open "
+        "-- but the count only rises: it is accurate when the summary is "
+        "opened and drifts above the truth as the folder is read. A floor, "
+        "not a measurement, and outside explicit/ because it can exceed the "
+        "heap it would otherwise be claiming part of."_ns,
         aClosure);
     NS_ENSURE_SUCCESS(rv, rv);
 
     rv = aCb->Callback(
-        EmptyCString(), path + "/headers"_ns, nsIMemoryReporter::KIND_HEAP,
+        EmptyCString(), "explicit/maildb/"_ns + path + "/headers"_ns, nsIMemoryReporter::KIND_HEAP,
         nsIMemoryReporter::UNITS_BYTES, parts.mHeaders,
         "Message headers materialised from the summary and still referenced. "
         "Built on demand, so this tracks what is being looked at."_ns,
@@ -991,15 +1004,16 @@ class MsgDBReporter final : public nsIMemoryReporter {
     NS_ENSURE_SUCCESS(rv, rv);
 
     return aCb->Callback(
-        EmptyCString(), path + "/other"_ns, nsIMemoryReporter::KIND_HEAP,
+        EmptyCString(), "explicit/maildb/"_ns + path + "/other"_ns, nsIMemoryReporter::KIND_HEAP,
         nsIMemoryReporter::UNITS_BYTES, parts.mOther,
         "Folder info, the thread and listener tables, and the reference "
         "index."_ns,
         aClosure);
   }
 
+  /** "database(<folder URI>)", which each report prefixes for itself. */
   void GetPath(nsACString& memoryPath, bool aAnonymize) {
-    memoryPath.AssignLiteral("explicit/maildb/database(");
+    memoryPath.AssignLiteral("database(");
     nsCOMPtr<nsIMsgDatabase> database = do_QueryReferent(mDatabase);
     nsCOMPtr<nsIMsgFolder> folder;
     if (database) database->GetFolder(getter_AddRefs(folder));
