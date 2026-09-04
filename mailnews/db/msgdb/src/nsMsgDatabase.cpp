@@ -32,6 +32,7 @@
 #include "nsServiceManagerUtils.h"
 #include "nsMsgDatabaseEnumerators.h"
 #include "nsIMemoryReporter.h"
+#include "mozmemory.h"
 #include "nsIWeakReferenceUtils.h"
 #include "mozilla/Components.h"
 #include "mozilla/mailnews/MimeHeaderParser.h"
@@ -897,15 +898,33 @@ void nsMsgDBService::DumpCache() {
 
 // Memory Reporting implementations
 
+/**
+ * jemalloc's view of how much is allocated right now, or zero where that
+ * cannot be asked. Main thread only, which is where a summary is opened.
+ */
+static size_t HeapAllocatedNow() {
+#ifdef MOZ_MEMORY
+  if (!NS_IsMainThread()) {
+    return 0;
+  }
+  jemalloc_stats_t stats;
+  jemalloc_stats(&stats);
+  return stats.allocated;
+#else
+  return 0;
+#endif
+}
+
 nsMsgDatabase::SizeParts nsMsgDatabase::SizeOfParts(
     mozilla::MallocSizeOf aMallocSizeOf) const {
   SizeParts parts;
 
-  if (m_mdbEnv) {
-    nsIMdbHeap* morkHeap = nullptr;
-    m_mdbEnv->GetHeap(&morkHeap);
-    if (morkHeap) parts.mMork = morkHeap->GetUsedSize();
-  }
+  // What the parse actually cost the heap, not what mork thinks it handed
+  // out. Its own total rises on allocation and, on several of its pooled
+  // paths, never falls: reading every header in a folder added 6.3MB to it
+  // each time round while the process heap moved by nothing at all, and after
+  // a day it claimed more than the whole heap it was supposedly part of.
+  parts.mMork = m_openFootprint;
 
   // We have two tables of header objects, but every header in m_cachedHeaders
   // should be in m_headersInUse.
@@ -970,28 +989,20 @@ class MsgDBReporter final : public nsIMemoryReporter {
       parts.mOther += GetMallocSize(db);
     }
 
-    // Mork's figure is deliberately not under explicit/, and not KIND_HEAP.
-    // It comes from orkinHeap's own running total, which is right when a
-    // summary is opened -- opening a 46MB msf moves both it and
-    // heap-allocated by the same 155MB -- and then drifts upward with use:
-    // reading every header adds 6.3MB to it each time while heap-allocated
-    // does not move at all. Left under explicit/ it eventually claimed more
-    // than the whole process heap, which drove heap-unclassified negative and
-    // made every other reading in the process untrustworthy.
-    //
-    // So it is reported as what it is: a floor, accurate at open, and an
-    // over-estimate afterwards by an amount that grows with how much the
-    // folder has been read.
+    // Back under explicit/, where a real figure belongs, now that it is one:
+    // the difference in the process heap across the store being read in,
+    // rather than mork's own count of what it handed out.
     nsresult rv = aCb->Callback(
-        EmptyCString(), "maildb-mork/"_ns + path,
-        nsIMemoryReporter::KIND_OTHER, nsIMemoryReporter::UNITS_BYTES,
+        EmptyCString(), "explicit/maildb/"_ns + path + "/mork"_ns,
+        nsIMemoryReporter::KIND_HEAP, nsIMemoryReporter::UNITS_BYTES,
         parts.mMork,
-        "The parsed summary file, as counted by mork's own allocator. Mork "
-        "reads a store whole, so this is the price of having the folder open "
-        "-- but the count only rises: it is accurate when the summary is "
-        "opened and drifts above the truth as the folder is read. A floor, "
-        "not a measurement, and outside explicit/ because it can exceed the "
-        "heap it would otherwise be claiming part of."_ns,
+        "The parsed summary file, measured as what reading it in cost the "
+        "heap. Mork reads a store whole and has no working lazy-open policy, "
+        "so this is the price of having the folder open -- and close to the "
+        "whole of it, since the heap barely moves however much the folder is "
+        "then read. Zero for a summary opened asynchronously, where the "
+        "difference across the parse would be everyone's work, not just its "
+        "own."_ns,
         aClosure);
     NS_ENSURE_SUCCESS(rv, rv);
 
@@ -1371,6 +1382,10 @@ nsresult nsMsgDatabase::OpenMDB(nsIFile* dbFile, bool create, bool sync) {
     }
     nsCOMPtr<nsIMdbThumb> thumb = m_thumb;
     if (NS_SUCCEEDED(ret) && thumb && sync) {
+      // Bracket the parse to see what it costs. Only the synchronous path is
+      // measured: an asynchronous open is interleaved with everything else on
+      // the thread, so the difference across it would be everyone's.
+      const size_t heapBefore = HeapAllocatedNow();
       mdb_count outTotal;        // total somethings to do in operation
       mdb_count outCurrent;      // subportion of total completed so far
       mdb_bool outDone = false;  // is operation finished?
@@ -1390,6 +1405,10 @@ nsresult nsMsgDatabase::OpenMDB(nsIFile* dbFile, bool create, bool sync) {
         if (NS_SUCCEEDED(ret)) {
           ret = (m_mdbStore) ? InitExistingDB() : NS_ERROR_FAILURE;
         }
+      }
+      const size_t heapAfter = HeapAllocatedNow();
+      if (heapAfter > heapBefore) {
+        m_openFootprint = heapAfter - heapBefore;
       }
 
       m_thumb = nullptr;

@@ -77,8 +77,8 @@ add_task(async function testOpenDatabaseIsReported() {
   const mine = reports.filter(r => r.path.includes("reported"));
   Assert.deepEqual(
     mine.map(r => r.path.replace(/^.*\)\//, "")).sort(),
-    ["headers", "other"],
-    "the summary's own allocations should be reported in their two parts"
+    ["headers", "mork", "other"],
+    "the summary should be reported in its three parts"
   );
 
   const part = name => mine.find(r => r.path.endsWith("/" + name)).amount;
@@ -88,14 +88,11 @@ add_task(async function testOpenDatabaseIsReported() {
     "the summary should not measure zero bytes in total"
   );
 
-  // Mork's figure comes from its own allocator's running total, which is
-  // right at open and only rises afterwards. It is reported, but not under
-  // explicit/, where it would be claiming part of a heap it can outgrow.
-  const mork = (await collectReports("maildb-mork/")).filter(r =>
-    r.path.includes("reported")
+  Assert.greater(
+    part("mork"),
+    0,
+    "an open summary should have cost the heap something to read in"
   );
-  Assert.equal(mork.length, 1, "the mork store is reported for this folder");
-  Assert.greater(mork[0].amount, 0, "and an open one is not zero");
 
   Assert.ok(
     !reports.some(r => r.path.includes("UNKNOWN-FOLDER")),

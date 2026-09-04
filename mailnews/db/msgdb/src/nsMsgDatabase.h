@@ -418,6 +418,19 @@ class nsMsgDatabase : public nsIMsgOfflineOpsDatabase,
    * is the nsMsgHdr objects currently materialised, which *are* built on
    * demand and can be let go of.
    */
+  /**
+   * What opening this summary cost the heap, measured rather than counted.
+   *
+   * Mork's own running total cannot be used: it rises on allocation and, on
+   * several of its pooled paths, never falls, so it drifts above the truth
+   * by an amount that grows with use. This is the difference in
+   * jemalloc's `allocated` across the store being read in -- a real figure,
+   * taken once. It does not follow later growth, but there is little to
+   * follow: reading every header in a sixty-nine thousand message folder
+   * five times over moved the process heap by 1.2MB.
+   */
+  size_t m_openFootprint = 0;
+
   struct SizeParts {
     size_t mMork = 0;
     size_t mHeaders = 0;
