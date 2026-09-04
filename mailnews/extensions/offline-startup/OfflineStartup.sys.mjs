@@ -38,17 +38,33 @@ OfflineStartup.prototype = {
   onProfileStartup() {
     gDebugLog("onProfileStartup");
 
+    var manageOfflineStatus = Services.prefs.getBoolPref("offline.autoDetect");
+    gOfflineStartupMode = Services.prefs.getIntPref(kOfflineStartupPref);
+
     if (gStartingUp) {
       gStartingUp = false;
-      // if checked, the "work offline" checkbox overrides
-      if (Services.io.offline && !Services.io.manageOfflineStatus) {
+      // A deliberate "work offline" is left alone -- but only when the
+      // startup mode has not already been told what to do. Asked to be
+      // always online, being offline at this moment is the thing to correct,
+      // not a decision to respect.
+      //
+      // Conflating the two made the state impossible to leave. Starting up
+      // offline with manageOfflineStatus false returned here before the mode
+      // was ever read, so "always online" never ran; nothing else brings the
+      // application back, since manageOfflineStatus false is exactly the
+      // setting that stops it following the network. Every later launch hit
+      // the same branch. It presents as an application that has quietly
+      // stopped fetching mail: no error, no connection attempt, and Get
+      // Messages does nothing at all.
+      if (
+        Services.io.offline &&
+        !Services.io.manageOfflineStatus &&
+        gOfflineStartupMode != kAlwaysOnline
+      ) {
         gDebugLog("already offline!");
         return;
       }
     }
-
-    var manageOfflineStatus = Services.prefs.getBoolPref("offline.autoDetect");
-    gOfflineStartupMode = Services.prefs.getIntPref(kOfflineStartupPref);
     const wasOffline = !Services.prefs.getBoolPref("network.online");
 
     if (gOfflineStartupMode == kAutomatic) {

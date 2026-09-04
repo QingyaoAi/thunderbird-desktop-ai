@@ -46,6 +46,8 @@ skip-if = [
 
 ["test_mozIconUtils.js"]
 
+["test_offlineStartup.js"]
+
 ["test_qrExport.js"]
 
 ["test_quoteSanitizer.js"]
