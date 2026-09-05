@@ -48,6 +48,22 @@ bridge reads, so a client keeps working either way.
 On a large profile the listener starts a couple of minutes after launch: it
 runs as an idle task, behind the work of opening the mail itself.
 
+### With Claude Code
+
+`install-claude-skill.sh` puts `SKILL.md` where Claude Code looks for skills
+and points a stdio MCP server at the bridge, in one step:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/QingyaoAi/thunderbird-desktop-ai/main/mail/components/mcp/install-claude-skill.sh \
+  | bash -s -- <the password>
+```
+
+Run it with no password to install just the skill and print the
+`claude mcp add` command to run once you have made one. It requires `node`
+and the `claude` CLI on `PATH`, and needs no checkout of this repository —
+it downloads the two files it needs. Re-running it is safe; it replaces any
+existing `thunderbird` MCP server registration.
+
 ## Security
 
 - **Loopback only.** The socket binds `127.0.0.1`, and a connection from
