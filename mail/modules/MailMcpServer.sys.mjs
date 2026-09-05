@@ -472,12 +472,18 @@ const Methods = {
     }
 
     const headers = [
-      `From: ${identity.fullName ? `${identity.fullName} <${identity.email}>` : identity.email}`,
-      params?.to ? `To: ${params.to}` : null,
-      params?.cc ? `Cc: ${params.cc}` : null,
-      params?.bcc ? `Bcc: ${params.bcc}` : null,
-      params?.replyTo ? `Reply-To: ${params.replyTo}` : null,
-      `Subject: ${subject}`,
+      headerLine(
+        "From",
+        identity.fullName
+          ? `${identity.fullName} <${identity.email}>`
+          : identity.email,
+        true
+      ),
+      params?.to ? headerLine("To", params.to, true) : null,
+      params?.cc ? headerLine("Cc", params.cc, true) : null,
+      params?.bcc ? headerLine("Bcc", params.bcc, true) : null,
+      params?.replyTo ? headerLine("Reply-To", params.replyTo, true) : null,
+      headerLine("Subject", subject),
       `Date: ${new Date().toUTCString()}`,
       inReplyTo ? `In-Reply-To: ${inReplyTo}` : null,
       references ? `References: ${references}` : null,
@@ -859,6 +865,27 @@ function pickIdentity(wanted) {
 }
 
 /**
+ * One header line, with anything outside ASCII put into RFC 2047 encoded
+ * words. A header carrying raw UTF-8 is read back by whatever single-byte
+ * charset the reader assumes, which turns a Chinese subject into mojibake.
+ *
+ * @param {string} name - Field name, without the colon.
+ * @param {string} value
+ * @param {boolean} [addressing] - True for From, To, Cc, Bcc and Reply-To, so
+ *   that display names are encoded and the addresses beside them are left be.
+ * @returns {string}
+ */
+function headerLine(name, value, addressing = false) {
+  const encoded = lazy.MailServices.mimeConverter.encodeMimePartIIStr_UTF8(
+    value,
+    addressing,
+    name.length + 2,
+    Ci.nsIMimeConverter.MIME_ENCODED_WORD_SIZE
+  );
+  return `${name}: ${encoded}`;
+}
+
+/**
  * @param {nsIMsgIdentity} identity
  * @returns {?nsIMsgFolder}
  */
@@ -1035,7 +1062,17 @@ async function handleConnection(transport) {
 
     let request;
     try {
-      request = JSON.parse(body || "{}");
+      // readBytes returns one character per byte, which is what Content-Length
+      // above is counted in and so is right for the framing, but it leaves the
+      // body as UTF-8 lying in a byte string. Decoding it is what turns those
+      // bytes back into the characters they were sent as; without this a
+      // Chinese subject arrives as mojibake and is saved that way. The
+      // response side has always done the mirror of this.
+      request = JSON.parse(
+        body
+          ? new TextDecoder().decode(Uint8Array.from(body, c => c.charCodeAt(0)))
+          : "{}"
+      );
     } catch (ex) {
       respond("400 Bad Request", { error: "body must be JSON" });
       return;
