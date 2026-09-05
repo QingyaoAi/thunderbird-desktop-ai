@@ -863,24 +863,10 @@ function pickIdentity(wanted) {
  * @returns {?nsIMsgFolder}
  */
 function draftsFolderFor(identity) {
-  try {
-    if (identity.draftFolder) {
-      return lazy.MailServices.folderLookup.getFolderForURL(
-        identity.draftFolder
-      );
-    }
-  } catch (ex) {
-    // Fall through to the account's own drafts folder.
-  }
-  for (const server of lazy.MailServices.accounts.allServers) {
-    const drafts = server.rootFolder.getFolderWithFlags(
-      Ci.nsMsgFolderFlags.Drafts
-    );
-    if (drafts) {
-      return drafts;
-    }
-  }
-  return null;
+  // The same call the compose window makes, so a draft saved here lands where
+  // one saved by hand would. Resolving it by hand is what put drafts in the
+  // first account's Drafts folder regardless of which identity was asked for.
+  return identity.getOrCreateDraftsFolder();
 }
 
 // -- the listener ---------------------------------------------------------
