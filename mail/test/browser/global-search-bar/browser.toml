@@ -22,4 +22,6 @@ subsuite = "thunderbird"
 
 ["browser_globalSearchBar.js"]
 
+["browser_openResultInConversation.js"]
+
 ["browser_showAsListSetting.js"]

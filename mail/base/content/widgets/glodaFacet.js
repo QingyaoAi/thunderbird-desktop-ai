@@ -1462,8 +1462,9 @@
         FacetContext.showMessageInPreview(this);
       });
 
-      // Double click opens the message in its own window, so a result can
-      // be kept open while the search stays put.
+      // Double click opens the result's conversation in a tab with the
+      // result selected in it, so it is read in its thread rather than on
+      // its own. The search keeps its tab.
       this.addEventListener("dblclick", event => {
         if (
           event.button != 0 ||
@@ -1471,7 +1472,7 @@
         ) {
           return;
         }
-        FacetContext.showMessageInWindow(this);
+        FacetContext.showConversationInTab(this, false);
       });
 
       const messageHeader = document.createElement("div");
