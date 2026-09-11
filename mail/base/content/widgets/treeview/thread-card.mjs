@@ -58,14 +58,15 @@ function cacheNewestChild(key, childIndex) {
 }
 
 /**
- * Which header's body should be previewed for the row at `index`: the
- * row's own message normally, but for a *collapsed* thread row -- which
- * stands in for the whole conversation -- the newest message in the
- * thread, matching the date shown for such rows (see nsMsgDBView's
- * CellTextForColumn: showing the root's old date/body while implying
- * "this is the conversation's current state" would be inconsistent).
+ * Which header represents the row at `index`: the row's own message
+ * normally, but for a *collapsed* thread row -- which stands in for the
+ * whole conversation -- the newest message in the thread. This drives both
+ * the subject and the body preview, matching the date shown for such rows
+ * (see nsMsgDBView's CellTextForColumn: showing the root's old
+ * date/subject/body while implying "this is the conversation's current
+ * state" would be inconsistent).
  */
-function previewHeaderFor(view, index, isCollapsedThread) {
+function representativeHeaderFor(view, index, isCollapsedThread) {
   const ownHdr = view.getMsgHdrAt(index);
   if (!isCollapsedThread) {
     return ownHdr;
@@ -98,6 +99,19 @@ function previewHeaderFor(view, index, isCollapsedThread) {
     cacheNewestChild(memoKey, newestIndex);
   }
   return newestHdr || ownHdr;
+}
+
+/**
+ * The subject as the thread pane displays it, mirroring nsMsgDBView's
+ * FetchSubject(): the decoded subject, with "Re: " put back from the HasRe
+ * flag (the prefix is stripped before storage, see NS_MsgStripRE).
+ *
+ * @param {nsIMsgDBHdr} hdr
+ * @returns {string}
+ */
+function subjectForHeader(hdr) {
+  const subject = hdr.mime2DecodedSubject || "";
+  return hdr.flags & Ci.nsMsgMessageFlags.HasRe ? "Re: " + subject : subject;
 }
 
 /**
@@ -224,16 +238,43 @@ class ThreadCard extends TreeViewTableRow {
     this.senderLine.title = data.sender;
     this.dateLine.textContent = data.date;
 
-    this.#fillPreview(
-      this.classList.contains("children") && this.classList.contains("collapsed")
+    const isCollapsedThread =
+      this.classList.contains("children") &&
+      this.classList.contains("collapsed");
+    const representativeHdr = representativeHeaderFor(
+      this.view,
+      this._index,
+      isCollapsedThread
     );
+
+    // A collapsed thread row stands in for the conversation, so label it with
+    // the newest message's subject rather than the root's. Senders who
+    // compose each new notice by replying to last year's and editing the
+    // subject would otherwise leave the row showing the stale original.
+    // data.subject (the root's, already rendered above) stays as the fallback
+    // -- this is presentation polish, so it must not break the row.
+    let displaySubject = data.subject;
+    if (isCollapsedThread && representativeHdr) {
+      try {
+        const newestSubject = subjectForHeader(representativeHdr);
+        if (newestSubject) {
+          displaySubject = newestSubject;
+          this.subjectLine.textContent = newestSubject;
+          this.subjectLine.title = newestSubject;
+        }
+      } catch (ex) {
+        console.error("thread-card subject failed:", ex);
+      }
+    }
+
+    this.#fillPreview(representativeHdr);
 
     this.threadCardTags.setAttribute("tags", data.tagKeys);
 
     // Follow the layout order.
     ariaLabelPromises.push(data.sender);
     ariaLabelPromises.push(data.date);
-    ariaLabelPromises.push(data.subject);
+    ariaLabelPromises.push(displaySubject);
     ariaLabelPromises.push(data.tags);
 
     if (propertiesSet.has("flagged")) {
@@ -309,10 +350,10 @@ class ThreadCard extends TreeViewTableRow {
    * Populate the body-preview line, fetching/parsing the message
    * asynchronously (with caching) if it isn't already in previewCache.
    *
-   * @param {boolean} isCollapsedThread - Whether this row is a collapsed
-   *   thread standing in for the whole conversation (see previewHeaderFor).
+   * @param {?nsIMsgDBHdr} msgHdr - The header whose body to preview, from
+   *   representativeHeaderFor().
    */
-  #fillPreview(isCollapsedThread) {
+  #fillPreview(msgHdr) {
     if (!this.previewLine) {
       return;
     }
@@ -320,20 +361,19 @@ class ThreadCard extends TreeViewTableRow {
     // The preview is a nice-to-have, not core row functionality (unlike the
     // sender/subject/date cells above, which come from cellDataForColumns
     // and are expected to always succeed). Wrap the whole thing so that any
-    // failure here -- an edge-case view state previewHeaderFor() doesn't
+    // failure here -- an edge-case view state representativeHeaderFor() doesn't
     // handle, a folder access error, whatever -- degrades to "no preview
     // for this row" instead of throwing out of fillRow() and potentially
     // breaking the rest of the row (or the list's rendering loop).
     try {
-      this.#fillPreviewUnchecked(isCollapsedThread);
+      this.#fillPreviewUnchecked(msgHdr);
     } catch (ex) {
       console.error("thread-card preview failed:", ex);
       this.previewLine.textContent = "";
     }
   }
 
-  #fillPreviewUnchecked(isCollapsedThread) {
-    const msgHdr = previewHeaderFor(this.view, this._index, isCollapsedThread);
+  #fillPreviewUnchecked(msgHdr) {
     if (!msgHdr) {
       this.previewLine.textContent = "";
       return;
