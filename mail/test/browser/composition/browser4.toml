@@ -69,6 +69,8 @@ skip-if = [
 
 ["browser_newmsgComposeIdentity.js"]
 
+["browser_paragraph_default.js"]
+
 ["browser_paragraph_state.js"]
 run-if = [
   "os != 'mac'"

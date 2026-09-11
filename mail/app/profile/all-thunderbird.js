@@ -403,7 +403,12 @@ pref("mailnews.attachments.display.start_expanded", true);
 pref("mail.pane_config.dynamic", 2);
 pref("editor.singleLine.pasteNewlines", 4);  // substitute commas for new lines in single line text boxes
 pref("editor.CR_creates_new_p", true);
-pref("mail.compose.default_to_paragraph", true);
+// Body Text by default, not Paragraph. This also sets the editor's paragraph
+// separator, and with it at "p", pressing Enter in Body Text wrapped both lines
+// in paragraphs and switched the format to Paragraph -- so choosing Body Text
+// never lasted past the next line. Choosing Paragraph by hand still gives a new
+// paragraph on every Enter, through editor.CR_creates_new_p above.
+pref("mail.compose.default_to_paragraph", false);
 
 // If true, when pasting a URL, paste the Open Graph / Twitter Card details
 // we can extract from the URL instead.
