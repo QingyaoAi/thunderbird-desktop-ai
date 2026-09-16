@@ -31,10 +31,20 @@ BRANDING="${BRANDING:-$(dirname "$0")/../../mail/branding/nightly}"
 echo "verifying the bundle before it is copied..."
 codesign --verify --deep --strict "$APP"
 
+# hdiutil's attach and detach are deprecated as of macOS 26, loudly and in
+# favour of diskutil; create and convert below are not. diskutil image attach
+# prints what hdiutil did, the mount point last on the final line.
+attach_image() {
+    diskutil image attach --nobrowse "$1" | tail -1 | awk -F'\t' '{print $NF}'
+}
+detach_image() {
+    diskutil eject "$1" >/dev/null
+}
+
 stage=$(mktemp -d)
 mount=""
 cleanup() {
-    [[ -n "$mount" ]] && hdiutil detach "$mount" -quiet 2>/dev/null || true
+    [[ -n "$mount" ]] && detach_image "$mount" 2>/dev/null || true
     rm -rf "$stage"
 }
 trap cleanup EXIT
@@ -61,13 +71,13 @@ hdiutil create -quiet -srcfolder "$stage" -volname "$VOLUME_NAME" \
 
 # Mounted only to set the volume's custom-icon bit, which lives in the
 # FinderInfo of the volume root -- outside the bundle, so nothing signed.
-mount=$(hdiutil attach -nobrowse -readwrite "$rw" | tail -1 | awk -F'\t' '{print $NF}')
+mount=$(attach_image "$rw")
 SetFile -a C "$mount" 2>/dev/null || true
 
 echo "verifying the copy inside the image..."
 codesign --verify --deep --strict "$mount/$(basename "$APP")"
 
-hdiutil detach "$mount" -quiet
+detach_image "$mount"
 mount=""
 
 rm -f "$OUT"
