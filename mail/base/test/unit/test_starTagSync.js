@@ -30,10 +30,6 @@ const keywords = () => hdr.getStringProperty("keywords") ?? "";
 const starred = () => Boolean(hdr.flags & Ci.nsMsgMessageFlags.Marked);
 
 add_setup(async function () {
-  // The one-off reconcile is not what is being tested, and it walks every
-  // folder in the profile.
-  Services.prefs.setBoolPref("mail.startagsync.reconciled", true);
-
   const account = MailServices.accounts.createLocalMailAccount();
   const root = account.incomingServer.rootFolder.QueryInterface(
     Ci.nsIMsgLocalMailFolder
@@ -146,4 +142,41 @@ add_task(async function testAChangeThatDoesNotTakeIsRetried() {
     60,
     200
   );
+});
+
+/**
+ * The pass over existing mail is what repairs messages a gap left out of step,
+ * so it has to run again when a gap is closed -- once, not on every launch.
+ */
+add_task(async function testThePassRunsOncePerVersion() {
+  const isTagged = h =>
+    (h.getStringProperty("keywords") ?? "").split(/\s+/).includes(IMPORTANT);
+  const addStarredBehindTheSyncsBack = () => {
+    const before = new Set(
+      [...folder.msgDatabase.enumerateMessages()].map(h => h.messageKey)
+    );
+    folder.addMessage(new MessageGenerator().makeMessage().toMessageString());
+    const added = [...folder.msgDatabase.enumerateMessages()].find(
+      h => !before.has(h.messageKey)
+    );
+    // Straight onto the header, which reports nothing: how a star that came
+    // in through one of the gaps looks afterwards.
+    added.orFlags(Ci.nsMsgMessageFlags.Marked);
+    Assert.ok(!isTagged(added), "starred and untagged to begin with");
+    return added;
+  };
+
+  const missed = addStarredBehindTheSyncsBack();
+  Services.prefs.setIntPref("mail.startagsync.reconciledVersion", 1);
+  await StarTagSync.reconcileOnce();
+  Assert.ok(isTagged(missed), "a pass that is due should tag what it finds");
+  Assert.greater(
+    Services.prefs.getIntPref("mail.startagsync.reconciledVersion"),
+    1,
+    "and record that it has run"
+  );
+
+  const later = addStarredBehindTheSyncsBack();
+  await StarTagSync.reconcileOnce();
+  Assert.ok(!isTagged(later), "a pass that has already run should not run again");
 });

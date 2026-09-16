@@ -767,6 +767,11 @@ MailGlue.prototype = {
     // Start these services.
     this._checkForOldBuildUpdates();
 
+    // Not on idle with the reconcile: the startup mail check begins as soon as
+    // the first tab is up, and a star synced before the listeners exist is
+    // never tagged.
+    lazy.StarTagSync.start();
+
     // On Windows 7 and above, initialize the jump list module.
     const WINTASKBAR_CONTRACTID = "@mozilla.org/windows-taskbar;1";
     if (
@@ -952,10 +957,10 @@ MailGlue.prototype = {
         },
       },
       {
-        // Keeps the star and the Important tag in step. On idle because
-        // the first run walks every folder to reconcile existing mail.
+        // Brings existing mail's stars and Important tags into line when that
+        // pass is due. On idle because it walks every folder.
         task: () => {
-          lazy.StarTagSync.start();
+          lazy.StarTagSync.reconcileOnce();
         },
       },
       {

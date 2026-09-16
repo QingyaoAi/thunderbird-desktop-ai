@@ -35,10 +35,15 @@ const RETRY_DELAY_MS = 5000;
 const RECONCILE_CHUNK = 200;
 
 /**
- * Set once the one-off pass over existing mail has finished. Clear it to run
- * the pass again -- after importing an account, say.
+ * Which version of the one-off pass over existing mail has run. The version is
+ * raised whenever a way for mail to fall out of step is closed, so the pass
+ * runs once more and picks up what that gap left behind. Clear the pref to run
+ * it again -- after importing an account, say.
  */
-const RECONCILED_PREF = "mail.startagsync.reconciled";
+const RECONCILED_PREF = "mail.startagsync.reconciledVersion";
+
+/** 2: messages that arrived already starred were never tagged. */
+const RECONCILE_VERSION = 2;
 
 /**
  * Whether a header carries the Important tag.
@@ -84,34 +89,51 @@ export const StarTagSync = {
    */
   _retried: new Set(),
 
+  /**
+   * Start listening. Cheap, and wants to happen before the startup mail check
+   * does: a star that comes in before the listeners exist is never tagged.
+   */
   start() {
     if (this._started) {
       return;
     }
     this._started = true;
 
-    // Star changed -> tag. Covers stars arriving from the server, which is
-    // the case that matters when flagging happens on a phone.
+    // Star changed -> tag. Covers stars arriving from the server on messages
+    // already here, which is most of flagging on a phone.
     lazy.MailServices.mailSession.AddFolderListener(
       this,
       Ci.nsIFolderListener.propertyFlagChanged
     );
 
-    // Tag changed -> star. "keywords" is a message property, so this is the
-    // global property notification rather than a flag one.
+    // Tag changed -> star, and messages that arrive already starred. "keywords"
+    // is a message property, so this is the global notification rather than a
+    // flag one.
     lazy.MailServices.mfn.addListener(
       this,
-      lazy.MailServices.mfn.msgPropertyChanged
+      lazy.MailServices.mfn.msgPropertyChanged |
+        lazy.MailServices.mfn.msgAdded
     );
+  },
 
-    // Existing mail predates the listeners, so bring it into line -- but
-    // only once. Everything arriving afterwards is handled by the listeners
-    // above, so repeating the walk on every launch re-reads every header in
-    // the account to discover that there is nothing to do.
-    if (!Services.prefs.getBoolPref(RECONCILED_PREF, false)) {
-      this.reconcileAll()
-        .then(() => Services.prefs.setBoolPref(RECONCILED_PREF, true))
-        .catch(ex => console.error("Could not reconcile stars and tags:", ex));
+  /**
+   * Bring existing mail into line, if this version of the pass has not run.
+   *
+   * Only when it is due, because everything arriving afterwards is handled by
+   * the listeners, and repeating the walk on every launch re-reads every
+   * header in the account to discover that there is nothing to do.
+   *
+   * @returns {Promise}
+   */
+  async reconcileOnce() {
+    if (Services.prefs.getIntPref(RECONCILED_PREF, 0) >= RECONCILE_VERSION) {
+      return;
+    }
+    try {
+      await this.reconcileAll();
+      Services.prefs.setIntPref(RECONCILED_PREF, RECONCILE_VERSION);
+    } catch (ex) {
+      console.error("Could not reconcile stars and tags:", ex);
     }
   },
 
@@ -244,6 +266,18 @@ export const StarTagSync = {
     const has = (newValue ?? "").split(/\s+/).includes(IMPORTANT_TAG);
     if (had != has) {
       this._apply(msg, has);
+    }
+  },
+
+  msgAdded(msg) {
+    // A message starred on another device before this one had seen it arrives
+    // with the star already set. IMAP puts the server's flags on the header
+    // before adding it, so no flag change is ever reported for it.
+    if (isStarred(msg) != hasImportantTag(msg)) {
+      // Not from inside the notification, which is sent while the folder is
+      // still taking in headers; setting a keyword queues a server command.
+      // Either one set means "important", as in reconcileFolder.
+      lazy.setTimeout(() => this._apply(msg, true), 0);
     }
   },
 
