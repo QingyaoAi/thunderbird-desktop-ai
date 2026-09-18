@@ -11,6 +11,8 @@ environment = [
 
 ["test_starTagSyncImap.js"]
 
+["test_tagMessageCountsImap.js"]
+
 ["test_bug460636.js"]
 
 ["test_chunkLastLF.js"]

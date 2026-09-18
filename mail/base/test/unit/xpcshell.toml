@@ -54,6 +54,8 @@ skip-if = [
 
 ["test_starTagSync.js"]
 
+["test_tagMessageCounts.js"]
+
 ["test_state_preferenceSlice.js"]
 
 ["test_state_store.js"]

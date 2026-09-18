@@ -61,6 +61,56 @@ function isCounted(folder) {
 }
 
 /**
+ * Whether a message reported as moved away will not be reported again.
+ *
+ * A moved message leaves its folder quietly -- it is deleted from the database
+ * without msgsDeleted -- so the move itself is where it has to be taken out of
+ * the count. Two kinds are exceptions, and taking them out here as well would
+ * count them out twice, or out without their ever having been in:
+ *
+ *  - New mail that a filter moves as it arrives is never added to the folder
+ *    it arrived in, so no msgAdded was sent for it there. It is still in the
+ *    list of messages moved, but not in the source's database.
+ *  - On an IMAP account set to mark deleted mail rather than remove it, the
+ *    source stays where it was, struck through, and is reported by
+ *    msgsDeleted when the folder is expunged.
+ *
+ * Every path that reports a move does so before it deletes the source, so a
+ * header missing from its database at this point was never there.
+ *
+ * @param {nsIMsgDBHdr} msg
+ * @returns {boolean}
+ */
+function leavesQuietly(msg) {
+  const folder = msg.folder;
+  try {
+    const server = folder.server;
+    if (
+      server instanceof Ci.nsIImapIncomingServer &&
+      server.deleteModel == Ci.nsMsgImapDeleteModels.IMAPDelete
+    ) {
+      return false;
+    }
+    // Only asked while the move is being reported, with the source open; a
+    // closed database is not opened for this.
+    return (
+      !folder.databaseOpen || folder.msgDatabase.containsKey(msg.messageKey)
+    );
+  } catch (ex) {
+    return true;
+  }
+}
+
+/**
+ * @param {?nsIMsgFolder} folder
+ * @param {nsMsgKey} key
+ * @returns {string} What TagMessageCounts._placeholders is keyed by.
+ */
+function placeholderId(folder, key) {
+  return `${folder?.URI}#${key}`;
+}
+
+/**
  * The tag keys in a keywords string.
  *
  * @param {?string} keywords - Space-separated keywords, as stored on a header.
@@ -84,6 +134,20 @@ export const TagMessageCounts = {
   _counts: new Map(),
 
   /**
+   * Placeholders an IMAP move has put in its destination, by
+   * "<folder URI>#<key>", with the tags each was counted under.
+   *
+   * A placeholder stands in for the moved message until the destination is
+   * next synchronised, when the real header replaces it. That is reported as
+   * msgKeyChanged followed by msgAdded for the real one -- never as
+   * msgsDeleted for the placeholder, which is gone by then, keywords and all.
+   * So what it was counted as is kept here, to be taken off again.
+   *
+   * @type {Map<string, string[]>}
+   */
+  _placeholders: new Map(),
+
+  /**
    * Whether the first full scan has finished. Until it has, the counts are
    * incomplete and callers may prefer to show nothing over showing a number
    * that is about to jump.
@@ -102,7 +166,9 @@ export const TagMessageCounts = {
       this,
       lazy.MailServices.mfn.msgPropertyChanged |
         lazy.MailServices.mfn.msgAdded |
-        lazy.MailServices.mfn.msgsDeleted
+        lazy.MailServices.mfn.msgsDeleted |
+        lazy.MailServices.mfn.msgsMoveCopyCompleted |
+        lazy.MailServices.mfn.msgKeyChanged
     );
 
     // The counts are not scanned here. Nothing can see them until the
@@ -238,6 +304,12 @@ export const TagMessageCounts = {
     }
     const before = new Set(keywordsToKeys(oldValue));
     const after = new Set(keywordsToKeys(newValue));
+    // A placeholder tagged or untagged while it waits is taken off under
+    // what it carries now, not what it arrived with.
+    const id = placeholderId(msg.folder, msg.messageKey);
+    if (this._placeholders.has(id)) {
+      this._placeholders.set(id, [...after]);
+    }
     for (const key of after) {
       if (!before.has(key)) {
         this._bump(key, 1);
@@ -266,8 +338,74 @@ export const TagMessageCounts = {
       if (!isCounted(msg?.folder)) {
         continue;
       }
+      // Taken off here, so it must not be taken off again if a real header
+      // is ever reported as replacing it.
+      this._placeholders.delete(placeholderId(msg.folder, msg.messageKey));
       for (const key of keywordsToKeys(msg.getStringProperty("keywords"))) {
         this._bump(key, -1);
+      }
+    }
+  },
+
+  msgKeyChanged(oldKey, newMsg) {
+    // A placeholder has been replaced by the real header, which msgAdded is
+    // about to count. Take the placeholder off under what it was counted as.
+    const id = placeholderId(newMsg?.folder, oldKey);
+    const keys = this._placeholders.get(id);
+    if (!keys) {
+      return;
+    }
+    this._placeholders.delete(id);
+    for (const key of keys) {
+      this._bump(key, -1);
+    }
+  },
+
+  msgsMoveCopyCompleted(
+    isMove,
+    sourceMessages,
+    destinationFolder,
+    destinationMessages
+  ) {
+    // Every header is counted once as it enters a database and once as it
+    // leaves, and a move or copy is where some of those are reported and
+    // nowhere else. A moved source leaves quietly, so it is taken off here.
+    // A local destination's new headers come only with this. An IMAP
+    // destination gets placeholders here when the move can be undone, which
+    // msgKeyChanged later swaps for the real headers, and otherwise gets
+    // nothing until msgAdded reports the real ones.
+    //
+    // Watching msgAdded and msgsDeleted alone never took a moved source off,
+    // so every move within an IMAP account -- archiving included -- left its
+    // tags one too high, and a copy into a local folder was never counted.
+    // Until the next launch, that is, since the full pass runs once.
+    //
+    // Still not right: a move into an IMAP folder on another account. That
+    // path deletes each source as the next is copied, before this is sent,
+    // so leavesQuietly() cannot tell those sources from mail a filter moved
+    // on arrival, and they stay counted as they always were.
+    if (isMove) {
+      for (const msg of sourceMessages) {
+        if (!isCounted(msg?.folder) || !leavesQuietly(msg)) {
+          continue;
+        }
+        for (const key of keywordsToKeys(msg.getStringProperty("keywords"))) {
+          this._bump(key, -1);
+        }
+      }
+    }
+    if (isCounted(destinationFolder)) {
+      for (const msg of destinationMessages ?? []) {
+        const keys = keywordsToKeys(msg.getStringProperty("keywords"));
+        for (const key of keys) {
+          this._bump(key, 1);
+        }
+        if (msg.getUint32Property("pseudoHdr")) {
+          this._placeholders.set(
+            placeholderId(destinationFolder, msg.messageKey),
+            keys
+          );
+        }
       }
     }
   },
