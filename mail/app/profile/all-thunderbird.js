@@ -1672,6 +1672,11 @@ pref("mail.mcp.port", 47821);
 // switch, since attachments are often the most private part of a mailbox and
 // reading bodies need not mean reading those.
 pref("mail.mcp.attachments.enabled", true);
+// How long a handed-out attachment stays on disk after it was last asked for,
+// in seconds: long enough to read a long document a few pages at a time, and
+// short enough that it is not left lying about for as long as Thunderbird
+// runs. Asking again resets it.
+pref("mail.mcp.attachments.lifetime_seconds", 600);
 
 // Thunderbird's own defaults for the summary database cache are left alone.
 // Tuning them here saved real memory on a large account, but cost it back on

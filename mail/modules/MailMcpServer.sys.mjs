@@ -30,6 +30,7 @@
 
 const lazy = {};
 ChromeUtils.defineESModuleGetters(lazy, {
+  AsyncShutdown: "resource://gre/modules/AsyncShutdown.sys.mjs",
   AttachmentInfo: "resource:///modules/AttachmentInfo.sys.mjs",
   DownloadPaths: "resource://gre/modules/DownloadPaths.sys.mjs",
   Gloda: "resource:///modules/gloda/GlodaPublic.sys.mjs",
@@ -75,14 +76,34 @@ const MAX_ATTACHMENT_BYTES = 50 * 1024 * 1024;
 const ATTACHMENT_FETCH_TIMEOUT_MS = 60000;
 
 /**
- * Attachments already written out this session, by attachment URL, so asking
- * for one again returns the same file instead of fetching it once more. Kept
- * short: each entry is a whole file in the temporary directory.
+ * How long, in seconds, a handed-out attachment stays on disk after it was
+ * last asked for. Long enough for a client to read a long document a few
+ * pages at a time; short enough that a CV fetched for one question is not
+ * left lying about for the days Thunderbird may run. Asking for it again
+ * resets the clock, and asking after it has gone fetches it again.
+ */
+const ATTACHMENT_LIFETIME_PREF = "mail.mcp.attachments.lifetime_seconds";
+const DEFAULT_ATTACHMENT_LIFETIME_SECONDS = 600;
+
+/**
+ * Attachments on disk, by attachment URL: where each was written and the
+ * timer that deletes it. Also capped, since each is a whole file.
  *
- * @type {Map<string, string>}
+ * @type {Map<string, {path: string, expires: number, timer: number}>}
  */
 const writtenAttachments = new Map();
 const WRITTEN_ATTACHMENTS_MAX = 50;
+
+/**
+ * Settles once the attachment directory has been cleared at start, so that
+ * nothing is written into it while a clear-out is still running.
+ *
+ * @type {Promise}
+ */
+let attachmentDirReady = Promise.resolve();
+
+/** Whether clearing the directory at shutdown has been arranged. */
+let clearsAtShutdown = false;
 
 /**
  * Tokens: create, list, revoke.
@@ -407,19 +428,103 @@ function isStoredInMessage(attachment, hdr) {
 }
 
 /**
- * Remember where an attachment was written, dropping the oldest file once
- * there are too many.
+ * Where handed-out attachments are written.
  *
- * @param {string} url
- * @param {string} path
+ * A directory of the endpoint's own, in this profile's cache directory
+ * rather than the system's temporary one. Only one Thunderbird can have a
+ * profile open, so clearing it at start cannot take files from under another
+ * instance, as clearing a shared directory could; and backups leave
+ * ~/Library/Caches alone, so these files never end up in one.
+ *
+ * @returns {string}
  */
-function rememberWrittenAttachment(url, path) {
-  if (writtenAttachments.size >= WRITTEN_ATTACHMENTS_MAX) {
-    const [oldestUrl, oldestPath] = writtenAttachments.entries().next().value;
-    writtenAttachments.delete(oldestUrl);
-    IOUtils.remove(oldestPath, { ignoreAbsent: true }).catch(() => {});
+function attachmentDir() {
+  return PathUtils.join(
+    Services.dirsvc.get("ProfLDS", Ci.nsIFile).path,
+    "mcp-attachments"
+  );
+}
+
+/**
+ * A new file for an attachment, readable by this user only, in a directory
+ * readable by this user only.
+ *
+ * @param {string} name - The attachment's name.
+ * @returns {Promise<string>} The path.
+ */
+async function newAttachmentFile(name) {
+  await attachmentDirReady;
+  const dir = attachmentDir();
+  await IOUtils.makeDirectory(dir, { permissions: 0o700 });
+  const file = Cc["@mozilla.org/file/local;1"].createInstance(Ci.nsIFile);
+  file.initWithPath(
+    PathUtils.join(dir, lazy.DownloadPaths.sanitize(name) || "attachment")
+  );
+  file.createUnique(Ci.nsIFile.NORMAL_FILE_TYPE, 0o600);
+  return file.path;
+}
+
+/**
+ * Delete a handed-out attachment now.
+ *
+ * @param {string} url - The attachment's URL.
+ */
+function forgetAttachment(url) {
+  const entry = writtenAttachments.get(url);
+  if (!entry) {
+    return;
   }
-  writtenAttachments.set(url, path);
+  writtenAttachments.delete(url);
+  lazy.clearTimeout(entry.timer);
+  IOUtils.remove(entry.path, { ignoreAbsent: true }).catch(ex =>
+    console.warn("Could not delete a handed-out attachment:", ex)
+  );
+}
+
+/**
+ * Keep a handed-out attachment for another lifetime from now, and delete it
+ * when that runs out.
+ *
+ * @param {string} url - The attachment's URL.
+ * @param {string} path - Where it was written.
+ * @returns {number} When it will be deleted, in milliseconds since the epoch.
+ */
+function keepAttachment(url, path) {
+  const earlier = writtenAttachments.get(url);
+  if (earlier) {
+    // The same file, kept longer: only the timer goes. Removed and set again
+    // so that the map stays in order of last use for the cap below.
+    lazy.clearTimeout(earlier.timer);
+    writtenAttachments.delete(url);
+  } else if (writtenAttachments.size >= WRITTEN_ATTACHMENTS_MAX) {
+    forgetAttachment(writtenAttachments.keys().next().value);
+  }
+  const lifetime =
+    Services.prefs.getIntPref(
+      ATTACHMENT_LIFETIME_PREF,
+      DEFAULT_ATTACHMENT_LIFETIME_SECONDS
+    ) * 1000;
+  const expires = Date.now() + lifetime;
+  const timer = lazy.setTimeout(() => forgetAttachment(url), lifetime);
+  writtenAttachments.set(url, { path, expires, timer });
+  return expires;
+}
+
+/**
+ * Delete every handed-out attachment, and whatever else is in their
+ * directory -- which after a crash is files no timer is left to delete.
+ *
+ * @returns {Promise}
+ */
+function clearAttachments() {
+  for (const entry of writtenAttachments.values()) {
+    lazy.clearTimeout(entry.timer);
+  }
+  writtenAttachments.clear();
+  return IOUtils.remove(attachmentDir(), {
+    recursive: true,
+    ignoreAbsent: true,
+  }).catch(ex => console.warn("Could not clear handed-out attachments:", ex));
 }
 
 /**
@@ -583,12 +688,13 @@ const Methods = {
   },
 
   /**
-   * One attachment, written to a private temporary file whose path is
-   * returned, for a client on this machine to read.
+   * One attachment, written to a private file whose path is returned, for a
+   * client on this machine to read.
    *
-   * The file goes where Thunderbird puts attachments it opens: a directory
-   * only this user can read, emptied when Thunderbird quits. Only a part
-   * stored in the message is served -- see isStoredInMessage().
+   * The file is deleted when its lifetime runs out -- ten minutes after it
+   * was last asked for -- and in any case when access is turned off or
+   * Thunderbird quits; see attachmentDir(). Only a part stored in the
+   * message is served -- see isStoredInMessage().
    *
    * @param {object} params - {id, index, name}
    */
@@ -624,22 +730,28 @@ const Methods = {
       );
     }
 
-    const describe = (path, size) => ({
+    const describe = (path, size, expires) => ({
       id: hdr.folder.getUriForMsg(hdr),
       index,
       name: attachment.name,
       contentType: attachment.contentType,
       size,
       path,
+      // So a client knows the file will go, and when to ask again.
+      expires: new Date(expires).toISOString(),
     });
 
     const earlier = writtenAttachments.get(attachment.url);
     if (earlier) {
-      const stat = await IOUtils.stat(earlier).catch(() => null);
+      const stat = await IOUtils.stat(earlier.path).catch(() => null);
       if (stat) {
-        return describe(earlier, stat.size);
+        return describe(
+          earlier.path,
+          stat.size,
+          keepAttachment(attachment.url, earlier.path)
+        );
       }
-      writtenAttachments.delete(attachment.url);
+      forgetAttachment(attachment.url);
     }
 
     const info = new lazy.AttachmentInfo({
@@ -668,12 +780,13 @@ const Methods = {
       );
     }
 
-    const file = await info.setupTempFile(
-      lazy.DownloadPaths.sanitize(attachment.name) || "attachment"
+    const path = await newAttachmentFile(attachment.name);
+    await IOUtils.write(path, new Uint8Array(buffer));
+    return describe(
+      path,
+      buffer.byteLength,
+      keepAttachment(attachment.url, path)
     );
-    await IOUtils.write(file.path, new Uint8Array(buffer));
-    rememberWrittenAttachment(attachment.url, file.path);
-    return describe(file.path, buffer.byteLength);
   },
 
   /**
@@ -1251,6 +1364,21 @@ export const MailMcpServer = {
       );
       socket.init(-1, true, -1);
     }
+    // Whatever a previous run left -- after a crash, files no timer is left
+    // to delete -- goes before anything new is written.
+    attachmentDirReady = attachmentDirReady.then(clearAttachments);
+    if (!clearsAtShutdown) {
+      clearsAtShutdown = true;
+      try {
+        lazy.AsyncShutdown.profileBeforeChange.addBlocker(
+          "Mail MCP: delete handed-out attachments",
+          () => clearAttachments()
+        );
+      } catch (ex) {
+        // Already shutting down; the next start clears up instead.
+      }
+    }
+
     socket.asyncListen({
       onSocketAccepted: (_socket, transport) => {
         // Belt and braces: init(loopback) should make this impossible, but a
@@ -1280,6 +1408,8 @@ export const MailMcpServer = {
   stop() {
     this._socket?.close();
     this._socket = null;
+    // Access turned off means nothing handed out stays behind either.
+    attachmentDirReady = attachmentDirReady.then(clearAttachments);
   },
 
   /** Apply the pref: start or stop to match it. */

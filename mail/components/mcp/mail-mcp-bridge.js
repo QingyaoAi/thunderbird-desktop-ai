@@ -203,7 +203,9 @@ const TOOLS = [
       "included. Takes the message id and the attachment's index from " +
       "get_message, or its name; with only one attachment, neither is " +
       "needed. Only files stored in the message are served, not detached " +
-      "files or links. Thunderbird deletes the file when it quits.",
+      "files or links. The file is deleted ten minutes after it was last " +
+      "asked for (the result says when); ask again to keep it, or to get " +
+      "it back once it has gone.",
     inputSchema: {
       type: "object",
       properties: {

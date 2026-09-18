@@ -149,9 +149,17 @@ capped at 100,000 characters, with `truncated: true` when cut.
 Takes the message `id` and either the attachment's `index` from
 `getMessage`'s list or its `name` (neither, if there is only one). Thunderbird
 fetches the part the way it does when an attachment is opened, writes it to
-its private temporary directory -- readable by this user only, emptied when
-Thunderbird quits -- and returns `{id, index, name, contentType, size, path}`.
-Asking again for the same attachment returns the same file.
+`mcp-attachments` in the profile's cache directory -- readable by this user
+only, and outside what backups copy -- and returns
+`{id, index, name, contentType, size, path, expires}`.
+
+The file is deleted ten minutes after it was last asked for, which is long
+enough to read a long document a few pages at a time; asking again returns
+the same file and resets the clock, and asking after it has gone fetches it
+again. The directory is also emptied when access is turned off, when
+Thunderbird quits, and when the endpoint starts, which catches anything a
+crash left behind. `mail.mcp.attachments.lifetime_seconds` changes the ten
+minutes.
 
 Only a part stored in the message is served. A message can mark an attachment
 as detached and point it at a `file://` path, or make it a link, in part

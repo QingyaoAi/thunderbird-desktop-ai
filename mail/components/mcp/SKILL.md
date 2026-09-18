@@ -77,11 +77,15 @@ add a date range rather than reading them all.
 `get_attachment` fetches one of them: pass the message id and the
 attachment's `index` (or its `name`; with a single attachment, neither). It
 returns a `path` to a private temporary file, which you read like any other
-file — PDFs and images included. Open an attachment only when the question is
-about what is in it: attachments are often the most private thing in a
-message, and "what did she send?" is answered by the list, not the contents.
-Attachments over 50MB, and ones that were detached or are only links, are
-refused; say so rather than guessing what they contain.
+file — PDFs and images included. The file is deleted ten minutes after it was
+last asked for (`expires` says when); if you come back to it later, call
+`get_attachment` again rather than reusing the old path.
+
+Open an attachment only when the question is about what is in it:
+attachments are often the most private thing in a message, and "what did she
+send?" is answered by the list, not the contents. Attachments over 50MB, and
+ones that were detached or are only links, are refused; say so rather than
+guessing what they contain.
 
 `get_thread` takes any id in a conversation and returns all of it, oldest
 first. Pass `includeBodies: false` when you only need the shape of the thread
