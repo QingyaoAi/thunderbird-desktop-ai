@@ -190,6 +190,24 @@ function constantTimeEquals(a, b) {
 // -- turning Thunderbird's objects into JSON ------------------------------
 
 /**
+ * The name a folder shows in the folder pane.
+ *
+ * nsIMsgFolder has no prettyName. Reading one gives undefined, which
+ * JSON.stringify drops, so a header's folderName never arrived at all and a
+ * folder named the way the pane names it could not be found by that name.
+ *
+ * @param {nsIMsgFolder} folder
+ * @returns {string}
+ */
+function folderDisplayName(folder) {
+  try {
+    return String(folder.localizedName || folder.name || "");
+  } catch (ex) {
+    return String(folder.name ?? "");
+  }
+}
+
+/**
  * The parts of a message worth sending, without its body.
  *
  * @param {nsIMsgDBHdr} hdr
@@ -205,7 +223,7 @@ function headerToJson(hdr) {
     ccList: hdr.ccList,
     date: hdr.date ? new Date(hdr.date / 1000).toISOString() : null,
     folder: hdr.folder.URI,
-    folderName: hdr.folder.prettyName,
+    folderName: folderDisplayName(hdr.folder),
     read: Boolean(hdr.flags & Ci.nsMsgMessageFlags.Read),
     flagged: Boolean(hdr.flags & Ci.nsMsgMessageFlags.Marked),
     tags: (hdr.getStringProperty("keywords") || "").split(/\s+/).filter(Boolean),
@@ -471,10 +489,7 @@ const Methods = {
       for (const folder of server.rootFolder.descendants) {
         folders.push({
           uri: folder.URI,
-          // Coerced, because an undefined value is dropped from the JSON
-          // altogether rather than sent as null -- so a folder with no
-          // pretty name arrived with no name field at all.
-          name: String(folder.prettyName ?? folder.name ?? ""),
+          name: folderDisplayName(folder),
           account: String(server.prettyName ?? ""),
           messages: folder.getTotalMessages(false),
           unread: folder.getNumUnread(false),
@@ -733,6 +748,43 @@ async function filterByHeaders(candidates, wanted, limit) {
 }
 
 /**
+ * Every folder a caller could mean by a name: a URI, the name shown in the
+ * folder pane, the folder's own name, or the last segment of its path.
+ *
+ * Compared as typed rather than as escaped: a local folder's URI has its
+ * spaces and non-ASCII percent-encoded ("Unsent%20Messages"), an IMAP
+ * folder's does not, and nobody types a name that way.
+ *
+ * @param {string} name
+ * @returns {nsIMsgFolder[]}
+ */
+function foldersNamed(name) {
+  const wanted = name.toLowerCase();
+  const decoded = uri => {
+    try {
+      return decodeURIComponent(uri);
+    } catch (ex) {
+      return uri;
+    }
+  };
+  const folders = [];
+  for (const server of lazy.MailServices.accounts.allServers) {
+    for (const folder of server.rootFolder.descendants) {
+      const uri = decoded(folder.URI).toLowerCase();
+      if (
+        uri == wanted ||
+        uri.endsWith(`/${wanted}`) ||
+        String(folder.name ?? "").toLowerCase() == wanted ||
+        folderDisplayName(folder).toLowerCase() == wanted
+      ) {
+        folders.push(folder);
+      }
+    }
+  }
+  return folders;
+}
+
+/**
  * Turn the filter parameters into something that can test a header.
  *
  * Substring, case-insensitive, on the decoded fields -- so "liu" finds
@@ -772,23 +824,9 @@ function buildFilters(params) {
   const hasAttachment = params?.hasAttachment;
 
   // A folder may be named by URI or by name, and a name may match several.
-  const folders = [];
-  if (params?.folder) {
-    const wanted = String(params.folder).toLowerCase();
-    for (const server of lazy.MailServices.accounts.allServers) {
-      for (const folder of server.rootFolder.descendants) {
-        if (
-          folder.URI.toLowerCase() == wanted ||
-          folder.prettyName?.toLowerCase() == wanted ||
-          folder.URI.toLowerCase().endsWith(`/${wanted}`)
-        ) {
-          folders.push(folder);
-        }
-      }
-    }
-    if (!folders.length) {
-      throw new Error(`no folder matches: ${params.folder}`);
-    }
+  const folders = params?.folder ? foldersNamed(String(params.folder)) : [];
+  if (params?.folder && !folders.length) {
+    throw new Error(`no folder matches: ${params.folder}`);
   }
 
   // Any header, by name, matched on a keyword: {"list-id": "ntcir"}.
