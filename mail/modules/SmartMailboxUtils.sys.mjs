@@ -40,6 +40,13 @@ const VIP_PREF = "mail.vip.addresses";
 const ALL_VIP_FOLDER_KEY = "vip_all";
 
 /**
+ * Folders already looked at this session. The look costs more than a property
+ * read: the setting lives in the folder's own database, so reading it opens
+ * that database, and this is on the path of every lookup of a unified folder.
+ */
+const localSearchChecked = new Set();
+
+/**
  * Read/write helpers for the VIP list.
  *
  * The pref holds comma separated entries, each either a bare address or
@@ -54,12 +61,16 @@ const ALL_VIP_FOLDER_KEY = "vip_all";
 /**
  * Make a virtual folder search the local index instead of the server.
  *
- * Only touches folders that are actually set to search online, so this costs
- * a property read on every other call.
+ * Only touches folders that are actually set to search online, and looks at
+ * each folder once per session.
  *
  * @param {nsIMsgFolder} folder
  */
 function turnOffOnlineSearch(folder) {
+  if (localSearchChecked.has(folder.URI)) {
+    return;
+  }
+  localSearchChecked.add(folder.URI);
   try {
     const wrapped = lazy.VirtualFolderHelper.wrapVirtualFolder(folder);
     if (wrapped.onlineSearch) {
