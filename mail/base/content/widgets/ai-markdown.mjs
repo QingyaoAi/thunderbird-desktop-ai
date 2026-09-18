@@ -176,18 +176,26 @@ function renderBlocks(parent, lines, doc) {
 
     // Fenced code. An unterminated fence runs to the end, which is what a
     // half-streamed answer looks like.
-    const fence = /^\s*```(\w*)\s*$/.exec(line);
+    //
+    // Anything from three backticks on opens one -- "```python code here",
+    // "````" and "```{r}" included. Requiring a bare language name here
+    // meant those lines were not fences, and the paragraph rule below
+    // refuses anything that starts like one, so no rule took the line and
+    // the loop never moved past it: the panel hung, appending empty
+    // paragraphs, on the first model that wrote a fence that way.
+    const fence = /^\s*`{3,}\s*(\S*)/.exec(line);
     if (fence) {
       const body = [];
       i++;
-      while (i < lines.length && !/^\s*```\s*$/.test(lines[i])) {
+      while (i < lines.length && !/^\s*`{3,}\s*$/.test(lines[i])) {
         body.push(lines[i]);
         i++;
       }
       i++;
       const pre = doc.createElement("pre");
       const code = doc.createElement("code");
-      if (fence[1]) {
+      // Only a plain language name is worth keeping; "{r}" is not one.
+      if (/^[\w+#.-]+$/.test(fence[1])) {
         code.dataset.language = fence[1];
       }
       code.textContent = body.join("\n");
@@ -246,6 +254,13 @@ function renderBlocks(parent, lines, doc) {
       !/^(\s*)([-*+]|\d+[.)])\s+/.test(lines[i])
     ) {
       paragraph.push(lines[i].trim());
+      i++;
+    }
+    if (!paragraph.length) {
+      // No rule above claimed the line and this one declined it too. Take
+      // it as plain text rather than looping on it for ever -- which is what
+      // happened, and what any rule added or changed later could do again.
+      paragraph.push(line.trim());
       i++;
     }
     const element = doc.createElement("p");
