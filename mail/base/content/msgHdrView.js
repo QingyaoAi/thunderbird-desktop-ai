@@ -2578,6 +2578,12 @@ const attachmentDragFiles = new Map();
 // temporary directory until the application exits.
 const ATTACHMENT_DRAG_CACHE_MAX = 20;
 
+// Above this an attachment is not staged at all. Writing it out means
+// fetching it first, and a drag that begins before that has finished falls
+// back to the file promise anyway; what the cap avoids is a hundred-megabyte
+// fetch for a drag that may never happen.
+const ATTACHMENT_DRAG_STAGE_MAX_BYTES = 25 * 1024 * 1024;
+
 /**
  * Remember a staged file, discarding the oldest if the cache is full.
  *
@@ -2611,6 +2617,7 @@ async function prepareAttachmentForDrag(attachment) {
   if (
     !attachment ||
     attachment.contentType == "text/x-moz-deleted" ||
+    attachment.size > ATTACHMENT_DRAG_STAGE_MAX_BYTES ||
     attachmentDragFiles.get(attachment.url)?.exists()
   ) {
     return;
@@ -2655,12 +2662,30 @@ const attachmentListDNDObserver = {
   },
 
   onMouseDown(event) {
-    // Start writing the file now so that dragstart, which cannot wait for a
-    // fetch, has a real file to hand over. See attachmentDragFiles.
-    const item = event.target.closest(".attachmentItem");
-    if (item?.attachment) {
-      prepareAttachmentForDrag(item.attachment);
+    // Start writing the file early, so that dragstart -- which cannot wait
+    // for a fetch -- has a real file to hand over. See attachmentDragFiles.
+    //
+    // Not on the press itself, though. A press is usually a click: to select
+    // the attachment, to open it, or with the other button for its menu, and
+    // staging on every one of those fetched whole attachments that were never
+    // going to be dragged. The first movement with the button still down is
+    // what a drag looks like, and it comes well before the drag threshold.
+    if (event.button != 0) {
+      return;
     }
+    const item = event.target.closest(".attachmentItem");
+    if (!item?.attachment) {
+      return;
+    }
+    const start = () => {
+      document.removeEventListener("mouseup", cancel, true);
+      prepareAttachmentForDrag(item.attachment);
+    };
+    const cancel = () => item.removeEventListener("mousemove", start);
+    item.addEventListener("mousemove", start, { once: true });
+    // On the document, capturing: the button is often released somewhere
+    // other than over the item it was pressed on.
+    document.addEventListener("mouseup", cancel, { once: true, capture: true });
   },
 };
 
