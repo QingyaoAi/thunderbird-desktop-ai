@@ -85,6 +85,16 @@ function searchTermsFor(question) {
 function glodaSearch(query, limit, andTerms = true) {
   return new Promise((resolve, reject) => {
     let collected = [];
+    let timer = null;
+    let settled = false;
+    const finish = (fn, value) => {
+      if (!settled) {
+        settled = true;
+        clearTimeout(timer);
+        fn(value);
+      }
+    };
+
     // andTerms matches Search Messages, which requires every term. That is
     // the more precise search and the one the user compares this against;
     // gather() falls back to OR only when AND finds nothing.
@@ -93,6 +103,13 @@ function glodaSearch(query, limit, andTerms = true) {
     // so the cap is applied to the ranked results instead of the query.
     const searcher = new lazy.GlodaMsgSearcher(null, query, andTerms);
 
+    // An index that never answers must not leave the question hanging with
+    // no way to find out why; the endpoint gives its searches the same.
+    timer = setTimeout(
+      () => finish(reject, new Error("the mail search timed out")),
+      30000
+    );
+
     const listener = {
       onItemsAdded(items) {
         collected = collected.concat(items);
@@ -100,14 +117,14 @@ function glodaSearch(query, limit, andTerms = true) {
       onItemsModified() {},
       onItemsRemoved() {},
       onQueryCompleted() {
-        resolve(collected.slice(0, limit));
+        finish(resolve, collected.slice(0, limit));
       },
     };
 
     try {
       searcher.getCollection(listener);
     } catch (ex) {
-      reject(ex);
+      finish(reject, ex);
     }
   });
 }
