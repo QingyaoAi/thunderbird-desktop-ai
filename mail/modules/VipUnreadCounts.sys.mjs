@@ -82,6 +82,8 @@ export const VipUnreadCounts = {
   _notifyTimer: null,
   _pendingKey: undefined,
   _recountTimer: null,
+  /** Watches the VIP list; kept so that stop() can take it off again. */
+  _prefObserver: null,
   /** Folders whose unread count changed since the last debounced recount. */
   _dirtyFolders: new Set(),
   /** Per-folder tallies, keyed by folder URI; totals are derived from these. */
@@ -110,10 +112,11 @@ export const VipUnreadCounts = {
     );
 
     // The VIP list changing invalidates everything counted so far.
-    Services.prefs.addObserver("mail.vip.addresses", () => {
+    this._prefObserver = () => {
       this.ready = false;
       this.refresh().catch(console.error);
-    });
+    };
+    Services.prefs.addObserver("mail.vip.addresses", this._prefObserver);
   },
 
   stop() {
@@ -122,6 +125,10 @@ export const VipUnreadCounts = {
     }
     this._started = false;
     lazy.MailServices.mailSession.RemoveFolderListener(this);
+    if (this._prefObserver) {
+      Services.prefs.removeObserver("mail.vip.addresses", this._prefObserver);
+      this._prefObserver = null;
+    }
   },
 
   /**
