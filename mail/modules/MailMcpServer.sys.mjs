@@ -210,7 +210,11 @@ function headerToJson(hdr) {
     flagged: Boolean(hdr.flags & Ci.nsMsgMessageFlags.Marked),
     tags: (hdr.getStringProperty("keywords") || "").split(/\s+/).filter(Boolean),
     hasAttachments: Boolean(hdr.flags & Ci.nsMsgMessageFlags.Attachment),
-    threadId: hdr.threadParent || hdr.messageKey,
+    // The thread's own id. threadParent looked like it, but for the message
+    // that starts a thread it is nsMsgKey_None -- 4294967295, which is not
+    // falsy -- so every root reported that instead of anything it shared
+    // with its replies.
+    threadId: hdr.threadId,
   };
 }
 
