@@ -377,6 +377,14 @@ async function* sseData(response) {
       }
     }
   }
+
+  // A final event with no newline after it -- some servers end the body
+  // straight after the last payload -- would otherwise stay in the buffer
+  // and never be seen.
+  const rest = buffer.trim();
+  if (rest.startsWith("data:")) {
+    yield rest.slice(5).trim();
+  }
 }
 
 /**
@@ -521,6 +529,18 @@ export async function chatStream({
       // A keep-alive or comment we don't recognise; skipping it is safer
       // than aborting a stream that is otherwise fine.
       continue;
+    }
+
+    // An error partway through comes as an ordinary event -- {"error": …}
+    // in the OpenAI shape, {"type": "error", …} in Anthropic's -- carrying
+    // no delta. Skipped like any other unrecognised payload, it left the
+    // answer ending early, empty and unexplained.
+    if (parsed?.error || parsed?.type === "error") {
+      const detail =
+        parsed.error?.message ??
+        parsed.message ??
+        JSON.stringify(parsed.error ?? parsed);
+      throw new AIProviderError(`The provider reported an error: ${detail}`);
     }
 
     const delta = extractDelta(parsed);
