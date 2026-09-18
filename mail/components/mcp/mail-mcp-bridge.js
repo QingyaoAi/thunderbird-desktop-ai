@@ -167,6 +167,16 @@ const TOOLS = [
             "after the other filters and is bounded.",
           additionalProperties: { type: "string" },
         },
+        sort: {
+          type: "string",
+          enum: ["relevance", "date"],
+          description:
+            "Order of a text search. relevance (the default) is " +
+            "Thunderbird's own ranking, newest first among equal matches; " +
+            "date is newest first regardless. Use date for questions about " +
+            "the latest or most recent mail. A folder read with no query is " +
+            "always newest first.",
+        },
         limit: { type: "number", description: "Default 25, maximum 200" },
       },
     },

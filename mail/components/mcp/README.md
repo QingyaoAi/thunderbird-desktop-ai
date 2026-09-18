@@ -126,6 +126,7 @@ from her since March" is answered without inventing search terms.
 | `tag` | Tag key, e.g. `$label1` (Important) |
 | `unread`, `flagged`, `hasAttachment` | Booleans |
 | `headers` | `{"list-id": "ntcir"}` — any header, by name |
+| `sort` | `relevance` (default: Gloda's ranking, newest first among ties) or `date` (newest first) |
 | `limit` | Default 25, maximum 200 |
 
 `headers` costs differ: `subject`, `from`, `to`, `cc`, `bcc`, `message-id`,

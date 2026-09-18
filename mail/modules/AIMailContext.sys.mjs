@@ -117,7 +117,22 @@ function glodaSearch(query, limit, andTerms = true) {
       onItemsModified() {},
       onItemsRemoved() {},
       onQueryCompleted() {
-        finish(resolve, collected.slice(0, limit));
+        // Ranked here, not by the query. Gloda's score only decides which
+        // rows pass its LIMIT; they then arrive in whatever order SQLite
+        // produced them, and the first `limit` of those were leaving out
+        // this week's mail. The searcher scores each batch as it arrives,
+        // in the order collected here, so the two line up by index --
+        // which is how Search Messages sorts them too (glodaFacetView.js,
+        // fullSet).
+        const scores = searcher.scores ?? [];
+        const ranked = collected
+          .map((item, index) => ({ item, score: scores[index] ?? 0 }))
+          .sort(
+            (a, b) =>
+              b.score - a.score || (b.item.date ?? 0) - (a.item.date ?? 0)
+          )
+          .map(({ item }) => item);
+        finish(resolve, ranked.slice(0, limit));
       },
     };
 

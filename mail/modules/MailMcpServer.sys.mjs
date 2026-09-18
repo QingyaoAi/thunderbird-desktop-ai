@@ -286,36 +286,69 @@ const Methods = {
    * is answered without inventing search terms for it.
    *
    * @param {object} params - {query, from, to, subject, folder, after,
-   *   before, tag, unread, flagged, hasAttachment, limit}
+   *   before, tag, unread, flagged, hasAttachment, limit, sort}
    */
   async search(params) {
     const query = String(params?.query ?? "").trim();
     const limit = Math.min(Number(params?.limit) || 25, 200);
+    const sort = String(params?.sort ?? "relevance").toLowerCase();
+    if (!["relevance", "date"].includes(sort)) {
+      throw new Error(
+        `sort must be "relevance" or "date", not "${params.sort}"`
+      );
+    }
     const filters = buildFilters(params);
 
     let candidates = [];
     if (query) {
+      // The searcher retrieves up to mailnews.database.global.search.msg.limit
+      // matches -- a thousand -- whatever is asked of it: its retrieval limit
+      // is a pref-backed getter with no setter. The filters run on what
+      // comes back, and `limit` is applied last.
       const searcher = new lazy.GlodaMsgSearcher(null, query);
-      // Over-fetch, because the filters run afterwards: asking for 25 and
-      // then discarding most of them would quietly return far fewer than
-      // were asked for.
-      searcher.limit = filters.any ? Math.min(limit * 8, 500) : limit;
 
       const collection = await new Promise((resolve, reject) => {
+        const timer = lazy.setTimeout(
+          () => reject(new Error("search timed out")),
+          30000
+        );
         searcher.getCollection({
           onItemsAdded() {},
           onItemsModified() {},
           onItemsRemoved() {},
           onQueryCompleted(coll) {
+            lazy.clearTimeout(timer);
             resolve(coll);
           },
         });
-        lazy.setTimeout(() => reject(new Error("search timed out")), 30000);
       });
-      for (const item of collection.items) {
+
+      // Ranked here, not by the query. Gloda's score decides which thousand
+      // rows pass its inner LIMIT, but the outer SELECT has no ORDER BY, so
+      // the collection arrives in whatever order SQLite produced it. Taking
+      // the first `limit` of that dropped the newest mail outright: a query
+      // with seven hits from this week returned none of them among two
+      // hundred. Search Messages pairs each item with the searcher's score
+      // the same way (glodaFacetView.js, fullSet) -- the scores are computed
+      // per batch in collection order, so the two line up by index.
+      const scores = searcher.scores ?? [];
+      const ranked = collection.items.map((item, index) => ({
+        item,
+        score: scores[index] ?? 0,
+      }));
+      const newestFirst = (a, b) => (b.item.date ?? 0) - (a.item.date ?? 0);
+      ranked.sort(
+        sort == "date"
+          ? newestFirst
+          : (a, b) => b.score - a.score || newestFirst(a, b)
+      );
+      for (const { item } of ranked) {
         const hdr = item.folderMessage;
         if (hdr) {
-          candidates.push({ hdr, snippet: item.indexedBodyText?.slice(0, 300) ?? "" });
+          candidates.push({
+            hdr,
+            snippet: item.indexedBodyText?.slice(0, 300) ?? "",
+          });
         }
       }
     } else if (filters.folders.length) {
@@ -368,7 +401,14 @@ const Methods = {
     const messages = surviving
       .slice(0, limit)
       .map(({ hdr, snippet }) => ({ ...headerToJson(hdr), snippet }));
-    return { query, filters: filters.describe, count: messages.length, messages };
+    return {
+      query,
+      // A folder read has nothing to rank by, so it is always newest first.
+      sort: query ? sort : "date",
+      filters: filters.describe,
+      count: messages.length,
+      messages,
+    };
   },
 
   /**

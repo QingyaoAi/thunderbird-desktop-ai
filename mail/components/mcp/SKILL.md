@@ -43,8 +43,14 @@ sentence, because it is matched as terms rather than as a phrase.
 {"folder": "INBOX", "from": "chen", "after": "2026-08-01"}
 {"query": "invoice", "hasAttachment": true}
 {"query": "review", "tag": "$label1"}
+{"query": "acceptance letter", "sort": "date"}
 {"headers": {"list-id": "ntcir"}, "folder": "INBOX"}
 ```
+
+**"Latest", "most recent", "this week": sort by date.** A text search is
+ranked by relevance, and a common phrase has hundreds of matches, so the
+newest can fall past `limit`. Pass `"sort": "date"` (newest first) or add
+`after`. A folder read with no query is always newest first.
 
 - `from`, `to`, `subject` are case-insensitive substrings, so `liu` matches
   both `Yiqun Liu` and `yiqunliu@example.com`. Prefer a surname or the
@@ -55,6 +61,7 @@ sentence, because it is matched as terms rather than as a phrase.
 - `$label1` is Important, `$label2` Work, `$label3` Personal, `$label4`
   To Do, `$label5` Later. In this mailbox Important also tracks the star, and
   `$mailflagbit0/1/2` are Apple Mail's coloured flags.
+- `sort` is `relevance` (the default) or `date`, for text searches.
 - `limit` defaults to 25, maximum 200.
 
 If a search returns nothing, widen before giving up: drop a filter, shorten
