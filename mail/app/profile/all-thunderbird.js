@@ -1667,6 +1667,11 @@ pref("mail.mcp.enabled", true);
 // unlikely to collide; if it is taken, the system picks another and
 // mcp-endpoint.json in the profile records it.
 pref("mail.mcp.port", 47821);
+// Whether that endpoint may hand over attachments, written to Thunderbird's
+// private temporary directory for a client on this machine to read. Its own
+// switch, since attachments are often the most private part of a mailbox and
+// reading bodies need not mean reading those.
+pref("mail.mcp.attachments.enabled", true);
 
 // Thunderbird's own defaults for the summary database cache are left alone.
 // Tuning them here saved real memory on a large account, but cost it back on

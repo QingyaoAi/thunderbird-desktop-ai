@@ -5,11 +5,12 @@ description: Read the user's Thunderbird mailbox and draft replies. Use for any 
 
 # Working with the user's mailbox
 
-Six tools: `search_mail`, `get_message`, `get_thread`, `list_folders`,
-`list_identities`, `create_draft`.
+Seven tools: `search_mail`, `get_message`, `get_attachment`, `get_thread`,
+`list_folders`, `list_identities`, `create_draft`.
 
-You can read mail and save drafts. You cannot send, move, delete or flag
-anything — so a draft is always the end of the line, and the user sends it.
+You can read mail, read its attachments, and save drafts. You cannot send,
+move, delete or flag anything — so a draft is always the end of the line, and
+the user sends it.
 
 ## The shape of a good answer
 
@@ -70,9 +71,17 @@ add a date range rather than reading them all.
 
 ## Reading
 
-`get_message` gives the decoded body and the attachment list — names, types
-and sizes. You cannot open an attachment's contents; say what is attached and
-let the user open it.
+`get_message` gives the decoded body and the attachment list — each with an
+`index`, name, type and size.
+
+`get_attachment` fetches one of them: pass the message id and the
+attachment's `index` (or its `name`; with a single attachment, neither). It
+returns a `path` to a private temporary file, which you read like any other
+file — PDFs and images included. Open an attachment only when the question is
+about what is in it: attachments are often the most private thing in a
+message, and "what did she send?" is answered by the list, not the contents.
+Attachments over 50MB, and ones that were detached or are only links, are
+refused; say so rather than guessing what they contain.
 
 `get_thread` takes any id in a conversation and returns all of it, oldest
 first. Pass `includeBodies: false` when you only need the shape of the thread

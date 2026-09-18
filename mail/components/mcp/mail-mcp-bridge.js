@@ -196,6 +196,28 @@ const TOOLS = [
     },
   },
   {
+    name: "get_attachment",
+    description:
+      "Save one attachment of a message to a private temporary file and " +
+      "return its path, to read with a file tool -- PDFs and images " +
+      "included. Takes the message id and the attachment's index from " +
+      "get_message, or its name; with only one attachment, neither is " +
+      "needed. Only files stored in the message are served, not detached " +
+      "files or links. Thunderbird deletes the file when it quits.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        id: { type: "string" },
+        index: {
+          type: "number",
+          description: "Position in get_message's attachments list",
+        },
+        name: { type: "string", description: "The attachment's file name" },
+      },
+      required: ["id"],
+    },
+  },
+  {
     name: "get_thread",
     description:
       "Every message in the same conversation as the given one, oldest " +
@@ -245,6 +267,7 @@ const TOOLS = [
 const METHOD_FOR_TOOL = {
   search_mail: "search",
   get_message: "getMessage",
+  get_attachment: "getAttachment",
   get_thread: "getThread",
   list_folders: "listFolders",
   list_identities: "listIdentities",

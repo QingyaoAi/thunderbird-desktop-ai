@@ -30,6 +30,8 @@
 
 const lazy = {};
 ChromeUtils.defineESModuleGetters(lazy, {
+  AttachmentInfo: "resource:///modules/AttachmentInfo.sys.mjs",
+  DownloadPaths: "resource://gre/modules/DownloadPaths.sys.mjs",
   Gloda: "resource:///modules/gloda/GlodaPublic.sys.mjs",
   GlodaMsgSearcher: "resource:///modules/gloda/GlodaMsgSearcher.sys.mjs",
   MailServices: "resource:///modules/MailServices.sys.mjs",
@@ -57,6 +59,30 @@ const MAX_REQUEST_BYTES = 1024 * 1024;
 
 /** Cap on how much body text one message may contribute. */
 const MAX_BODY_CHARS = 100000;
+
+/**
+ * Whether get_attachment may hand over attachments at all. Separate from
+ * ENABLED_PREF because attachments are often the most private part of a
+ * mailbox -- a CV, a contract, a review -- and access to bodies need not mean
+ * access to those.
+ */
+const ATTACHMENTS_PREF = "mail.mcp.attachments.enabled";
+
+/** Attachments larger than this are refused rather than written out. */
+const MAX_ATTACHMENT_BYTES = 50 * 1024 * 1024;
+
+/** How long a single attachment may take to fetch from the server. */
+const ATTACHMENT_FETCH_TIMEOUT_MS = 60000;
+
+/**
+ * Attachments already written out this session, by attachment URL, so asking
+ * for one again returns the same file instead of fetching it once more. Kept
+ * short: each entry is a whole file in the temporary directory.
+ *
+ * @type {Map<string, string>}
+ */
+const writtenAttachments = new Map();
+const WRITTEN_ATTACHMENTS_MAX = 50;
 
 /**
  * Tokens: create, list, revoke.
@@ -237,54 +263,163 @@ function headerToJson(hdr) {
 }
 
 /**
- * The decoded body and attachment list for a message.
+ * A message parsed into its MIME parts, or null if it cannot be read.
  *
  * @param {nsIMsgDBHdr} hdr
- * @returns {Promise<{body: string, attachments: object[]}>}
+ * @returns {Promise<?object>} A MimeMessage.
  */
-function bodyOf(hdr) {
+function mimeMessageOf(hdr) {
+  // Gloda registers the emitter this parse reports through. It is loaded
+  // anyway in a running application, but the endpoint should not depend on
+  // something else having done it first.
+  void lazy.Gloda;
   return new Promise(resolve => {
     // A message whose source cannot be fetched -- offline, deleted underneath
-    // us -- should degrade to "no body" rather than hang the request.
-    const timer = lazy.setTimeout(
-      () => resolve({ body: "", attachments: [], truncated: false }),
-      15000
-    );
+    // us -- should degrade to nothing rather than hang the request.
+    const timer = lazy.setTimeout(() => resolve(null), 15000);
     try {
       lazy.MsgHdrToMimeMessage(
         hdr,
         null,
         (returnedHdr, mimeMsg) => {
           lazy.clearTimeout(timer);
-          if (!mimeMsg) {
-            resolve({ body: "", attachments: [], truncated: false });
-            return;
-          }
-          let body = "";
-          try {
-            body = mimeMsg.coerceBodyToPlaintext(hdr.folder) ?? "";
-          } catch (ex) {
-            body = "";
-          }
-          const truncated = body.length > MAX_BODY_CHARS;
-          resolve({
-            body: truncated ? body.slice(0, MAX_BODY_CHARS) : body,
-            truncated,
-            attachments: (mimeMsg.allAttachments ?? []).map(a => ({
-              name: a.name,
-              contentType: a.contentType,
-              size: a.size,
-              url: a.url,
-            })),
-          });
+          resolve(mimeMsg ?? null);
         },
         true,
         { partsOnDemand: false, examineEncryptedParts: false }
       );
     } catch (ex) {
-      resolve({ body: "", attachments: [], truncated: false });
+      lazy.clearTimeout(timer);
+      resolve(null);
     }
   });
+}
+
+/**
+ * The decoded body and attachment list for a message.
+ *
+ * Each attachment carries its `index` in the list, which is how get_attachment
+ * is told which one to fetch.
+ *
+ * @param {nsIMsgDBHdr} hdr
+ * @returns {Promise<{body: string, attachments: object[]}>}
+ */
+async function bodyOf(hdr) {
+  const mimeMsg = await mimeMessageOf(hdr);
+  if (!mimeMsg) {
+    return { body: "", attachments: [], truncated: false };
+  }
+  let body = "";
+  try {
+    body = mimeMsg.coerceBodyToPlaintext(hdr.folder) ?? "";
+  } catch (ex) {
+    body = "";
+  }
+  const truncated = body.length > MAX_BODY_CHARS;
+  return {
+    body: truncated ? body.slice(0, MAX_BODY_CHARS) : body,
+    truncated,
+    attachments: (mimeMsg.allAttachments ?? []).map((a, index) => ({
+      index,
+      name: a.name,
+      contentType: a.contentType,
+      size: a.size,
+      url: a.url,
+    })),
+  };
+}
+
+/**
+ * The attachment a get_attachment request means: by index, by name, or the
+ * only one there is. An error names what the message does hold, so a caller
+ * that guessed wrong can put it right in one more call.
+ *
+ * @param {object[]} attachments - MimeMessageAttachments, in listed order.
+ * @param {object} params - {index, name}
+ * @returns {{attachment: object, index: number}}
+ */
+function pickAttachment(attachments, params) {
+  if (!attachments.length) {
+    throw new Error("the message has no attachments");
+  }
+  const held = () => attachments.map((a, i) => `${i}: ${a.name}`).join(", ");
+
+  if (params?.index !== undefined && params?.index !== null) {
+    const index = Number(params.index);
+    if (!Number.isInteger(index) || !attachments[index]) {
+      throw new Error(
+        `no attachment at index ${params.index}; the message has: ${held()}`
+      );
+    }
+    return { attachment: attachments[index], index };
+  }
+
+  if (params?.name) {
+    const matches = attachments
+      .map((attachment, index) => ({ attachment, index }))
+      .filter(({ attachment }) => attachment.name == params.name);
+    if (matches.length == 1) {
+      return matches[0];
+    }
+    throw new Error(
+      matches.length
+        ? `${matches.length} attachments are named "${params.name}"; ` +
+            `pass index instead: ${held()}`
+        : `no attachment named "${params.name}"; the message has: ${held()}`
+    );
+  }
+
+  if (attachments.length == 1) {
+    return { attachment: attachments[0], index: 0 };
+  }
+  throw new Error(`say which attachment, by index or name: ${held()}`);
+}
+
+/**
+ * Whether an attachment is stored in the message itself.
+ *
+ * A message can call an attachment detached and point it at a file:// path,
+ * or make it a link to a web address, through part headers that any sender
+ * can write. Serving those would let an email choose which local file, or
+ * which URL, this reads. A part that really is in the message is addressed
+ * by the same kind of URL as the message itself -- imap://, mailbox:// and
+ * so on -- so the scheme has to match, and the part must not be marked
+ * external.
+ *
+ * @param {object} attachment - A MimeMessageAttachment.
+ * @param {nsIMsgDBHdr} hdr - The message it came from.
+ * @returns {boolean}
+ */
+function isStoredInMessage(attachment, hdr) {
+  if (attachment.isExternal) {
+    return false;
+  }
+  try {
+    const messageUri = hdr.folder.getUriForMsg(hdr);
+    const messageUrl =
+      lazy.MailServices.messageServiceFromURI(messageUri).getUrlForUri(
+        messageUri
+      );
+    return Services.io.newURI(attachment.url).scheme == messageUrl.scheme;
+  } catch (ex) {
+    return false;
+  }
+}
+
+/**
+ * Remember where an attachment was written, dropping the oldest file once
+ * there are too many.
+ *
+ * @param {string} url
+ * @param {string} path
+ */
+function rememberWrittenAttachment(url, path) {
+  if (writtenAttachments.size >= WRITTEN_ATTACHMENTS_MAX) {
+    const [oldestUrl, oldestPath] = writtenAttachments.entries().next().value;
+    writtenAttachments.delete(oldestUrl);
+    IOUtils.remove(oldestPath, { ignoreAbsent: true }).catch(() => {});
+  }
+  writtenAttachments.set(url, path);
 }
 
 /**
@@ -445,6 +580,100 @@ const Methods = {
       return json;
     }
     return { ...json, ...(await bodyOf(hdr)) };
+  },
+
+  /**
+   * One attachment, written to a private temporary file whose path is
+   * returned, for a client on this machine to read.
+   *
+   * The file goes where Thunderbird puts attachments it opens: a directory
+   * only this user can read, emptied when Thunderbird quits. Only a part
+   * stored in the message is served -- see isStoredInMessage().
+   *
+   * @param {object} params - {id, index, name}
+   */
+  async getAttachment(params) {
+    if (!Services.prefs.getBoolPref(ATTACHMENTS_PREF, true)) {
+      throw new Error(
+        `attachment access is turned off (${ATTACHMENTS_PREF} is false)`
+      );
+    }
+    const hdr = hdrFromUri(String(params?.id ?? ""));
+    const mimeMsg = await mimeMessageOf(hdr);
+    if (!mimeMsg) {
+      throw new Error("the message could not be read");
+    }
+    const { attachment, index } = pickAttachment(
+      mimeMsg.allAttachments ?? [],
+      params
+    );
+
+    if (attachment.contentType == "text/x-moz-deleted") {
+      throw new Error(`"${attachment.name}" was deleted from the message`);
+    }
+    if (!isStoredInMessage(attachment, hdr)) {
+      throw new Error(
+        `"${attachment.name}" is not stored in the message -- it is ` +
+          `detached or a link -- so it is not served`
+      );
+    }
+    if (attachment.size > MAX_ATTACHMENT_BYTES) {
+      throw new Error(
+        `"${attachment.name}" is ${attachment.size} bytes, over the ` +
+          `${MAX_ATTACHMENT_BYTES}-byte limit`
+      );
+    }
+
+    const describe = (path, size) => ({
+      id: hdr.folder.getUriForMsg(hdr),
+      index,
+      name: attachment.name,
+      contentType: attachment.contentType,
+      size,
+      path,
+    });
+
+    const earlier = writtenAttachments.get(attachment.url);
+    if (earlier) {
+      const stat = await IOUtils.stat(earlier).catch(() => null);
+      if (stat) {
+        return describe(earlier, stat.size);
+      }
+      writtenAttachments.delete(attachment.url);
+    }
+
+    const info = new lazy.AttachmentInfo({
+      contentType: attachment.contentType,
+      url: attachment.url,
+      name: attachment.name,
+      uri: hdr.folder.getUriForMsg(hdr),
+      isExternalAttachment: false,
+      message: hdr,
+    });
+    // A server that stops answering must not hold the request for ever.
+    let timer;
+    const buffer = await Promise.race([
+      info.fetchAttachment(),
+      new Promise((resolve, reject) => {
+        timer = lazy.setTimeout(
+          () => reject(new Error(`fetching "${attachment.name}" timed out`)),
+          ATTACHMENT_FETCH_TIMEOUT_MS
+        );
+      }),
+    ]).finally(() => lazy.clearTimeout(timer));
+    if (buffer.byteLength > MAX_ATTACHMENT_BYTES) {
+      throw new Error(
+        `"${attachment.name}" is ${buffer.byteLength} bytes, over the ` +
+          `${MAX_ATTACHMENT_BYTES}-byte limit`
+      );
+    }
+
+    const file = await info.setupTempFile(
+      lazy.DownloadPaths.sanitize(attachment.name) || "attachment"
+    );
+    await IOUtils.write(file.path, new Uint8Array(buffer));
+    rememberWrittenAttachment(attachment.url, file.path);
+    return describe(file.path, buffer.byteLength);
   },
 
   /**

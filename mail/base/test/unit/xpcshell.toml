@@ -35,6 +35,8 @@ tags = ["dataadapter"]
 
 ["test_linkHelper.js"]
 
+["test_mailMcpAttachments.js"]
+
 ["test_mailGlue_distribution.js"]
 skip-if = [
   "os == 'win' && msix", # MSIX has a distribution.ini and it's unwritable. Tests fail.

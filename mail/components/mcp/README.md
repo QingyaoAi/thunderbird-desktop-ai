@@ -106,6 +106,7 @@ curl -s -X POST http://127.0.0.1:47821/rpc \
 | --- | --- |
 | `search` | Ranked full-text search, with filters |
 | `getMessage` | One message: headers, decoded body, attachment list |
+| `getAttachment` | One attachment, written to a private temporary file |
 | `getThread` | Every message in a conversation, oldest first |
 | `listFolders` | Folders with message and unread counts |
 | `listIdentities` | Addresses this Thunderbird can write as |
@@ -142,6 +143,22 @@ matches nothing — rather than quietly ignored.
 Take an `id` from a search result. `includeBody` / `includeBodies` may be
 `false` to skip the body, which is much faster for a long thread. Bodies are
 capped at 100,000 characters, with `truncated: true` when cut.
+
+### `getAttachment`
+
+Takes the message `id` and either the attachment's `index` from
+`getMessage`'s list or its `name` (neither, if there is only one). Thunderbird
+fetches the part the way it does when an attachment is opened, writes it to
+its private temporary directory -- readable by this user only, emptied when
+Thunderbird quits -- and returns `{id, index, name, contentType, size, path}`.
+Asking again for the same attachment returns the same file.
+
+Only a part stored in the message is served. A message can mark an attachment
+as detached and point it at a `file://` path, or make it a link, in part
+headers any sender can write; following those would let an email choose which
+local file or URL this reads, so they are refused. So are attachments over
+50MB. `mail.mcp.attachments.enabled` set to `false` turns the method off while
+leaving the rest of the endpoint on.
 
 ### `createDraft`
 
