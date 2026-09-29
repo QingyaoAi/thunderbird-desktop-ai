@@ -3,8 +3,9 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 /**
- * Tests that the per-tag counts follow a message as it is tagged, moved,
- * copied and deleted, without a full recount.
+ * Tests that the per-tag counts -- of conversations, which is what a tag
+ * folder lists -- follow a message as it is tagged, moved, copied and
+ * deleted, without a full recount.
  */
 
 const { MailServices } = ChromeUtils.importESModule(
@@ -108,31 +109,87 @@ add_task(async function testAMoveLeavesTheCountAlone() {
   );
 });
 
-add_task(async function testACopyIsCounted() {
+add_task(async function testACopyIsTheSameConversation() {
   await transfer(destination, source, false);
 
   Assert.equal(
     TagMessageCounts.get(WORK),
-    2,
-    "a copy of a tagged message is a second tagged message"
+    1,
+    "a copy of a tagged message is still the one conversation"
   );
 });
 
+/**
+ * @param {nsIMsgFolder} folder
+ */
+async function deleteOnlyMessage(folder) {
+  folder.deleteMessages([onlyMessage(folder)], null, true, false, null, false);
+  // msgsDeleted is sent before the header leaves the database.
+  await TestUtils.waitForCondition(
+    () => ![...folder.msgDatabase.enumerateMessages()].length,
+    `the message in ${folder.name} should be deleted`
+  );
+  await TestUtils.waitForTick();
+}
+
 add_task(async function testDeletingIsCounted() {
-  for (const folder of [source, destination]) {
-    const before = TagMessageCounts.get(WORK);
-    folder.deleteMessages(
-      [onlyMessage(folder)],
-      null,
-      true,
-      false,
-      null,
-      false
-    );
-    await TestUtils.waitForCondition(
-      () => TagMessageCounts.get(WORK) == before - 1,
-      `deleting the message in ${folder.name} should take it out of the count`
-    );
-  }
-  Assert.equal(TagMessageCounts.get(WORK), 0, "nothing tagged is left");
+  await deleteOnlyMessage(source);
+  Assert.equal(
+    TagMessageCounts.get(WORK),
+    1,
+    "the conversation stays counted while a tagged copy is left"
+  );
+
+  await deleteOnlyMessage(destination);
+  await TestUtils.waitForCondition(
+    () => TagMessageCounts.get(WORK) == 0,
+    "deleting the last tagged copy should take the conversation out"
+  );
+});
+
+/**
+ * An original and a reply to it -- the reply in another folder, as your own
+ * replies are in Sent -- are one row in the tag folder, so one here.
+ */
+add_task(async function testAConversationIsCountedOnce() {
+  const generator = new MessageGenerator();
+  const original = generator.makeMessage();
+  const reply = generator.makeMessage({ inReplyTo: original });
+  const other = generator.makeMessage();
+  source.addMessageBatch([original, other].map(m => m.toMessageString()));
+  destination.addMessage(reply.toMessageString());
+  const all = [
+    ...source.msgDatabase.enumerateMessages(),
+    ...destination.msgDatabase.enumerateMessages(),
+  ];
+  const find = message => all.find(h => h.messageId == message.messageId);
+
+  source.addKeywordsToMessages([find(original)], WORK);
+  destination.addKeywordsToMessages([find(reply)], WORK);
+  await TestUtils.waitForCondition(
+    () => TagMessageCounts.get(WORK) == 1,
+    "an original and its reply, both tagged, are one conversation"
+  );
+
+  source.addKeywordsToMessages([find(other)], WORK);
+  await TestUtils.waitForCondition(
+    () => TagMessageCounts.get(WORK) == 2,
+    "another conversation is counted as well"
+  );
+
+  source.removeKeywordsFromMessages([find(original)], WORK);
+  await TestUtils.waitForTick();
+  Assert.equal(
+    TagMessageCounts.get(WORK),
+    2,
+    "a conversation stays counted while its reply is still tagged"
+  );
+
+  const kept = TagMessageCounts.get(WORK);
+  await TagMessageCounts.refresh();
+  Assert.equal(
+    TagMessageCounts.get(WORK),
+    kept,
+    "a full recount agrees with the one kept from notifications"
+  );
 });

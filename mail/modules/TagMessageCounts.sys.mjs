@@ -3,7 +3,13 @@
  * file, you can obtain one at http://mozilla.org/MPL/2.0/. */
 
 /**
- * How many messages carry each tag.
+ * How many conversations carry each tag.
+ *
+ * Conversations rather than messages, because a tag folder lists a
+ * conversation whole once any message in it is tagged (ThreadTagSearchTerm),
+ * and its rows are conversations: a count of tagged messages matched neither
+ * the rows nor the messages listed. A conversation is counted while at least
+ * one of its messages carries the tag -- the same test the folder lists it by.
  *
  * The folder pane's tag rows are virtual folders, and a virtual folder only
  * knows how many messages it holds once its search has actually been run --
@@ -111,6 +117,26 @@ function placeholderId(folder, key) {
 }
 
 /**
+ * Which conversation a message belongs to, for counting: the message that
+ * started it, which is the first of its References, or for a message that
+ * starts one, the message itself.
+ *
+ * Read from the message's own headers, so a reply in the Inbox and its copy
+ * in Sent -- one row in a tag folder -- are one conversation here too, and a
+ * message stays in the same one as other mail arrives and threads join up.
+ * A reply sent without References is counted as a conversation of its own.
+ *
+ * @param {nsIMsgDBHdr} hdr
+ * @returns {string}
+ */
+function conversationOf(hdr) {
+  if (hdr.numReferences > 0) {
+    return hdr.getStringReference(0);
+  }
+  return hdr.messageId || placeholderId(hdr.folder, hdr.messageKey);
+}
+
+/**
  * The tag keys in a keywords string.
  *
  * @param {?string} keywords - Space-separated keywords, as stored on a header.
@@ -127,15 +153,18 @@ export const TagMessageCounts = {
   _pendingKey: undefined,
 
   /**
-   * Message count by tag key. Absent means zero.
+   * The conversations carrying each tag, by tag key, each with how many of
+   * its messages carry it. A conversation stays counted until that reaches
+   * zero, so taking the tag off one message of several changes nothing.
    *
-   * @type {Map<string, number>}
+   * @type {Map<string, Map<string, number>>}
    */
-  _counts: new Map(),
+  _conversations: new Map(),
 
   /**
    * Placeholders an IMAP move has put in its destination, by
-   * "<folder URI>#<key>", with the tags each was counted under.
+   * "<folder URI>#<key>", with the tags and conversation each was counted
+   * under.
    *
    * A placeholder stands in for the moved message until the destination is
    * next synchronised, when the real header replaces it. That is reported as
@@ -143,7 +172,7 @@ export const TagMessageCounts = {
    * msgsDeleted for the placeholder, which is gone by then, keywords and all.
    * So what it was counted as is kept here, to be taken off again.
    *
-   * @type {Map<string, string[]>}
+   * @type {Map<string, {keys: string[], conversation: string}>}
    */
   _placeholders: new Map(),
 
@@ -204,33 +233,41 @@ export const TagMessageCounts = {
   },
 
   /**
-   * How many messages carry a tag.
+   * How many conversations carry a tag.
    *
    * @param {string} tagKey - e.g. "$label1".
    * @returns {integer}
    */
   get(tagKey) {
-    return this._counts.get(tagKey) ?? 0;
+    return this._conversations.get(tagKey)?.size ?? 0;
   },
 
   /**
-   * Adjust a tag's count, and let the UI know.
+   * Count a message carrying a tag in or out, and let the UI know if that
+   * changed how many conversations carry it.
    *
    * @param {string} tagKey
-   * @param {integer} delta
+   * @param {string} conversation - From conversationOf().
+   * @param {integer} delta - 1 for a message counted in, -1 for one out.
    */
-  _bump(tagKey, delta) {
-    if (!delta) {
-      return;
+  _bump(tagKey, conversation, delta) {
+    let conversations = this._conversations.get(tagKey);
+    if (!conversations) {
+      conversations = new Map();
+      this._conversations.set(tagKey, conversations);
     }
-    // Clamped because a message can be deleted from a folder whose headers
-    // were never scanned, which would otherwise drive the count negative.
-    const next = Math.max(0, this.get(tagKey) + delta);
-    if (next == this.get(tagKey)) {
-      return;
+    const before = conversations.size;
+    // Never below zero: a message can be deleted from a folder whose headers
+    // were never scanned, and it was never counted in.
+    const next = (conversations.get(conversation) ?? 0) + delta;
+    if (next > 0) {
+      conversations.set(conversation, next);
+    } else {
+      conversations.delete(conversation);
     }
-    this._counts.set(tagKey, next);
-    this._notify(tagKey);
+    if (conversations.size != before) {
+      this._notify(tagKey);
+    }
   },
 
   /**
@@ -263,26 +300,39 @@ export const TagMessageCounts = {
   /**
    * Recount everything from scratch.
    *
-   * @returns {Promise<Map<string, number>>} The new counts.
+   * @returns {Promise<void>}
    */
   async refresh() {
     if (this._scanning) {
-      return this._counts;
+      return;
     }
     this._scanning = true;
 
     // Shared with the other counters that need every header, so the large
     // summaries are read once between them rather than once each.
-    let counts = new Map();
+    let conversations = new Map();
     try {
       await lazy.MailboxScan.scanAll({
         wants: folder => isCounted(folder),
         begin: () => {
-          counts = new Map();
+          conversations = new Map();
         },
         onMessage: hdr => {
-          for (const key of keywordsToKeys(hdr.getStringProperty("keywords"))) {
-            counts.set(key, (counts.get(key) ?? 0) + 1);
+          const keys = keywordsToKeys(hdr.getStringProperty("keywords"));
+          if (!keys.length) {
+            return;
+          }
+          const conversation = conversationOf(hdr);
+          for (const key of keys) {
+            let byConversation = conversations.get(key);
+            if (!byConversation) {
+              byConversation = new Map();
+              conversations.set(key, byConversation);
+            }
+            byConversation.set(
+              conversation,
+              (byConversation.get(conversation) ?? 0) + 1
+            );
           }
         },
       });
@@ -290,10 +340,9 @@ export const TagMessageCounts = {
       this._scanning = false;
     }
 
-    this._counts = counts;
+    this._conversations = conversations;
     this.ready = true;
     this._notify(null);
-    return counts;
   },
 
   // -- staying current -----------------------------------------------------
@@ -307,17 +356,19 @@ export const TagMessageCounts = {
     // A placeholder tagged or untagged while it waits is taken off under
     // what it carries now, not what it arrived with.
     const id = placeholderId(msg.folder, msg.messageKey);
-    if (this._placeholders.has(id)) {
-      this._placeholders.set(id, [...after]);
+    const placeholder = this._placeholders.get(id);
+    if (placeholder) {
+      placeholder.keys = [...after];
     }
+    const conversation = conversationOf(msg);
     for (const key of after) {
       if (!before.has(key)) {
-        this._bump(key, 1);
+        this._bump(key, conversation, 1);
       }
     }
     for (const key of before) {
       if (!after.has(key)) {
-        this._bump(key, -1);
+        this._bump(key, conversation, -1);
       }
     }
   },
@@ -329,7 +380,7 @@ export const TagMessageCounts = {
     // Mail arriving from the server can already carry keywords, which is how
     // a tag applied on another device shows up here.
     for (const key of keywordsToKeys(msg.getStringProperty("keywords"))) {
-      this._bump(key, 1);
+      this._bump(key, conversationOf(msg), 1);
     }
   },
 
@@ -342,7 +393,7 @@ export const TagMessageCounts = {
       // is ever reported as replacing it.
       this._placeholders.delete(placeholderId(msg.folder, msg.messageKey));
       for (const key of keywordsToKeys(msg.getStringProperty("keywords"))) {
-        this._bump(key, -1);
+        this._bump(key, conversationOf(msg), -1);
       }
     }
   },
@@ -351,13 +402,13 @@ export const TagMessageCounts = {
     // A placeholder has been replaced by the real header, which msgAdded is
     // about to count. Take the placeholder off under what it was counted as.
     const id = placeholderId(newMsg?.folder, oldKey);
-    const keys = this._placeholders.get(id);
-    if (!keys) {
+    const placeholder = this._placeholders.get(id);
+    if (!placeholder) {
       return;
     }
     this._placeholders.delete(id);
-    for (const key of keys) {
-      this._bump(key, -1);
+    for (const key of placeholder.keys) {
+      this._bump(key, placeholder.conversation, -1);
     }
   },
 
@@ -390,20 +441,21 @@ export const TagMessageCounts = {
           continue;
         }
         for (const key of keywordsToKeys(msg.getStringProperty("keywords"))) {
-          this._bump(key, -1);
+          this._bump(key, conversationOf(msg), -1);
         }
       }
     }
     if (isCounted(destinationFolder)) {
       for (const msg of destinationMessages ?? []) {
         const keys = keywordsToKeys(msg.getStringProperty("keywords"));
+        const conversation = conversationOf(msg);
         for (const key of keys) {
-          this._bump(key, 1);
+          this._bump(key, conversation, 1);
         }
         if (msg.getUint32Property("pseudoHdr")) {
           this._placeholders.set(
             placeholderId(destinationFolder, msg.messageKey),
-            keys
+            { keys, conversation }
           );
         }
       }
