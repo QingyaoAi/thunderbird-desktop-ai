@@ -170,6 +170,50 @@ add_task(async function test_dummy_row_selection() {
   await testSelectAll([1, 2, 4, 6, 7, 8]);
 });
 
+add_task(async function test_collapsed_dummy_row_lists_its_messages() {
+  about3Pane.restoreState({
+    messagePaneVisible: true,
+    folderURI: folderB.URI,
+  });
+
+  about3Pane.sortController.sortThreadPane("subjectCol");
+  about3Pane.sortController.groupBySort();
+  await TestUtils.waitForCondition(
+    () => threadTree.dataset.showGroupedBySort == "true",
+    "The tree view should be grouped by sort"
+  );
+  goDoCommand("cmd_collapseAllThreads");
+  await TestUtils.waitForCondition(
+    () => threadTree.view.rowCount == 3,
+    "Only the three group headers should be shown"
+  );
+
+  const { messageBrowser, multiMessageBrowser } = about3Pane;
+  // Sorted by subject the groups hold two messages, one, and three. The one
+  // in the middle used to clear the message pane instead of listing it.
+  for (const [row, count] of [
+    [0, 2],
+    [1, 1],
+    [2, 3],
+  ]) {
+    await mouseSelect(row, false, [row]);
+    await TestUtils.waitForCondition(
+      () => BrowserTestUtils.isVisible(multiMessageBrowser),
+      `The group of ${count} at row ${row} should be listed`
+    );
+    Assert.ok(
+      BrowserTestUtils.isHidden(messageBrowser),
+      "No single message should be displayed"
+    );
+    Assert.equal(
+      multiMessageBrowser.contentDocument.querySelectorAll("#messageList > *")
+        .length,
+      count,
+      `Every message in the group at row ${row} should be listed`
+    );
+  }
+});
+
 async function mouseSelect(row, ctrlKeyPressed = false, expectedIndices) {
   threadTree.scrollToIndex(row, true);
   await new Promise(resolve => about3Pane.requestAnimationFrame(resolve));

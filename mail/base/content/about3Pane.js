@@ -4971,7 +4971,10 @@ var threadPane = {
         if (
           gDBView.getFlagsAt(threadTree.selectedIndex) & MSG_VIEW_FLAG_DUMMY
         ) {
-          messagePane.displayMessage();
+          // A collapsed group header counts as the messages under it, so this
+          // is a group of exactly one. List it the way a bigger group is
+          // listed; clearing the pane made the group look empty.
+          messagePane.displayMessages(gDBView.getSelectedMsgHdrs());
           break;
         }
 
