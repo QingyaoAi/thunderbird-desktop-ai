@@ -19,13 +19,15 @@
  *   - Every request must carry a token. Tokens are created on demand, stored
  *     with the mail passwords, and can be revoked individually.
  *   - Off unless `mail.mcp.enabled` is set. Nothing listens otherwise.
- *   - Reads mail and writes drafts. There is deliberately no method that
- *     sends, moves or deletes anything: a mistake by a model should cost a
- *     draft nobody sent, not a message nobody can get back.
+ *   - Reads mail, writes drafts and tags messages. There is deliberately no
+ *     method that sends, moves or deletes anything: a mistake by a model
+ *     should cost a draft nobody sent or a tag to take off, not a message
+ *     nobody can get back.
  *
- * The endpoint speaks JSON over HTTP; `mail-mcp-bridge.js` translates
- * between it and MCP's stdio transport, so this file needs no knowledge of
- * the MCP framing.
+ * Two ways in. `/rpc` is plain JSON over HTTP, which `mail-mcp-bridge.js`
+ * translates to MCP's stdio transport for clients that start servers as
+ * programs. `/mcp` is MCP itself over Streamable HTTP, for clients that can
+ * be given a URL -- the harness the AI panel starts is one.
  */
 
 const lazy = {};
@@ -124,14 +126,7 @@ export const MailMcpTokens = {
    * @returns {Promise<{label: string, token: string, created: string}>}
    */
   async create(label) {
-    const bytes = new Uint8Array(32);
-    crypto.getRandomValues(bytes);
-    // Base64url: safe in an Authorization header and in a shell argument.
-    const token = btoa(String.fromCharCode(...bytes))
-      .replace(/\+/g, "-")
-      .replace(/\//g, "_")
-      .replace(/=+$/, "");
-
+    const token = newToken();
     const created = new Date().toISOString();
     const login = Cc["@mozilla.org/login-manager/loginInfo;1"].createInstance(
       Ci.nsILoginInfo
@@ -192,6 +187,35 @@ export const MailMcpTokens = {
   },
 
   /**
+   * Tokens that exist only in memory, for a program Thunderbird starts itself
+   * and hands the token to directly. Nothing is stored, so nothing outlives
+   * the program or this session, and nothing appears in the list of
+   * passwords the user manages.
+   *
+   * @type {Set<string>}
+   */
+  _ephemeral: new Set(),
+
+  /**
+   * Create an in-memory token. Revoke it when the program it was given to
+   * stops; it is gone at shutdown regardless.
+   *
+   * @returns {string}
+   */
+  createEphemeral() {
+    const token = newToken();
+    this._ephemeral.add(token);
+    return token;
+  },
+
+  /**
+   * @param {string} token - As returned by createEphemeral().
+   */
+  revokeEphemeral(token) {
+    this._ephemeral.delete(token);
+  },
+
+  /**
    * Whether a presented token matches a stored one.
    *
    * @param {string} presented
@@ -206,17 +230,35 @@ export const MailMcpTokens = {
       httpRealm: TOKEN_ORIGIN,
     });
     let matched = false;
-    for (const login of logins) {
+    for (const candidate of [
+      ...logins.map(login => login.password),
+      ...this._ephemeral,
+    ]) {
       // Compared in full every time rather than returning on the first
       // match, so the time taken does not depend on how much of the token
       // is correct.
-      if (constantTimeEquals(login.password, presented)) {
+      if (constantTimeEquals(candidate, presented)) {
         matched = true;
       }
     }
     return matched;
   },
 };
+
+/**
+ * A new random token: 32 bytes, base64url, which is safe in an Authorization
+ * header and in a shell argument.
+ *
+ * @returns {string}
+ */
+function newToken() {
+  const bytes = new Uint8Array(32);
+  crypto.getRandomValues(bytes);
+  return btoa(String.fromCharCode(...bytes))
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/, "");
+}
 
 /**
  * @param {string} a
@@ -991,6 +1033,375 @@ const Methods = {
     }
     return { identities };
   },
+
+  /** The tags a message can be given, with the names the user sees. */
+  async listTags() {
+    return {
+      tags: lazy.MailServices.tags.getAllTags().map(tag => ({
+        key: tag.key,
+        name: tag.tag,
+        color: tag.color,
+      })),
+    };
+  },
+
+  /**
+   * Add tags to messages, or take them off. Nothing else about a message can
+   * be changed here, and a tag is undone by taking it off again.
+   *
+   * @param {object} params - {ids, add, remove}: message ids from search,
+   *   and tags by key or by name.
+   */
+  async tagMessages(params) {
+    const ids = [params?.ids ?? params?.id].flat().filter(Boolean);
+    if (!ids.length) {
+      throw new Error("ids is required: message ids from search_mail");
+    }
+    if (ids.length > MAX_TAGGED_MESSAGES) {
+      throw new Error(
+        `at most ${MAX_TAGGED_MESSAGES} messages at a time; split the list`
+      );
+    }
+    const add = resolveTags(params?.add);
+    const remove = resolveTags(params?.remove);
+    if (!add.length && !remove.length) {
+      throw new Error("give tags to add, to remove, or both");
+    }
+
+    const byFolder = new Map();
+    const hdrs = [];
+    for (const id of ids) {
+      let hdr;
+      try {
+        hdr = hdrFromUri(String(id));
+      } catch (ex) {
+        hdr = null;
+      }
+      if (!hdr) {
+        throw new Error(`no message with id ${id}`);
+      }
+      hdrs.push(hdr);
+      const list = byFolder.get(hdr.folder) ?? [];
+      list.push(hdr);
+      byFolder.set(hdr.folder, list);
+    }
+
+    for (const [folder, messages] of byFolder) {
+      if (add.length) {
+        folder.addKeywordsToMessages(messages, add.join(" "));
+      }
+      if (remove.length) {
+        folder.removeKeywordsFromMessages(messages, remove.join(" "));
+      }
+    }
+    return { messages: hdrs.map(headerToJson) };
+  },
+};
+
+/** How many messages one tagging call may touch. */
+const MAX_TAGGED_MESSAGES = 500;
+
+/**
+ * Tag keys for what a caller named, by key or by the name the user sees.
+ * An unknown name is an error rather than a new tag: making tags is the
+ * user's business, and a misspelling should not quietly add one.
+ *
+ * @param {?(string|string[])} wanted
+ * @returns {string[]}
+ */
+function resolveTags(wanted) {
+  const tags = lazy.MailServices.tags.getAllTags();
+  return [wanted ?? []].flat().map(name => {
+    const text = String(name).trim();
+    const tag =
+      tags.find(t => t.key == text) ??
+      tags.find(t => t.tag.toLowerCase() == text.toLowerCase());
+    if (!tag) {
+      throw new Error(
+        `no tag named "${text}"; the tags are: ` +
+          tags.map(t => `${t.tag} (${t.key})`).join(", ")
+      );
+    }
+    return tag.key;
+  });
+}
+
+// -- MCP over Streamable HTTP ---------------------------------------------
+
+/**
+ * The tools offered over `/mcp`, each with the method above that does its
+ * work. `mail-mcp-bridge.js` keeps its own copy of the first seven for the
+ * stdio route; a change to one of those belongs in both.
+ */
+const MCP_TOOLS = [
+  {
+    name: "search_mail",
+    method: "search",
+    description:
+      "Search the user's mailbox. `query` is full-text and ranked the way " +
+      "Thunderbird's own search ranks it. The other fields narrow the " +
+      "results, and may be used without a query as long as a folder is " +
+      "given. Dates are ISO 8601.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        query: { type: "string", description: "Full-text search terms" },
+        from: { type: "string", description: "Sender, name or address" },
+        to: { type: "string", description: "Recipient, name or address" },
+        subject: { type: "string" },
+        folder: { type: "string", description: "Folder name or URI" },
+        after: { type: "string", description: "Only messages after this date" },
+        before: {
+          type: "string",
+          description: "Only messages before this date",
+        },
+        tag: { type: "string", description: "Tag key, e.g. $label1" },
+        unread: { type: "boolean" },
+        flagged: { type: "boolean" },
+        hasAttachment: { type: "boolean" },
+        headers: {
+          type: "object",
+          description:
+            "Match keywords against any named header, e.g. " +
+            '{"list-id": "ntcir"}. Headers the database already holds are ' +
+            "free; others cost one message read each, so this is applied " +
+            "after the other filters and is bounded.",
+          additionalProperties: { type: "string" },
+        },
+        sort: {
+          type: "string",
+          enum: ["relevance", "date"],
+          description:
+            "Order of a text search. relevance (the default) is " +
+            "Thunderbird's own ranking, newest first among equal matches; " +
+            "date is newest first regardless. Use date for questions about " +
+            "the latest or most recent mail. A folder read with no query is " +
+            "always newest first.",
+        },
+        limit: { type: "number", description: "Default 25, maximum 200" },
+      },
+    },
+  },
+  {
+    name: "get_message",
+    method: "getMessage",
+    description:
+      "One message in full: headers, decoded body and the list of its " +
+      "attachments. Takes an id from search_mail.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        id: { type: "string" },
+        includeBody: { type: "boolean" },
+      },
+      required: ["id"],
+    },
+  },
+  {
+    name: "get_attachment",
+    method: "getAttachment",
+    description:
+      "Save one attachment of a message to a private temporary file and " +
+      "return its path, to read with a file tool -- PDFs and images " +
+      "included. Takes the message id and the attachment's index from " +
+      "get_message, or its name; with only one attachment, neither is " +
+      "needed. Only files stored in the message are served, not detached " +
+      "files or links. The file is deleted ten minutes after it was last " +
+      "asked for (the result says when); ask again to keep it, or to get " +
+      "it back once it has gone.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        id: { type: "string" },
+        index: {
+          type: "number",
+          description: "Position in get_message's attachments list",
+        },
+        name: { type: "string", description: "The attachment's file name" },
+      },
+      required: ["id"],
+    },
+  },
+  {
+    name: "get_thread",
+    method: "getThread",
+    description:
+      "Every message in the same conversation as the given one, oldest " +
+      "first.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        id: { type: "string" },
+        includeBodies: { type: "boolean" },
+      },
+      required: ["id"],
+    },
+  },
+  {
+    name: "list_folders",
+    method: "listFolders",
+    description: "Every mail folder, with message and unread counts.",
+    inputSchema: { type: "object", properties: {} },
+  },
+  {
+    name: "list_identities",
+    method: "listIdentities",
+    description: "The addresses the user can write as.",
+    inputSchema: { type: "object", properties: {} },
+  },
+  {
+    name: "create_draft",
+    method: "createDraft",
+    description:
+      "Save a draft for the user to review and send by hand. Nothing is " +
+      "sent. Pass inReplyTo with a message id to draft a reply, which fills " +
+      "in the reply headers and subject.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        to: { type: "string" },
+        cc: { type: "string" },
+        bcc: { type: "string" },
+        subject: { type: "string" },
+        body: { type: "string" },
+        from: { type: "string", description: "Which identity to write as" },
+        replyTo: { type: "string" },
+        inReplyTo: {
+          type: "string",
+          description: "Message id being replied to",
+        },
+      },
+    },
+  },
+  {
+    name: "list_tags",
+    method: "listTags",
+    description:
+      "The tags the user has, with the names they see, their keys and " +
+      "colours. Use a name or a key from here with tag_messages or with " +
+      "search_mail's tag filter.",
+    inputSchema: { type: "object", properties: {} },
+  },
+  {
+    name: "tag_messages",
+    method: "tagMessages",
+    description:
+      "Add tags to messages, or take them off -- the one change to a " +
+      "message this allows. Tags are named by name or key, from list_tags; " +
+      "an unknown name is an error, not a new tag. Tagging a message " +
+      "Important also stars it, and taking Important off unstars it. " +
+      "Returns each message as it now is.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        ids: {
+          type: "array",
+          items: { type: "string" },
+          description: "Message ids from search_mail, at most 500",
+        },
+        add: {
+          type: "array",
+          items: { type: "string" },
+          description: "Tags to add, by name or key",
+        },
+        remove: {
+          type: "array",
+          items: { type: "string" },
+          description: "Tags to take off, by name or key",
+        },
+      },
+      required: ["ids"],
+    },
+  },
+];
+
+/**
+ * What a client is told about this server: mostly how to point the user at a
+ * message, since a message's id is its URI and the AI panel shows the message
+ * when a link to one is clicked. Clients that honour server instructions put
+ * this in front of the model. dsh does not, for a server its client attaches,
+ * so the AI panel's dsh is given the same rule in its persona (DshAgent).
+ */
+const MCP_INSTRUCTIONS =
+  "This is the user's own mailbox in Thunderbird. A message's id -- as " +
+  "search_mail, get_message and get_thread return it -- is also a link to " +
+  "that message in Thunderbird. Whenever an answer mentions a particular " +
+  "message, link it in Markdown with its id in angle brackets as the target: " +
+  "[short subject or description](<id>). The user can click it to open the " +
+  "message. Copy ids exactly as given, and never write one that did not come " +
+  "from a tool result.";
+
+/** MCP protocol revisions this endpoint answers to, newest first. */
+const MCP_PROTOCOL_VERSIONS = ["2025-06-18", "2025-03-26", "2024-11-05"];
+
+/**
+ * MCP's JSON-RPC, one message at a time: the part of an MCP server that does
+ * not care how the messages arrive.
+ */
+export const McpProtocol = {
+  /**
+   * @param {object} message - One JSON-RPC message.
+   * @returns {Promise<?object>} The response, or null for a notification.
+   */
+  async handle(message) {
+    // JSON-RPC allows an id of 0, so only its absence makes a notification.
+    const isRequest = message?.id !== undefined && message?.id !== null;
+    const reply = result => ({ jsonrpc: "2.0", id: message.id, result });
+    const fail = (code, text) => ({
+      jsonrpc: "2.0",
+      id: message?.id ?? null,
+      error: { code, message: text },
+    });
+
+    switch (message?.method) {
+      case "initialize": {
+        const wanted = message.params?.protocolVersion;
+        return reply({
+          protocolVersion: MCP_PROTOCOL_VERSIONS.includes(wanted)
+            ? wanted
+            : MCP_PROTOCOL_VERSIONS[0],
+          capabilities: { tools: { listChanged: false } },
+          serverInfo: { name: "thunderbird-mail", version: "1.0.0" },
+          instructions: MCP_INSTRUCTIONS,
+        });
+      }
+
+      case "ping":
+        return reply({});
+
+      case "tools/list":
+        return reply({
+          tools: MCP_TOOLS.map(({ method: _method, ...tool }) => tool),
+        });
+
+      case "tools/call": {
+        const tool = MCP_TOOLS.find(t => t.name == message.params?.name);
+        if (!tool) {
+          return fail(-32602, `no such tool: ${message.params?.name}`);
+        }
+        try {
+          const result = await Methods[tool.method](
+            message.params?.arguments ?? {}
+          );
+          return reply({
+            content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+          });
+        } catch (ex) {
+          // A tool result rather than a protocol error, so the model can
+          // read what went wrong and try something else.
+          return reply({
+            content: [{ type: "text", text: `Error: ${ex.message ?? ex}` }],
+            isError: true,
+          });
+        }
+      }
+
+      default:
+        return isRequest
+          ? fail(-32601, `unknown method: ${message?.method}`)
+          : null;
+    }
+  },
 };
 
 /**
@@ -1398,7 +1809,11 @@ export const MailMcpServer = {
     // The bridge needs the port, and the port changes every start.
     IOUtils.writeJSON(
       PathUtils.join(PathUtils.profileDir, "mcp-endpoint.json"),
-      { port: socket.port, url: `http://127.0.0.1:${socket.port}/rpc` }
+      {
+        port: socket.port,
+        url: `http://127.0.0.1:${socket.port}/rpc`,
+        mcpUrl: `http://127.0.0.1:${socket.port}/mcp`,
+      }
     ).catch(ex => console.warn("Could not record the MCP port:", ex));
 
     console.info(`Mail MCP endpoint listening on 127.0.0.1:${socket.port}`);
@@ -1426,7 +1841,8 @@ export const MailMcpServer = {
  * Read one HTTP request, answer it, close.
  *
  * Deliberately minimal: one request per connection, no keep-alive, no
- * chunked encoding. The only client is the bridge.
+ * chunked encoding. Its clients are the bridge, on `/rpc` (or any path but
+ * `/mcp`, as before there were two), and MCP clients on `/mcp`.
  *
  * @param {nsISocketTransport} transport
  */
@@ -1438,8 +1854,16 @@ async function handleConnection(transport) {
   );
   binary.setInputStream(input);
 
-  const respond = (status, payload) => {
-    const bytes = new TextEncoder().encode(JSON.stringify(payload));
+  /**
+   * @param {string} status - e.g. "200 OK".
+   * @param {*} [payload] - Sent as JSON; nothing is sent if undefined.
+   * @param {string} [extraHeaders] - Whole header lines, each ending CRLF.
+   */
+  const respond = (status, payload, extraHeaders = "") => {
+    const bytes =
+      payload === undefined
+        ? new Uint8Array(0)
+        : new TextEncoder().encode(JSON.stringify(payload));
     // Written one byte per character. nsIOutputStream.write counts what it
     // is given in characters, so handing it a JS string promises
     // Content-Length bytes and delivers fewer as soon as the response holds
@@ -1452,8 +1876,11 @@ async function handleConnection(transport) {
     }
     const head =
       `HTTP/1.1 ${status}\r\n` +
-      "Content-Type: application/json; charset=utf-8\r\n" +
+      (bytes.length
+        ? "Content-Type: application/json; charset=utf-8\r\n"
+        : "") +
       `Content-Length: ${bytes.length}\r\n` +
+      extraHeaders +
       "Connection: close\r\n\r\n";
     output.write(head, head.length);
     output.write(encoded, encoded.length);
@@ -1493,6 +1920,9 @@ async function handleConnection(transport) {
     }
     const head = text.slice(0, headerEnd);
     const body = text.slice(headerEnd + 4);
+    const [httpMethod = "", target = ""] = head
+      .slice(0, head.indexOf("\r\n") >>> 0)
+      .split(" ");
 
     const token = /authorization:\s*bearer\s+(\S+)/i.exec(head)?.[1] ?? "";
     if (!(await MailMcpTokens.verify(token))) {
@@ -1501,19 +1931,14 @@ async function handleConnection(transport) {
       return;
     }
 
+    if (/^\/mcp(?:[/?]|$)/.test(target)) {
+      await answerMcp(httpMethod, body, respond);
+      return;
+    }
+
     let request;
     try {
-      // readBytes returns one character per byte, which is what Content-Length
-      // above is counted in and so is right for the framing, but it leaves the
-      // body as UTF-8 lying in a byte string. Decoding it is what turns those
-      // bytes back into the characters they were sent as; without this a
-      // Chinese subject arrives as mojibake and is saved that way. The
-      // response side has always done the mirror of this.
-      request = JSON.parse(
-        body
-          ? new TextDecoder().decode(Uint8Array.from(body, c => c.charCodeAt(0)))
-          : "{}"
-      );
+      request = JSON.parse(decodeBody(body) || "{}");
     } catch (ex) {
       respond("400 Bad Request", { error: "body must be JSON" });
       return;
@@ -1545,6 +1970,72 @@ async function handleConnection(transport) {
 }
 
 /**
+ * The body of a request as the text it was sent as.
+ *
+ * readBytes returns one character per byte, which is what Content-Length is
+ * counted in and so is right for the framing, but it leaves the body as UTF-8
+ * lying in a byte string. Decoding it is what turns those bytes back into the
+ * characters they were sent as; without this a Chinese subject arrives as
+ * mojibake and is saved that way. The response side does the mirror of this.
+ *
+ * @param {string} body - One character per byte.
+ * @returns {string}
+ */
+function decodeBody(body) {
+  return new TextDecoder().decode(Uint8Array.from(body, c => c.charCodeAt(0)));
+}
+
+/**
+ * Answer an MCP request made over Streamable HTTP.
+ *
+ * Only the parts a tools-only server needs: every response comes back as a
+ * plain JSON body, never as an event stream, and there are no sessions, so a
+ * client asking to open a stream of its own (GET) or to end a session
+ * (DELETE) is told the method is not supported -- which the protocol has
+ * clients take in their stride.
+ *
+ * @param {string} httpMethod
+ * @param {string} body - One character per byte.
+ * @param {Function} respond - As in handleConnection.
+ */
+async function answerMcp(httpMethod, body, respond) {
+  if (httpMethod != "POST") {
+    respond("405 Method Not Allowed", undefined, "Allow: POST\r\n");
+    return;
+  }
+
+  let parsed;
+  try {
+    parsed = JSON.parse(decodeBody(body));
+  } catch (ex) {
+    respond("400 Bad Request", {
+      jsonrpc: "2.0",
+      id: null,
+      error: { code: -32700, message: "body must be JSON" },
+    });
+    return;
+  }
+
+  // Older revisions of the protocol let a client send several messages in
+  // one body. Answered in order, since a later call may depend on an
+  // earlier one.
+  const responses = [];
+  for (const message of [parsed].flat()) {
+    const response = await McpProtocol.handle(message);
+    if (response) {
+      responses.push(response);
+    }
+  }
+
+  if (!responses.length) {
+    // Notifications and responses only: accepted, nothing to say back.
+    respond("202 Accepted");
+  } else {
+    respond("200 OK", Array.isArray(parsed) ? responses : responses[0]);
+  }
+}
+
+/**
  * The Tools menu entry for managing access.
  *
  * Deliberately built out of the stock prompts rather than a dialog of its
@@ -1571,8 +2062,9 @@ export const MailMcpUI = {
         ? `Access is ON, listening on 127.0.0.1:${port > 0 ? port : "?"}.`
         : "Access is OFF. Nothing is listening.") +
       `\n${tokens.length} password${tokens.length == 1 ? "" : "s"} stored.` +
-      "\n\nAn AI tool needs one of these passwords to read your mail and " +
-      "write drafts. It can never send, move or delete anything.";
+      "\n\nAn AI tool needs one of these passwords to read your mail, " +
+      "write drafts and tag messages. It can never send, move or delete " +
+      "anything.";
 
     const actions = [
       enabled ? "Turn access OFF" : "Turn access ON",

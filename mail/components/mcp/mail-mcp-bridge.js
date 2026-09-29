@@ -136,6 +136,8 @@ function callEndpoint(method, params) {
 }
 
 /** The tools offered, and what they take. */
+// The same seven are in MailMcpServer.sys.mjs's MCP_TOOLS, which serves them
+// on /mcp along with the tagging tools; a change to one belongs in both.
 const TOOLS = [
   {
     name: "search_mail",

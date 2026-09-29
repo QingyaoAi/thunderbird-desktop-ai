@@ -3,9 +3,9 @@
 A local endpoint that lets an AI assistant read this Thunderbird's mail and
 write drafts, plus a bridge that presents it to MCP clients.
 
-It reads mail and writes drafts. There is no method that sends, moves,
-deletes or marks anything — the worst outcome of a confused model is a draft
-nobody sent.
+It reads mail, writes drafts and tags messages. There is no method that
+sends, moves or deletes anything — the worst outcome of a confused model is a
+draft nobody sent, or a tag to take off again.
 
 ## Why it lives inside Thunderbird
 
@@ -74,7 +74,9 @@ existing `thunderbird` MCP server registration.
 - **Passwords live with the mail passwords** — encrypted at rest, covered by
   the primary password if one is set. Never in a config file, never in the
   repository.
-- **Read and draft only.** Nothing sends, moves, deletes or flags.
+- **Read, draft and tag only.** Nothing sends, moves or deletes. Tags can be
+  added and taken off, and Important is the star, so that one stars and
+  unstars; a tag is never created, only chosen from the user's own.
 - Access can be turned off entirely from the same menu, and passwords deleted
   individually or all at once. Deletion takes effect on the next request.
 
@@ -111,6 +113,8 @@ curl -s -X POST http://127.0.0.1:47821/rpc \
 | `listFolders` | Folders with message and unread counts |
 | `listIdentities` | Addresses this Thunderbird can write as |
 | `createDraft` | Save a draft; never sends |
+| `listTags` | The user's tags: key, name and colour |
+| `tagMessages` | Add tags to messages, or take them off |
 
 ### `search`
 
@@ -174,6 +178,28 @@ leaving the rest of the endpoint on.
 `listIdentities`; the default identity otherwise), `replyTo`, and `inReplyTo`
 — a message id, which fills in `In-Reply-To`, `References` and a `Re:`
 subject. The draft lands in that identity's Drafts folder. Nothing is sent.
+
+### `tagMessages`
+
+`ids` (message ids from a search, at most 500), and `add` and/or `remove`,
+each a list of tags by key or by the name the user sees, case-insensitive. A
+name that is not one of the user's tags is refused, with the list of tags it
+could have been; nothing is created. Returns each message as it now is.
+
+## MCP over HTTP
+
+`/mcp` speaks MCP itself, over Streamable HTTP, for a client that can be given
+a URL rather than a program to start: `POST` one JSON-RPC message (or, from
+older clients, a list of them) with the same `Authorization` header, and the
+answer comes back as a plain JSON body — never an event stream. A
+notification is answered `202` with no body. There are no sessions, and a
+`GET` to open a stream of the server's own is answered `405`, which the
+protocol has clients take in their stride.
+
+It offers all nine tools, the tagging ones included. The stdio bridge keeps
+its own list of the first seven, so a client started through it cannot tag.
+
+`mcp-endpoint.json` records this URL as `mcpUrl`.
 
 ## Troubleshooting
 
