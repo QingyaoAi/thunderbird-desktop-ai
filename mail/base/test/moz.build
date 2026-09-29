@@ -30,5 +30,6 @@ XPCSHELL_TESTS_MANIFESTS += [
 
 TESTING_JS_MODULES += [
     "../../../../browser/components/customizableui/test/CustomizableUITestUtils.sys.mjs",
+    "FakeAcpAgent.sys.mjs",
     "MailViewHelpers.sys.mjs",
 ]

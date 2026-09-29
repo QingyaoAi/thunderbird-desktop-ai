@@ -201,6 +201,61 @@ its own list of the first seven, so a client started through it cannot tag.
 
 `mcp-endpoint.json` records this URL as `mcpUrl`.
 
+## The AI panel's dsh mode
+
+The **dsh** button in the AI panel's header runs
+[DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) as an
+agent the panel talks to. It is off until pressed, and nothing about it runs
+until then. Pressing it starts `dsh --profile acp` — the Agent Client
+Protocol, JSON-RPC over the program's stdin and stdout — and opens a session
+with this mailbox attached as an MCP server on `/mcp`. The token for that is
+made in memory for the run and dropped when the run ends; it is never stored
+and never appears among the passwords above. While dsh is on, what is typed in
+the panel goes to it, together with the message that is open, if any, as a
+link it can read with `get_message`.
+
+dsh is started with a patch layer of Thunderbird's own
+(`dsh-thunderbird.patch.yml` in the profile, rewritten each time) in place of
+its ACP profile's coding-agent persona: whatever the task, look in the mailbox
+first, and turn to the web, the shell or files only when the mail does not
+answer it. Only that run is affected; dsh started any other way is not.
+
+Answers link the messages they cite. The persona asks for `[text](<id>)`
+whenever an answer mentions a message -- a message's id is its URI -- and the
+panel shows such a link with an envelope, opens the message in the mail tab
+when it is clicked, and strikes it through if the message is not there. As a
+fallback, the panel remembers the subject and id of every message the mail
+tools return in a session, and links an answer's exact mention of such a
+subject that the model left unlinked. (The endpoint's MCP `instructions` say
+the same thing about links, for clients that use them; dsh does not, for a
+server its client attaches.)
+
+dsh keeps its own model settings and keys, and the panel offers its models in
+place of its own. It can run commands and read and write files in its working
+folder; when it asks permission to use a tool, the panel shows the request,
+with a choice to allow everything for the rest of the session. Pressing
+**Clear** starts a new session; pressing **dsh** again stops the program.
+
+The **⚙** beside it sets the three paths, kept in these prefs:
+
+| Pref | What | When unset |
+| --- | --- | --- |
+| `mail.ai.dsh.node` | node | The first of `/opt/homebrew/bin/node`, `/usr/local/bin/node`, `/usr/bin/node` that exists |
+| `mail.ai.dsh.path` | dsh: its `apps/cli/lib/bin.js`, run with node, or an installed `dsh` program | The first `dsh` found in node's folder, `/opt/homebrew/bin` or `/usr/local/bin` -- where `npm install -g` puts it |
+| `mail.ai.dsh.workspace` | The folder dsh works in | `thunderbird-dsh` in the temporary folder |
+
+dsh keeps each session it runs under `~/.dsh` (or `$DSH_HOME`): a log in
+`sessions/`, filed by working folder, and a cache in
+`storages/session_projcache/`. Thunderbird records the id of every session it
+starts, in `dsh-sessions.json` in the profile, and the **⚙** menu can delete
+those -- log and cache -- by id. The session in use is kept, and a session
+started in dsh itself is never touched, even in the same working folder.
+
+Thunderbird started from the Dock has only the system `PATH`, so dsh is
+started with node's folder, `/opt/homebrew/bin` and `/usr/local/bin` in front
+of it. Mail access must be on (Tools → Mail Access for AI…), since that is how
+dsh reads the mail.
+
 ## Troubleshooting
 
 **Nothing is listening.** Check the menu says access is on, and give a large

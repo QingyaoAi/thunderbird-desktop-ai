@@ -23,6 +23,7 @@ EXTRA_JS_MODULES += [
     "DisplayNameUtils.sys.mjs",
     "DNS.sys.mjs",
     "DNS.worker.mjs",
+    "DshAgent.sys.mjs",
     "ExtensionsUI.sys.mjs",
     "ExtensionSupport.sys.mjs",
     "FolderPaneUtils.sys.mjs",

@@ -16,7 +16,9 @@
 import {
   renderMarkdown,
   linkifyCitations,
+  MESSAGE_LINK_RE,
 } from "chrome://messenger/content/ai-markdown.mjs";
+import { DshPanel } from "chrome://messenger/content/ai-panel-dsh.mjs";
 
 const lazy = {};
 ChromeUtils.defineESModuleGetters(lazy, {
@@ -110,6 +112,8 @@ export const AIPanel = {
     this.setupNotice = document.getElementById("ai-panel-setup");
     this.actions = document.getElementById("ai-panel-actions");
     this.modelPicker = document.getElementById("ai-panel-model");
+    // Off until its button is pressed; see ai-panel-dsh.mjs.
+    this.dsh = new DshPanel(this);
 
     this.modelPicker.addEventListener("change", () => {
       switch (this.modelPicker.value) {
@@ -401,7 +405,8 @@ export const AIPanel = {
    * talk to, so the panel never looks broken when it is merely unconfigured.
    */
   async refreshConfigured() {
-    const configured = await lazy.AIConfig.isConfigured();
+    // dsh brings its own model, so with it on there is nothing to set up.
+    const configured = this.dsh?.active || (await lazy.AIConfig.isConfigured());
     this.setupNotice.hidden = configured;
     this.form.hidden = !configured;
     this.transcript.hidden = !configured;
@@ -415,10 +420,16 @@ export const AIPanel = {
     this.cancelDraft();
     this._messages = [];
     this.transcript.replaceChildren();
+    // dsh's context is its session's, so a new conversation is a new session.
+    this.dsh.restart();
   },
 
   /** Abort an in-flight conversation request, if there is one. */
   cancel() {
+    if (this.dsh.active) {
+      this.dsh.cancel();
+      return;
+    }
     this._abort?.abort();
     this._abort = null;
     this._setBusy(false);
@@ -525,6 +536,12 @@ export const AIPanel = {
    */
   async send() {
     const question = this.input.value.trim();
+    if (this.dsh.active) {
+      if (question) {
+        await this.dsh.send(question);
+      }
+      return;
+    }
     if (!question || this._abort) {
       return;
     }
@@ -675,6 +692,13 @@ export const AIPanel = {
     if (!href || href.startsWith("#")) {
       return;
     }
+    // A message in this Thunderbird, linked by its id -- which is how dsh
+    // points at the mail it is talking about.
+    if (MESSAGE_LINK_RE.test(href)) {
+      event.preventDefault();
+      this._showLinkedMessage(anchor, href);
+      return;
+    }
     let uri;
     try {
       uri = Services.io.newURI(href);
@@ -734,6 +758,30 @@ export const AIPanel = {
         }
       }
     );
+  },
+
+  /**
+   * Show a message a link in an answer points at, or mark the link as leading
+   * nowhere: the message may have been moved or deleted since, and a link is
+   * model output, so it may never have existed.
+   *
+   * @param {HTMLAnchorElement} anchor
+   * @param {string} uri
+   */
+  _showLinkedMessage(anchor, uri) {
+    let hdr = null;
+    try {
+      hdr =
+        lazy.MailServices.messageServiceFromURI(uri).messageURIToMsgHdr(uri);
+    } catch {
+      // Not a message this Thunderbird has.
+    }
+    if (!hdr) {
+      anchor.classList.add("ai-message-link-missing");
+      document.l10n.setAttributes(anchor, "ai-panel-message-link-missing");
+      return;
+    }
+    this._showMessage(uri, hdr.mime2DecodedSubject);
   },
 
   /**
@@ -1275,10 +1323,12 @@ export const AIPanel = {
     document.l10n.setAttributes(this.draftButton, id);
 
     // The placeholder is the other half of saying so: with a message in
-    // front of you the box has two uses, and with none it has one.
+    // front of you the box has two uses, and with none it has one. With dsh
+    // on, it also says who is listening.
+    const prefix = this.dsh?.active ? "ai-panel-dsh-input" : "ai-panel-input";
     document.l10n.setAttributes(
       this.input,
-      target ? "ai-panel-input-with-message" : "ai-panel-input"
+      target ? `${prefix}-with-message` : prefix
     );
   },
 

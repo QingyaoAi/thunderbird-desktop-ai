@@ -14,6 +14,9 @@
 }
 
 .ai-panel {
+  /* Every border in the pane is drawn in this, and about:3pane's own sheets
+   * never define it: until it was set here, none of them was drawn at all. */
+  --splitter-color: var(--layout-border-0);
   display: flex;
   flex-direction: column;
   block-size: 100%;
@@ -26,17 +29,15 @@
 
 /* -- header -- */
 
+/* One row at any width the pane allows: the controls are icons of one size,
+ * and the model picker gives up width first -- a clipped model name is still
+ * readable, a button pushed onto a second row made the header look broken. */
 .ai-panel-header {
   display: flex;
   align-items: center;
-  gap: 3px;
-  padding: 6px 6px 6px 12px;
+  gap: 4px;
+  padding: 6px 8px 6px 10px;
   border-block-end: 1px solid var(--splitter-color);
-  /* Narrow enough and the three buttons no longer fit beside the title.
-   * Wrapping puts them on a second row; without this they were simply
-   * clipped by the pane's overflow and appeared to be missing. */
-  flex-wrap: wrap;
-  row-gap: 4px;
 }
 
 /* Kept for the pane's accessible name, but not drawn: the header has room
@@ -55,20 +56,77 @@
   min-inline-size: 0;
 }
 
+/* The size and spacing are set outright: the stock button rules give every
+ * button a minimum width and side margins, which spread four small icons
+ * across the whole header and pushed the last one out of it. */
 .ai-panel-icon-button {
   appearance: none;
   flex: none;
+  box-sizing: border-box;
+  inline-size: 24px;
+  min-inline-size: 0;
+  block-size: 24px;
+  margin: 0;
+  padding: 0;
   border: none;
-  border-radius: 3px;
-  background: transparent;
-  color: inherit;
-  padding: 3px 6px;
-  font-size: 0.85rem;
-  white-space: nowrap;
+  border-radius: var(--border-radius-small);
+  background: transparent var(--ai-panel-icon) center / 16px no-repeat;
+  -moz-context-properties: fill, stroke;
+  fill: color-mix(in srgb, currentColor 20%, transparent);
+  stroke: currentColor;
+  color: var(--layout-color-2);
 }
 
 .ai-panel-icon-button:hover {
-  background-color: var(--button-hover-background);
+  background-color: var(--button-hover-background-color);
+  color: var(--layout-color-1);
+}
+
+.ai-panel-icon-button:focus-visible,
+.ai-panel-dsh-toggle:focus-visible {
+  outline: 2px solid var(--focus-outline-color);
+  outline-offset: -2px;
+}
+
+#ai-panel-dsh-settings {
+  --ai-panel-icon: var(--icon-settings);
+}
+
+#ai-panel-clear {
+  --ai-panel-icon: var(--icon-trash);
+}
+
+#ai-panel-close {
+  --ai-panel-icon: var(--icon-close);
+}
+
+/* dsh's on/off switch: a pill with its name, filled while dsh is on. */
+.ai-panel-dsh-toggle {
+  appearance: none;
+  flex: none;
+  box-sizing: border-box;
+  min-inline-size: 0;
+  block-size: 24px;
+  margin: 0;
+  padding: 0 10px;
+  border: 1px solid var(--layout-border-1);
+  border-radius: 12px;
+  background: transparent;
+  color: var(--layout-color-2);
+  font: inherit;
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+.ai-panel-dsh-toggle:hover {
+  background-color: var(--button-hover-background-color);
+  color: var(--layout-color-1);
+}
+
+.ai-panel-dsh-toggle[aria-pressed="true"] {
+  border-color: transparent;
+  background-color: var(--selected-item-color);
+  color: var(--selected-item-text-color);
 }
 
 /* -- unconfigured state -- */
@@ -240,9 +298,15 @@
    * first: a clipped model name is still readable, a clipped button is not. */
   flex: 1 1 auto;
   min-inline-size: 0;
+  margin: 0;
+  box-sizing: border-box;
+  block-size: 24px;
   font: inherit;
   font-size: 0.85rem;
-  padding: var(--space-xxsmall) var(--space-xsmall);
+  /* The end is left to the stock select rule, which keeps room there for its
+   * arrow; setting it here ran a long model name into the arrow. */
+  padding-block: 0;
+  padding-inline-start: var(--space-xsmall);
   border: 1px solid var(--splitter-color);
   border-radius: var(--border-radius-small);
   background-color: var(--layout-background-2);
@@ -586,4 +650,120 @@ a.ai-citation:focus-visible,
 .ai-answer a.ai-citation:focus-visible {
   outline: 2px solid var(--focus-outline-color);
   outline-offset: 1px;
+}
+
+/* -- dsh --
+ *
+ * The switch itself is styled with the header. While dsh is starting it
+ * pulses; tool calls fold into one line each -- a mark for how they went and
+ * the tool's name -- with what went in and what came back one click away.
+ */
+
+.ai-panel-dsh-toggle.starting {
+  animation: ai-thinking-pulse 1.6s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ai-panel-dsh-toggle.starting {
+    animation: none;
+  }
+}
+
+.ai-dsh-tool {
+  margin: 2px 0;
+  font-size: 0.85rem;
+  color: var(--layout-color-2);
+}
+
+.ai-dsh-tool > summary {
+  cursor: pointer;
+  padding: 2px 10px;
+  list-style: none;
+  user-select: none;
+  overflow-wrap: anywhere;
+}
+
+.ai-dsh-tool > summary::before {
+  display: inline-block;
+  inline-size: 1.2em;
+  content: "\22EF";
+}
+
+.ai-dsh-tool[data-status="completed"] > summary::before {
+  content: "\2713";
+  color: var(--color-green-60);
+}
+
+.ai-dsh-tool[data-status="failed"] > summary::before {
+  content: "\2717";
+  color: var(--color-red-60);
+}
+
+.ai-dsh-tool > summary:focus-visible {
+  outline: 2px solid var(--focus-outline-color);
+  outline-offset: -2px;
+  border-radius: 3px;
+}
+
+.ai-dsh-tool-name {
+  font-family: monospace;
+}
+
+.ai-dsh-tool-input,
+.ai-dsh-tool-output,
+.ai-dsh-stderr {
+  margin: 2px 10px 4px;
+  padding: 4px 6px;
+  border-radius: 4px;
+  background-color: var(--layout-background-1);
+  font-size: 0.8rem;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-block-size: 12em;
+  overflow-y: auto;
+}
+
+.ai-dsh-tool-output {
+  border-inline-start: 2px solid var(--splitter-color);
+}
+
+.ai-dsh-permission {
+  margin: 6px 10px;
+  padding: 6px 8px;
+  border: 1px solid var(--splitter-color);
+  border-radius: 6px;
+  background-color: var(--layout-background-2);
+  font-size: 0.9rem;
+}
+
+.ai-dsh-permission > p {
+  margin: 0 0 6px;
+}
+
+.ai-dsh-permission-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.ai-dsh-permission-buttons > .ai-panel-action {
+  inline-size: auto;
+  margin: 0;
+}
+
+.ai-dsh-permission-outcome {
+  color: var(--layout-color-2);
+  font-style: italic;
+}
+
+/* A link to a message rather than to the web, marked as mail -- and struck
+ * through once clicking it has found the message gone. */
+.ai-answer a.ai-message-link::before {
+  content: "\2709\FE0E\00A0";
+}
+
+.ai-answer a.ai-message-link-missing {
+  text-decoration: line-through;
+  opacity: 0.6;
+  cursor: default;
 }

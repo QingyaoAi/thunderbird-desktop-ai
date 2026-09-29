@@ -14,6 +14,21 @@
     <select id="ai-panel-model"
             class="ai-panel-model"
             data-l10n-id="ai-panel-model"></select>
+    <!-- dsh's models, shown in place of the picker above while it is on. -->
+    <select id="ai-panel-dsh-model"
+            class="ai-panel-model"
+            hidden="hidden"
+            data-l10n-id="ai-panel-dsh-model"></select>
+    <!-- Starts and stops DeepSeek Harness; see ai-panel-dsh.mjs. -->
+    <button id="ai-panel-dsh"
+            class="ai-panel-dsh-toggle"
+            type="button"
+            aria-pressed="false"
+            data-l10n-id="ai-panel-dsh-button"></button>
+    <button id="ai-panel-dsh-settings"
+            class="ai-panel-icon-button"
+            type="button"
+            data-l10n-id="ai-panel-dsh-settings-button"></button>
     <button id="ai-panel-clear"
             class="ai-panel-icon-button"
             type="button"

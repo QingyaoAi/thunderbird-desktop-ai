@@ -892,8 +892,9 @@ ai-pane-status-button =
 
 ai-panel-title = AI Assistant
 
-ai-panel-close-button = Close
+ai-panel-close-button =
     .title = Close the AI panel
+    .aria-label = Close
 
 # Chooses which configured endpoint requests go to. The options are the
 # profile names from ai-config.json, plus an entry for adding another.
@@ -936,8 +937,9 @@ ai-panel-model-add-url-anthropic = Address of the API, without a version at the 
 ai-panel-model-add-model = Model name, copied exactly from the provider. This also names the entry in the list.
     Examples: deepseek-v4-flash · qwen3.5-122b · claude-opus-5
 
-ai-panel-clear-button = Clear
+ai-panel-clear-button =
     .title = Clear this conversation
+    .aria-label = Clear
 
 ai-panel-input =
     .placeholder = Ask about your mail…
@@ -1039,3 +1041,111 @@ ai-panel-sources-threads =
         [one] Answered using 1 conversation from your mail
        *[other] Answered using { $count } conversations from your mail
     }
+
+## AI panel: DeepSeek Harness (dsh), run as an agent while its button is on
+
+# Turns dsh on and off. While it is on, what is typed in the panel goes to it.
+ai-panel-dsh-button = dsh
+    .title = Run DeepSeek Harness here. It can search and tag your mail, and run commands and use files in its working folder.
+
+ai-panel-dsh-settings-button =
+    .title = dsh settings
+    .aria-label = dsh settings
+
+ai-panel-dsh-model =
+    .title = Which model dsh uses
+
+ai-panel-dsh-input =
+    .placeholder = Ask dsh to find, read or tag mail…
+
+ai-panel-dsh-input-with-message =
+    .placeholder = Ask dsh about this message, or anything in your mail…
+
+ai-panel-dsh-starting = Starting dsh…
+
+# $folder is the folder dsh works in.
+ai-panel-dsh-on = dsh is on. What you send now goes to dsh: it can search and tag your mail, and run commands and read and write files in { $folder }.
+
+ai-panel-dsh-off = dsh is off.
+
+ai-panel-dsh-failed = dsh could not start:
+
+ai-panel-dsh-settings-open = dsh settings…
+
+# $code is the exit code of the dsh program; its last output is shown below.
+ai-panel-dsh-exited = dsh stopped unexpectedly (exit code { $code }).
+
+# $reason is the reason dsh gave, e.g. max_tokens.
+ai-panel-dsh-stopped-early = dsh ended its turn early ({ $reason }).
+
+# $tool is the name of the tool dsh wants to use.
+ai-panel-dsh-permission = dsh wants to use { $tool }.
+
+ai-panel-dsh-allow-all = Allow all this session
+
+ai-panel-dsh-allowed = Allowed.
+
+ai-panel-dsh-rejected = Rejected.
+
+ai-panel-dsh-permission-cancelled = Not answered.
+
+ai-panel-dsh-settings-title = dsh settings
+
+ai-panel-dsh-settings-text = dsh runs as a separate program, only while its button is on. Choose a setting to change it.
+
+# $path is where node is, or ai-panel-dsh-settings-unset.
+ai-panel-dsh-settings-node = node: { $path }
+
+# $path is where dsh is, or ai-panel-dsh-settings-unset.
+ai-panel-dsh-settings-dsh = dsh: { $path }
+
+# $path is the folder dsh works in.
+ai-panel-dsh-settings-workspace = Working folder: { $path }
+
+ai-panel-dsh-settings-reset = Put all three back to their defaults
+
+ai-panel-dsh-settings-unset = (not set)
+
+ai-panel-dsh-pick-node = Choose the node program
+
+ai-panel-dsh-pick-dsh = Choose dsh: its bin.js, or an installed dsh program
+
+ai-panel-dsh-pick-workspace = Choose the folder dsh works in
+
+ai-panel-dsh-restart = The new settings apply the next time dsh is turned on.
+
+# $count is how many dsh sessions Thunderbird has started and still has on
+# record.
+ai-panel-dsh-settings-clear-sessions =
+    { $count ->
+        [one] Delete the 1 dsh session Thunderbird started…
+       *[other] Delete the { $count } dsh sessions Thunderbird started…
+    }
+
+ai-panel-dsh-clear-sessions-none = There are no dsh sessions from Thunderbird to delete.
+
+# $count is how many sessions will be deleted.
+ai-panel-dsh-clear-sessions-confirm =
+    { $count ->
+        [one] Delete the 1 dsh session Thunderbird started, with its conversation? This cannot be undone. Sessions started in dsh itself are not touched.
+       *[other] Delete the { $count } dsh sessions Thunderbird started, with their conversations? This cannot be undone. Sessions started in dsh itself are not touched.
+    }
+
+# As ai-panel-dsh-clear-sessions-confirm, while dsh is on.
+ai-panel-dsh-clear-sessions-confirm-keeping =
+    { $count ->
+        [one] Delete the 1 earlier dsh session Thunderbird started, with its conversation? This cannot be undone. The session open now, and sessions started in dsh itself, are kept.
+       *[other] Delete the { $count } earlier dsh sessions Thunderbird started, with their conversations? This cannot be undone. The session open now, and sessions started in dsh itself, are kept.
+    }
+
+# $count is how many sessions were deleted.
+ai-panel-dsh-clear-sessions-done =
+    { $count ->
+        [one] Deleted 1 dsh session.
+       *[other] Deleted { $count } dsh sessions.
+    }
+
+# Shown on a link to a message, in an answer, once clicking it has found that
+# the message is not there.
+ai-panel-message-link-missing =
+    .title = This message could not be found. It may have been moved or deleted since.

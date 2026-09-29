@@ -20,6 +20,14 @@
 /** URL schemes a link may point at. */
 const SAFE_SCHEMES = ["http:", "https:", "mailto:"];
 
+/**
+ * A link to a message in this Thunderbird: a message's URI, which is what the
+ * mail tools give as its id. Such a link goes nowhere by itself; the panel
+ * shows the message when one is clicked.
+ */
+export const MESSAGE_LINK_RE =
+  /^(?:mailbox|imap|news|ews|graph)-message:\/\/[^\s]/;
+
 /** Bare URLs, linkified as a convenience. */
 const AUTOLINK_RE = /https?:\/\/[^\s<>()[\]]+[^\s<>()[\].,;:!?'"]/g;
 
@@ -30,6 +38,9 @@ const AUTOLINK_RE = /https?:\/\/[^\s<>()[\]]+[^\s<>()[\].,;:!?'"]/g;
  * @returns {boolean}
  */
 function isSafeUrl(url) {
+  if (MESSAGE_LINK_RE.test(url)) {
+    return true;
+  }
   try {
     return SAFE_SCHEMES.includes(new URL(url).protocol);
   } catch {
@@ -81,15 +92,27 @@ function renderInline(parent, text, doc) {
     }
   }
 
-  // A link competes with the patterns above for position.
-  const linkMatch = /\[([^\]\n]*)\]\(([^)\s]+)\)/.exec(text);
+  // A link competes with the patterns above for position. Its text may hold
+  // one level of brackets -- a subject such as "[NTCIR-19] Action items" --
+  // or brackets escaped with a backslash, which is how models tend to write
+  // that subject; and its target may be put in angle brackets, which is how a
+  // target with spaces is written: a message in "Sent Items", say.
+  const linkMatch =
+    /\[((?:\\.|[^[\]\\\n]|\[(?:\\.|[^[\]\\\n])*\])*)\]\((?:<([^<>\n]+)>|([^)\s]+))\)/.exec(
+      text
+    );
   if (linkMatch && (!earliest || linkMatch.index < earliest.match.index)) {
     renderInline(parent, text.slice(0, linkMatch.index), doc);
-    const [whole, label, url] = linkMatch;
+    const [whole, label] = linkMatch;
+    const url = linkMatch[2] ?? linkMatch[3];
     if (isSafeUrl(url)) {
       const anchor = doc.createElement("a");
       anchor.href = url;
-      anchor.textContent = label || url;
+      // Backslash escapes are Markdown's, not part of what is shown.
+      anchor.textContent = label.replace(/\\([!-/:-@[-`{-~])/g, "$1") || url;
+      if (MESSAGE_LINK_RE.test(url)) {
+        anchor.classList.add("ai-message-link");
+      }
       parent.appendChild(anchor);
     } else {
       parent.appendChild(doc.createTextNode(whole));
@@ -420,6 +443,74 @@ export function linkifyCitations(root, doc, isKnown, onActivate) {
     if (last < text.length) {
       parts.appendChild(doc.createTextNode(text.slice(last)));
     }
+    node.replaceWith(parts);
+  }
+}
+
+/**
+ * Link the messages an answer names but did not link: text that is exactly
+ * the subject of a message the answer's tools returned. A model asked to link
+ * what it cites still sometimes writes the subject in quotation marks
+ * instead, and the subject alone is enough to know which message it means.
+ *
+ * Text already in a link or in code is left alone, and where subjects
+ * overlap the longest wins, so a subject that contains another is linked
+ * whole.
+ *
+ * @param {Node} root
+ * @param {Document} doc
+ * @param {Map<string, string>} mentions - Subject to message URI.
+ */
+export function linkifyMessageMentions(root, doc, mentions) {
+  if (!mentions?.size) {
+    return;
+  }
+  // An empty subject would match everywhere, and never move on.
+  const subjects = [...mentions.keys()].filter(Boolean);
+  const walker = doc.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+    acceptNode(node) {
+      return node.parentElement?.closest("a, code, pre")
+        ? NodeFilter.FILTER_REJECT
+        : NodeFilter.FILTER_ACCEPT;
+    },
+  });
+  const nodes = [];
+  while (walker.nextNode()) {
+    nodes.push(walker.currentNode);
+  }
+
+  for (const node of nodes) {
+    const text = node.nodeValue;
+    const parts = doc.createDocumentFragment();
+    let position = 0;
+    while (position < text.length) {
+      let best = null;
+      for (const subject of subjects) {
+        const at = text.indexOf(subject, position);
+        if (
+          at > -1 &&
+          (!best ||
+            at < best.at ||
+            (at == best.at && subject.length > best.subject.length))
+        ) {
+          best = { at, subject };
+        }
+      }
+      if (!best) {
+        break;
+      }
+      parts.append(text.slice(position, best.at));
+      const link = doc.createElement("a");
+      link.href = mentions.get(best.subject);
+      link.className = "ai-message-link";
+      link.textContent = best.subject;
+      parts.append(link);
+      position = best.at + best.subject.length;
+    }
+    if (position == 0) {
+      continue;
+    }
+    parts.append(text.slice(position));
     node.replaceWith(parts);
   }
 }

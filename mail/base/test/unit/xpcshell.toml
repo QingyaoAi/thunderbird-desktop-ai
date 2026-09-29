@@ -27,6 +27,8 @@ tags = ["archive"]
 
 ["test_devtools_url.js"]
 
+["test_dshAgent.js"]
+
 ["test_emptyTrash_dbViewWrapper.js"]
 run-sequentially = true  # Avoid bustage.
 
