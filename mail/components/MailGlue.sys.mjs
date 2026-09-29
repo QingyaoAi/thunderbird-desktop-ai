@@ -45,6 +45,7 @@ ChromeUtils.defineESModuleGetters(lazy, {
   MailMcpServer: "resource:///modules/MailMcpServer.sys.mjs",
   StarTagSync: "resource:///modules/StarTagSync.sys.mjs",
   TagMessageCounts: "resource:///modules/TagMessageCounts.sys.mjs",
+  ThreadTagSearchTerm: "resource:///modules/ThreadTagSearchTerm.sys.mjs",
   VipUnreadCounts: "resource:///modules/VipUnreadCounts.sys.mjs",
   MailNotificationManager:
     "resource:///modules/MailNotificationManager.sys.mjs",
@@ -670,6 +671,10 @@ MailGlue.prototype = {
 
     // handle any migration work that has to happen at profile startup
     lazy.MailMigrator.migrateAtProfileStartup();
+
+    // Before any window: a tag folder restored with the session is searched
+    // as soon as its tab comes up, and a term not yet known matches nothing.
+    lazy.ThreadTagSearchTerm.register();
 
     if (
       AppConstants.platform == "macosx" &&

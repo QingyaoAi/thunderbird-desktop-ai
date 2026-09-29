@@ -167,7 +167,11 @@ function checkVirtualFolder(tagKey, tagLabel, expectedFolderURIs) {
   const wrappedFolder = VirtualFolderHelper.wrapVirtualFolder(folder);
   Assert.equal(folder.name, tagLabel);
   Assert.equal(folder.localizedName, tagLabel);
-  Assert.equal(wrappedFolder.searchString, `AND (tag,contains,${tagKey})`);
+  // Any message in a thread carrying the tag lists the whole thread.
+  Assert.equal(
+    wrappedFolder.searchString,
+    `AND (thunderbird-ai#threadTag,contains,${tagKey})`
+  );
   Assert.equal(wrappedFolder.searchFolderURIs, "*");
 
   about3Pane.displayFolder(folder);

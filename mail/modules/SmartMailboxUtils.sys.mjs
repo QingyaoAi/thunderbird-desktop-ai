@@ -5,6 +5,7 @@
 const lazy = {};
 ChromeUtils.defineESModuleGetters(lazy, {
   MailServices: "resource:///modules/MailServices.sys.mjs",
+  threadTagSearchString: "resource:///modules/ThreadTagSearchTerm.sys.mjs",
   VirtualFolderHelper: "resource:///modules/VirtualFolderWrapper.sys.mjs",
 });
 
@@ -221,6 +222,7 @@ class SmartMailbox {
   #account = null;
   #TagFolderURIs = new Map();
   #VipFolderURIs = new Map();
+  #checkedTagSearches = new Set();
 
   constructor() {
     this.verify();
@@ -474,6 +476,7 @@ class SmartMailbox {
     if (uri) {
       const folderFromUri = this.#tagsFolder.getChildWithURI(uri, false, true);
       if (folderFromUri) {
+        this.#updateTagSearch(folderFromUri, tag.key);
         return folderFromUri;
       }
     }
@@ -482,6 +485,7 @@ class SmartMailbox {
     const folderFromName = this.#tagsFolder.getChildNamed(tag.tag);
     if (folderFromName) {
       this.#TagFolderURIs.set(tag.key, folderFromName.URI);
+      this.#updateTagSearch(folderFromName, tag.key);
       return folderFromName;
     }
 
@@ -494,7 +498,10 @@ class SmartMailbox {
       const msgDatabase = folder.msgDatabase;
       const folderInfo = msgDatabase.dBFolderInfo;
 
-      folderInfo.setCharProperty("searchStr", `AND (tag,contains,${tag.key})`);
+      folderInfo.setCharProperty(
+        "searchStr",
+        lazy.threadTagSearchString(tag.key)
+      );
       folderInfo.setCharProperty("searchFolderUri", "*");
       folderInfo.setUint32Property(
         "searchFolderFlag",
@@ -513,6 +520,50 @@ class SmartMailbox {
     }
 
     return null;
+  }
+
+  /**
+   * Have a tag folder list whole threads, if it still searches for the tag on
+   * the message alone as tag folders used to. Once a session per folder:
+   * verify() runs every time the folder pane is set up, and this has to open
+   * the folder's database to look. A search that is neither the old default
+   * nor the new one was set on purpose, and is left alone.
+   *
+   * The new search reaches virtualFolders.dat, which is what a restart reads
+   * back, through the saveVirtualFolders() at the end of verify().
+   *
+   * @param {nsIMsgFolder} folder
+   * @param {string} key - The tag's key.
+   */
+  #updateTagSearch(folder, key) {
+    if (this.#checkedTagSearches.has(folder.URI)) {
+      return;
+    }
+    this.#checkedTagSearches.add(folder.URI);
+
+    const wasOpen = folder.databaseOpen;
+    try {
+      const msgDatabase = folder.msgDatabase;
+      const folderInfo = msgDatabase.dBFolderInfo;
+      if (
+        folderInfo.getCharProperty("searchStr") == `AND (tag,contains,${key})`
+      ) {
+        folderInfo.setCharProperty(
+          "searchStr",
+          lazy.threadTagSearchString(key)
+        );
+        msgDatabase.summaryValid = true;
+        // Commit and release the folder's own reference, as when creating.
+        folder.msgDatabase = null;
+        return;
+      }
+    } catch (ex) {
+      console.error(`Failed to update the search of tag folder <${key}>`, ex);
+    }
+    if (!wasOpen) {
+      // Only looked; do not leave the summary open for the session.
+      folder.msgDatabase = null;
+    }
   }
 
   /**

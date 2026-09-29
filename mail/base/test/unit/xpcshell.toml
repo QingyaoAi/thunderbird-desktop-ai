@@ -64,6 +64,9 @@ skip-if = [
 
 ["test_state_xulStoreSlice.js"]
 
+["test_threadTagSearchTerm.js"]
+tags = ["virtualfolders"]
+
 ["test_treeDataAdapter.js"]
 tags = ["dataadapter"]
 
