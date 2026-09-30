@@ -1141,7 +1141,10 @@ const MCP_TOOLS = [
       "Search the user's mailbox. `query` is full-text and ranked the way " +
       "Thunderbird's own search ranks it. The other fields narrow the " +
       "results, and may be used without a query as long as a folder is " +
-      "given. Dates are ISO 8601.",
+      "given. Dates are ISO 8601. Search when the task is about the " +
+      "user's mail, or when you have been asked to look there -- not for " +
+      "background to work on files or documents, such as instructions, " +
+      "comments or someone's details, that nobody said came by email.",
     inputSchema: {
       type: "object",
       properties: {

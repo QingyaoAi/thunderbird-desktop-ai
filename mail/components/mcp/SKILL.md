@@ -1,6 +1,6 @@
 ---
 name: thunderbird-mail
-description: Read the user's Thunderbird mailbox and draft replies. Use for any question about their mail — what someone said, what a thread decided, what is unanswered, what is attached — and to draft a reply or a new message. Requires Thunderbird to be running.
+description: Read the user's Thunderbird mailbox and draft replies. Use when the task is about their mail — what someone said, what a thread decided, what is unanswered, what is attached — or the user says what it needs came by email, and to draft a reply or a new message. Not for finding background to work on files or documents that the user did not say is in their mail. Requires Thunderbird to be running.
 ---
 
 # Working with the user's mailbox
@@ -11,6 +11,16 @@ Seven tools: `search_mail`, `get_message`, `get_attachment`, `get_thread`,
 You can read mail, read its attachments, and save drafts. You cannot send,
 move, delete or flag anything — so a draft is always the end of the line, and
 the user sends it.
+
+## When to look
+
+Look in the mailbox when the task is about mail, or when the user says
+something came by email or asks you to check. Work on a document, a form,
+slides or a spreadsheet is not by itself a reason to search their mail for
+instructions, comments or people's details they did not mention. Work from
+what they gave you, and if something is missing, ask where it is rather than
+searching the mailbox on a guess — which also reads mail the task never
+needed (see Privacy).
 
 ## The shape of a good answer
 
