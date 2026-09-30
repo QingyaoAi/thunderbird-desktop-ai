@@ -456,6 +456,8 @@ async function OnLoadMsgHeaderPane() {
     .getElementById("starMessageButton")
     .addEventListener("click", MsgMarkAsFlagged);
 
+  attachmentDragHover.init();
+
   // Dispatch an event letting any listeners know that we have loaded
   // the message pane.
   const headerViewElement = document.getElementById("msgHeaderView");
@@ -2565,12 +2567,21 @@ async function saveLinkAttachmentsToFile(aAttachmentInfoArray) {
  *
  * Writing the file first is the only way to drag what Finder drags: a path.
  * It cannot be done during dragstart, which is synchronous and cannot wait
- * for an IMAP fetch, so it starts when the pointer goes down on the item and
- * is usually finished by the time the drag threshold is crossed.
+ * for an IMAP fetch, so it starts once the pointer has rested on the
+ * attachment (see attachmentDragHover), which is normally some hundreds of
+ * milliseconds before a drag from it begins.
  *
  * @type {Map<string, nsIFile>}
  */
 const attachmentDragFiles = new Map();
+
+/**
+ * Stagings still being written, keyed by attachment URL, so that the hover
+ * and the start of a drag do not each fetch and write the same attachment.
+ *
+ * @type {Map<string, Promise>}
+ */
+const attachmentDragStaging = new Map();
 
 // Each entry is a whole attachment written to disk, so this is capped far
 // lower than a cache of text would be. Pressing on attachments while reading
@@ -2616,21 +2627,110 @@ function rememberAttachmentDragFile(url, file) {
 async function prepareAttachmentForDrag(attachment) {
   if (
     !attachment ||
-    attachment.contentType == "text/x-moz-deleted" ||
+    attachment.isDeleted ||
+    !attachment.hasFile ||
     attachment.size > ATTACHMENT_DRAG_STAGE_MAX_BYTES ||
     attachmentDragFiles.get(attachment.url)?.exists()
   ) {
     return;
   }
-  try {
-    const name = DownloadPaths.sanitize(attachment.name) || "attachment";
-    const tempFile = await attachment.setupTempFile(name);
-    await attachment.saveToFile(tempFile.path, true);
-    rememberAttachmentDragFile(attachment.url, tempFile);
-  } catch (ex) {
-    console.warn(`Could not stage ${attachment.name} for dragging:`, ex);
+  const url = attachment.url;
+  if (attachmentDragStaging.has(url)) {
+    await attachmentDragStaging.get(url);
+    return;
   }
+  const staging = (async () => {
+    try {
+      const name = DownloadPaths.sanitize(attachment.name) || "attachment";
+      const tempFile = await attachment.setupTempFile(name);
+      await attachment.saveToFile(tempFile.path, true);
+      rememberAttachmentDragFile(url, tempFile);
+    } catch (ex) {
+      console.warn(`Could not stage ${attachment.name} for dragging:`, ex);
+    } finally {
+      attachmentDragStaging.delete(url);
+    }
+  })();
+  attachmentDragStaging.set(url, staging);
+  await staging;
 }
+
+// How long the pointer has to rest on an attachment before it is staged.
+// Long enough that sweeping the pointer across the attachment list on the
+// way somewhere else stages nothing; short enough that it is well under the
+// time it takes to press and start moving.
+const ATTACHMENT_DRAG_HOVER_DELAY_MS = 150;
+
+/**
+ * Stages the attachment the pointer rests on, so that it is already a file
+ * when a drag from it begins.
+ *
+ * Starting on the first movement with the button down, as attachmentList-
+ * DNDObserver.onMouseDown does, leaves only the few milliseconds before the
+ * drag threshold is crossed. A fetch and write take far longer, so the first
+ * drag of an attachment fell back to the file promise every time -- which
+ * drop targets other than Finder turn into a link or an HTML page -- and only
+ * a second drag, once the staging had finished, handed over the file.
+ *
+ * Listeners go on #attachmentList and #attachmentInfo, which live as long as
+ * the page: #attachmentName itself is replaced for every message shown.
+ */
+const attachmentDragHover = {
+  /** @type {?AttachmentInfo} */
+  attachment: null,
+  timer: null,
+
+  init() {
+    for (const id of ["attachmentList", "attachmentInfo"]) {
+      const container = document.getElementById(id);
+      container.addEventListener("mouseover", event =>
+        this.hover(this.attachmentAt(event.target))
+      );
+      container.addEventListener("mouseout", event =>
+        this.hover(this.attachmentAt(event.relatedTarget))
+      );
+    }
+  },
+
+  /**
+   * @param {?EventTarget} node
+   * @returns {?AttachmentInfo} The attachment a drag from `node` would take.
+   */
+  attachmentAt(node) {
+    if (!Element.isInstance(node)) {
+      return null;
+    }
+    const item = node.closest(".attachmentItem");
+    if (item) {
+      return item.attachment ?? null;
+    }
+    if (node.closest("#attachmentName")) {
+      return (
+        document.getElementById("attachmentList").getItemAtIndex(0)
+          ?.attachment ?? null
+      );
+    }
+    return null;
+  },
+
+  /**
+   * @param {?AttachmentInfo} attachment - Now under the pointer, if any.
+   */
+  hover(attachment) {
+    if (attachment == this.attachment) {
+      return;
+    }
+    clearTimeout(this.timer);
+    this.timer = null;
+    this.attachment = attachment;
+    if (attachment) {
+      this.timer = setTimeout(() => {
+        this.timer = null;
+        prepareAttachmentForDrag(attachment);
+      }, ATTACHMENT_DRAG_HOVER_DELAY_MS);
+    }
+  },
+};
 
 // See attachmentBucketDNDObserver, which should have the same logic.
 const attachmentListDNDObserver = {
@@ -2670,6 +2770,10 @@ const attachmentListDNDObserver = {
     // staging on every one of those fetched whole attachments that were never
     // going to be dragged. The first movement with the button still down is
     // what a drag looks like, and it comes well before the drag threshold.
+    //
+    // Too late, usually, for the file to be written before dragstart:
+    // attachmentDragHover starts it earlier. This covers a press that comes
+    // before the pointer has rested long enough for that.
     if (event.button != 0) {
       return;
     }
@@ -2692,7 +2796,11 @@ const attachmentListDNDObserver = {
 const attachmentNameDNDObserver = {
   onDragStart(event) {
     const attachmentList = document.getElementById("attachmentList");
-    setupDataTransfer(event, [attachmentList.getItemAtIndex(0).attachment]);
+    setupDataTransfer(
+      event,
+      [attachmentList.getItemAtIndex(0).attachment],
+      attachmentDragFiles
+    );
     event.stopPropagation();
   },
 };
