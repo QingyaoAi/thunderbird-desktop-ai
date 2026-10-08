@@ -182,6 +182,25 @@ body {
 
 #aiPaneSplitter {
   grid-area: aiPaneSplitter;
+  position: relative;
+  /* An hr clips what is outside its box, which is where ::before is. */
+  overflow: visible;
+
+  /* A splitter takes hold over 5px, and for this one all five are on the
+   * message pane's side: four over the message pane's edge, where a message's
+   * scrollbar is, and the line it draws. Nothing on the AI pane's side took
+   * hold, the pane's own border beside that line included, so aiming at the
+   * line missed as often as not. This carries the area 5px into the AI pane
+   * as well -- over its border and into the padding every part of it has
+   * there -- without drawing or moving anything. */
+  &::before {
+    content: "";
+    position: absolute;
+    inset-block: 0;
+    /* Measured from inside the splitter's line, so the line's width more. */
+    inset-inline-start: 100%;
+    inline-size: calc(var(--splitter-occupy-size) + var(--splitter-content-size));
+  }
 }
 
 #aiPane {

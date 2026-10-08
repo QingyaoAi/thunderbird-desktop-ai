@@ -26,6 +26,8 @@ support-files = [
 
 ["browser_addressBook.js"]
 
+["browser_aiPaneSplitter.js"]
+
 ["browser_aiPanelDsh.js"]
 
 ["browser_archive.js"]
