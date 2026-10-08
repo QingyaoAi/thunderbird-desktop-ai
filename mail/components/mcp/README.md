@@ -205,20 +205,33 @@ its own list of the first seven, so a client started through it cannot tag.
 
 The **dsh** button in the AI panel's header runs
 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) as an
-agent the panel talks to. It is off until pressed, and nothing about it runs
-until then. Pressing it starts `dsh --profile acp` — the Agent Client
-Protocol, JSON-RPC over the program's stdin and stdout — and opens a session
-with this mailbox attached as an MCP server on `/mcp`. The token for that is
-made in memory for the run and dropped when the run ends; it is never stored
-and never appears among the passwords above. While dsh is on, what is typed in
-the panel goes to it, together with the message that is open, if any, as a
-link it can read with `get_message`.
+agent the panel talks to. Where dsh is installed it is on from the start: the
+panel opens with dsh as what answers, and the button turns it off, for the
+panel's own model to answer instead. Whichever the button left it as is what
+the panel next opens with. Where there is no dsh to run -- node or dsh not
+found, or mail access off -- the panel opens with its own model, as before.
+
+On is not running. The program is started by the first thing sent to it, or
+by pressing the button when it is off, so a Thunderbird nobody asks anything
+has no dsh process and leaves no empty session. Starting it runs
+`dsh --profile acp` — the Agent Client Protocol, JSON-RPC over the program's
+stdin and stdout — and opens a session with this mailbox attached as an MCP
+server on `/mcp`. The token for that is made in memory for the run and dropped
+when the run ends; it is never stored and never appears among the passwords
+above. While dsh is on, what is typed in the panel goes to it, together with
+the message that is open, if any: a link whose target is the message's id and
+whose name gives its subject, sender and date.
 
 dsh is started with a patch layer of Thunderbird's own
 (`dsh-thunderbird.patch.yml` in the profile, rewritten each time) in place of
-its ACP profile's coding-agent persona: whatever the task, look in the mailbox
-first, and turn to the web, the shell or files only when the mail does not
-answer it. Only that run is affected; dsh started any other way is not.
+its ACP profile's coding-agent persona. It says to start from what is open:
+when a request could be about the open message, read that message's whole
+conversation with `get_thread` first and answer from it; look in the rest of
+the mailbox only for what the conversation does not settle, with a few
+searches and no more; and when the open conversation has nothing to do with
+the request, or nothing is open, do the task by searching the mailbox, turning
+to the web, the shell or files only when the mail does not answer it. Only
+that run is affected; dsh started any other way is not.
 
 Answers link the messages they cite. The persona asks for `[text](<id>)`
 whenever an answer mentions a message -- a message's id is its URI -- and the
@@ -234,12 +247,15 @@ dsh keeps its own model settings and keys, and the panel offers its models in
 place of its own. It can run commands and read and write files in its working
 folder; when it asks permission to use a tool, the panel shows the request,
 with a choice to allow everything for the rest of the session. Pressing
-**Clear** starts a new session; pressing **dsh** again stops the program.
+**Clear** starts a new session; pressing **dsh** while it is on stops the
+program.
 
-The **⚙** beside it sets the three paths, kept in these prefs:
+The **⚙** beside it sets the three paths. They, and how the button was left,
+are kept in these prefs:
 
 | Pref | What | When unset |
 | --- | --- | --- |
+| `mail.ai.dsh.on` | Whether the button left dsh on | On |
 | `mail.ai.dsh.node` | node | The first of `/opt/homebrew/bin/node`, `/usr/local/bin/node`, `/usr/bin/node` that exists |
 | `mail.ai.dsh.path` | dsh: its `apps/cli/lib/bin.js`, run with node, or an installed `dsh` program | The first `dsh` found in node's folder, `/opt/homebrew/bin` or `/usr/local/bin` -- where `npm install -g` puts it |
 | `mail.ai.dsh.workspace` | The folder dsh works in | `thunderbird-dsh` in the temporary folder |

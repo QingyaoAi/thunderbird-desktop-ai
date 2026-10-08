@@ -6,12 +6,17 @@
  * The AI panel's dsh mode: DeepSeek Harness running as an agent, turned on
  * and off with a button in the panel's header.
  *
- * Off is the default, and nothing about dsh runs until the button is pressed.
+ * On is the default wherever there is a dsh to run: the panel opens with dsh
+ * as what answers, and the button is how to go back to the panel's own model,
+ * which is then remembered. On is not running, though. The program is started
+ * by the first thing sent to it, or by the button, so a Thunderbird nobody
+ * asks anything has no dsh process and leaves no empty session behind.
+ *
  * While it is on, what is typed in the panel goes to dsh instead of to the
- * panel's own model, and the transcript shows what dsh does as it does it --
- * its reasoning, each tool it calls and what came back, and its answers.
- * Starting and talking to the program is DshAgent's job; this is the part
- * that shows it.
+ * panel's own model, with the message that is open as where to begin, and the
+ * transcript shows what dsh does as it does it -- its reasoning, each tool it
+ * calls and what came back, and its answers. Starting and talking to the
+ * program is DshAgent's job; this is the part that shows it.
  */
 
 import {
@@ -61,10 +66,18 @@ export class DshPanel {
    */
   constructor(panel) {
     this.panel = panel;
-    /** @type {"off"|"starting"|"on"} */
+    /**
+     * "off" is the panel's own model answering. In the other three dsh does:
+     * "ready" before anything has been sent to it, when no program is running
+     * yet, then "starting" and "on".
+     *
+     * @type {"off"|"ready"|"starting"|"on"}
+     */
     this.state = "off";
     /** @type {?DshAgent} */
     this.agent = null;
+    /** @type {?Promise<void>} The latest start, settled once it is over. */
+    this._starting = null;
     this._prompting = false;
     /** The assistant turn being written into, while a prompt runs. */
     this._turn = null;
@@ -100,18 +113,50 @@ export class DshPanel {
     return this._prompting;
   }
 
+  /**
+   * Begin the way the panel was left: with dsh answering, unless its button
+   * turned it off or there is no dsh to run. Nothing is started.
+   */
+  async restore() {
+    if (this.state == "starting" || this.state == "on") {
+      return;
+    }
+    this._setState(
+      (await lazy.DshSettings.answersByDefault()) ? "ready" : "off"
+    );
+  }
+
+  /** The button. What it leaves dsh as is what the panel next opens with. */
   async toggle() {
     if (this.state == "off") {
       await this.start();
+      if (this.state != "off") {
+        lazy.DshSettings.leftOn(true);
+      }
     } else {
+      lazy.DshSettings.leftOn(false);
       await this.stop();
     }
   }
 
-  async start() {
-    if (this.state != "off") {
-      return;
+  /**
+   * Start dsh, unless it is running. If it cannot be started the panel says
+   * why and goes back to what it was: off, where the button asked for it.
+   *
+   * @returns {Promise<void>} Settles once dsh is on, or has failed to be.
+   */
+  start() {
+    if (this.state == "on") {
+      return Promise.resolve();
     }
+    if (this.state != "starting") {
+      this._starting = this._start();
+    }
+    return this._starting;
+  }
+
+  async _start() {
+    const before = this.state;
     this._setState("starting");
     const notice = this._note("ai-panel-dsh-starting");
 
@@ -125,7 +170,7 @@ export class DshPanel {
     } catch (ex) {
       notice.remove();
       if (this.state == "starting") {
-        this._setState("off");
+        this._setState(before);
         this._showFailure(ex);
       }
       return;
@@ -172,7 +217,7 @@ export class DshPanel {
     this.agent = null;
     this._answerWaiting(null);
     this._endPrompt();
-    this._setState("off");
+    this._setState("ready");
     await agent?.stop();
     await this.start();
   }
@@ -180,61 +225,108 @@ export class DshPanel {
   /** Ask dsh to stop what it is doing. The prompt then settles by itself. */
   cancel() {
     this._answerWaiting(null);
+    if (this._prompting && !this.agent) {
+      // Still being started for this prompt, so there is nobody to tell:
+      // the prompt is dropped here, and send() finds it gone.
+      this.panel.transcript.appendChild(this.panel._notice("ai-panel-stopped"));
+      this._endPrompt();
+      return;
+    }
     this.agent?.cancel();
   }
 
   /**
    * Send what was typed, with the message that is open, if there is one, as
-   * a link dsh can read with its mail tools.
+   * a link dsh can read with its mail tools. The first thing sent is what
+   * starts dsh.
    *
    * @param {string} text
    */
   async send(text) {
-    if (this.state != "on" || this._prompting) {
+    if (this.state == "off" || this._prompting) {
       return;
     }
     const panel = this.panel;
     panel.input.value = "";
     panel._addTurn("user").textContent = text;
 
+    // What is open as this is asked, not once dsh has started.
     const blocks = [{ type: "text", text }];
-    const openMessage = panel._replyTarget();
+    const openMessage = this._openMessageLink();
     if (openMessage) {
-      blocks.push({
-        type: "resource_link",
-        uri: openMessage.folder.getUriForMsg(openMessage),
-        name: `the message open in Thunderbird: ${openMessage.mime2DecodedSubject}`,
-      });
+      blocks.push(openMessage);
     }
 
-    this._turn = {
-      body: panel._addTurn("assistant"),
+    const turn = {
+      body: null,
       thinking: null,
       answer: null,
       answerId: null,
       answerRaw: "",
       tools: new Map(),
     };
+    this._turn = turn;
     this._prompting = true;
     panel._setBusy(true);
-    const agent = this.agent;
     try {
-      const stopReason = await agent.prompt(blocks);
-      if (stopReason == "cancelled") {
-        this._turn?.body.appendChild(panel._notice("ai-panel-stopped"));
-      } else if (stopReason && stopReason != "end_turn") {
-        this._turn?.body.appendChild(
-          this._noticeWith("ai-panel-dsh-stopped-early", { reason: stopReason })
-        );
+      await this.start();
+      if (this._turn != turn || this.state != "on") {
+        // It could not be started, which start() has said, or this was
+        // stopped while it was.
+        return;
       }
-    } catch (ex) {
-      // A run that died is explained by _onExit; anything else is shown here.
-      if (this.agent == agent && this._turn) {
-        this._turn.body.appendChild(this._error(ex.message));
+      // Made only now, so that it comes after the notices starting left.
+      turn.body = panel._addTurn("assistant");
+      const agent = this.agent;
+      try {
+        const stopReason = await agent.prompt(blocks);
+        if (stopReason == "cancelled") {
+          turn.body.appendChild(panel._notice("ai-panel-stopped"));
+        } else if (stopReason && stopReason != "end_turn") {
+          turn.body.appendChild(
+            this._noticeWith("ai-panel-dsh-stopped-early", {
+              reason: stopReason,
+            })
+          );
+        }
+      } catch (ex) {
+        // A run that died is explained by _onExit; anything else is shown
+        // here.
+        if (this.agent == agent && this._turn == turn) {
+          turn.body.appendChild(this._error(ex.message));
+        }
       }
     } finally {
-      this._endPrompt();
+      // A turn ended from elsewhere -- dsh stopped or turned off -- may have
+      // been followed by another by now, which is not this one's to end.
+      if (this._turn == turn) {
+        this._endPrompt();
+      }
     }
+  }
+
+  /**
+   * The message open in the mail tab, as a link to send with a prompt. Its
+   * URI is its id for the mail tools, and the name says what it is --
+   * subject, sender and date, as the tools give them -- so that dsh can tell
+   * whether a request is about it before reading it. dsh's persona, in
+   * DshAgent, tells it to begin there.
+   *
+   * @returns {?object} An ACP resource_link block, or null with none open.
+   */
+  _openMessageLink() {
+    const hdr = this.panel._replyTarget();
+    if (!hdr) {
+      return null;
+    }
+    const date = new Date(hdr.date / 1000).toISOString();
+    return {
+      type: "resource_link",
+      uri: hdr.folder.getUriForMsg(hdr),
+      name:
+        `the message open in Thunderbird: "${hdr.mime2DecodedSubject}", ` +
+        `from ${hdr.mime2DecodedAuthor}, ${date}`,
+    };
   }
 
   // -- settings --------------------------------------------------------------
@@ -302,7 +394,9 @@ export class DshPanel {
       }
       lazy.DshSettings.set(key, path);
     }
-    if (this.state != "off") {
+    // Only a dsh that is running has the old ones; one not yet started will
+    // be started with these.
+    if (this.state == "starting" || this.state == "on") {
       this._note("ai-panel-dsh-restart");
     }
   }
@@ -380,7 +474,7 @@ export class DshPanel {
       return;
     }
     const turn = this._turn;
-    if (!turn) {
+    if (!turn?.body) {
       return;
     }
     const follow = this.panel._isAtEnd();
@@ -637,7 +731,8 @@ export class DshPanel {
     this.agent = null;
     this._answerWaiting(null);
     this._endPrompt();
-    this._setState("off");
+    // Still what answers: the next thing sent starts it again.
+    this._setState("ready");
     const notice = this._noticeWith("ai-panel-dsh-exited", { code: exitCode });
     notice.classList.add("ai-error");
     this.panel.transcript.appendChild(notice);

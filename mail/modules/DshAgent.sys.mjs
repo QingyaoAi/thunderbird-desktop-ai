@@ -5,12 +5,13 @@
 /**
  * DeepSeek Harness (dsh), run as an agent the AI panel can talk to.
  *
- * dsh is a separate program, started only when asked for -- never with
- * Thunderbird -- in its ACP mode: the Agent Client Protocol, JSON-RPC over the
- * program's stdin and stdout, the way editors drive coding agents. Thunderbird
- * is the client. It hands the agent this mailbox as an MCP server, on the mail
- * endpoint's `/mcp` route with a token made for the run and revoked when the
- * run ends, and passes on to the panel what the agent says and does.
+ * dsh is a separate program, started only when there is something to ask it
+ * -- never with Thunderbird -- in its ACP mode: the Agent Client Protocol,
+ * JSON-RPC over the program's stdin and stdout, the way editors drive coding
+ * agents. Thunderbird is the client. It hands the agent this mailbox as an MCP
+ * server, on the mail endpoint's `/mcp` route with a token made for the run
+ * and revoked when the run ends, and passes on to the panel what the agent
+ * says and does.
  *
  * dsh keeps its own model settings and keys; none are configured here. What
  * is: where node and dsh are, and the folder the agent works in. It can run
@@ -35,6 +36,12 @@ export const DSH_PREFS = {
 };
 
 /**
+ * Whether dsh was left on in the AI panel: true until its button turns it
+ * off, and then false until the button turns it on again.
+ */
+export const DSH_ON_PREF = "mail.ai.dsh.on";
+
+/**
  * Where node usually is, tried in order when no path has been set.
  * Thunderbird started from the Dock has only the system PATH, which has none
  * of these, so a PATH search would not find node where it actually is.
@@ -56,8 +63,18 @@ const DSH_CANDIDATES = ["/opt/homebrew/bin/dsh", "/usr/local/bin/dsh"];
  *
  * dsh's ACP profile introduces it as a coding agent, which sends it to the
  * web and the shell for anything it does not already know. Started from the
- * mail client, the mailbox is the first place to look, whatever the task --
- * and a message it cites should be a link the user can click. The link rule is
+ * mail client, it is asked beside the mail the user is reading, so that is
+ * where it is told to begin: the panel sends each request with a link to the
+ * message that is open (see DshPanel's _openMessageLink), and that message's
+ * conversation is the first thing to read. Only what the conversation does
+ * not settle is looked for in the rest of the mailbox, and then not at
+ * length; a request the open conversation has nothing to do with is done by
+ * searching, as it would be with nothing open. It was told to search the
+ * mailbox first for everything, and did: asked three things about a visit
+ * with the visit's conversation open, it made some twenty searches before
+ * reading the conversation that answered it.
+ *
+ * A message it cites should be a link the user can click. The link rule is
  * here rather than only in the mail endpoint's MCP instructions because dsh
  * does not pass on the instructions of an MCP server a client attaches. This
  * goes to dsh as a patch layer for this run only -- the `--patch` it is started
@@ -69,14 +86,34 @@ const PERSONA_PATCH = `# Written by Thunderbird each time it starts dsh, for tha
   config:
     personaPrefix: >-
       You are the mail assistant in the user's Thunderbird, powered by the
-      {{model}} model. The user is talking to you from their mail client, so
-      whatever the task, their mailbox is the first place to look: search it
-      with the thunderbird tools (mcp__thunderbird__search_mail, sorting by
-      date for anything recent, then get_thread, get_message and
-      get_attachment to read what you find), and answer from what the mail
-      says. Turn to the web, the shell or files only when the mailbox has
-      nothing that answers it, or the task plainly needs them, and then say
-      that the mail did not have it.
+      {{model}} model. The user is talking to you from their mail client,
+      with their mail in front of them. The thunderbird tools are already
+      attached; there is no skill to load before using them.
+
+      Start from what they have open. A request that comes with a resource
+      link named "the message open in Thunderbird" tells you what is on
+      their screen as they ask: the name gives its subject, sender and date,
+      and the link's uri is that message's id. Judge from those whether the
+      request could be about it. When it could, that message and its
+      conversation are the context for the request: read the whole
+      conversation with mcp__thunderbird__get_thread before anything else,
+      and answer from it. "This", "it", "them" or "the attachment", with
+      nothing else named, mean that message.
+
+      When the open conversation is what the request is about but does not
+      settle part of it, say so: that is an answer too. You may check the
+      rest of the mailbox for that part, with at most three searches in all;
+      then stop searching and answer, saying that the mail does not seem to
+      have it. Do not reword a search that found nothing, unless the user
+      asks you to look further.
+
+      When the open conversation turns out to have nothing to do with the
+      request, or no message is open, do the task with your tools: search
+      the mailbox (mcp__thunderbird__search_mail, sorting by date for
+      anything recent, then get_thread, get_message and get_attachment to
+      read what you find), and turn to the web, the shell or files when the
+      mailbox has nothing that answers it or the task plainly needs them,
+      saying then that the mail did not have it.
 
       Link every message you cite. A message's id, as the thunderbird tools
       return it, opens that message in Thunderbird when it is the target of
@@ -187,6 +224,41 @@ export const DshSettings = {
     } else {
       Services.prefs.clearUserPref(DSH_PREFS[key]);
     }
+  },
+
+  /**
+   * Whether dsh is what answers in the AI panel when the panel opens. It is,
+   * unless its button turned it off the last time -- and as long as there is
+   * a dsh to run: node and dsh where the settings, or the usual places, say,
+   * and mail access on, which is how dsh reads the mail. Without those the
+   * panel's own model answers, as it does for someone who has never
+   * installed dsh, instead of a panel that opens on an error.
+   *
+   * @returns {Promise<boolean>}
+   */
+  async answersByDefault() {
+    if (
+      !Services.prefs.getBoolPref(DSH_ON_PREF, true) ||
+      !Services.prefs.getBoolPref("mail.mcp.enabled", false)
+    ) {
+      return false;
+    }
+    const { node, dsh } = await this.get();
+    return (
+      Boolean(node && dsh) &&
+      (await IOUtils.exists(node)) &&
+      (await IOUtils.exists(dsh))
+    );
+  },
+
+  /**
+   * Record that dsh's button turned it on or off, for the next time the
+   * panel opens.
+   *
+   * @param {boolean} on
+   */
+  leftOn(on) {
+    Services.prefs.setBoolPref(DSH_ON_PREF, on);
   },
 };
 

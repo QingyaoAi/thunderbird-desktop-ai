@@ -88,6 +88,8 @@ while True:
                        if b.get("type") == "text")
         links = [b["uri"] for b in params["prompt"]
                  if b.get("type") == "resource_link"]
+        names = [b["name"] for b in params["prompt"]
+                 if b.get("type") == "resource_link"]
         if text == "crash":
             sys.stderr.write("the stand-in fell over\\n")
             sys.stderr.flush()
@@ -150,7 +152,7 @@ while True:
         same_dir = os.path.realpath(os.getcwd()) == os.path.realpath(cwd)
         report = {"said": text, "tools": tools, "sameDir": same_dir,
                   "path": os.environ["PATH"].split(":")[0],
-                  "permission": chosen, "links": links,
+                  "permission": chosen, "links": links, "names": names,
                   "argv": sys.argv[1:]}
         update({"sessionUpdate": "agent_message_chunk",
                 "content": {"type": "text", "text": json.dumps(report)}})

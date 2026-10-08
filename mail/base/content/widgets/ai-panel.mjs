@@ -112,7 +112,7 @@ export const AIPanel = {
     this.setupNotice = document.getElementById("ai-panel-setup");
     this.actions = document.getElementById("ai-panel-actions");
     this.modelPicker = document.getElementById("ai-panel-model");
-    // Off until its button is pressed; see ai-panel-dsh.mjs.
+    // What answers by default, where it is installed; see ai-panel-dsh.mjs.
     this.dsh = new DshPanel(this);
 
     this.modelPicker.addEventListener("change", () => {
@@ -191,6 +191,9 @@ export const AIPanel = {
     this.input.addEventListener("input", () => this.updateDraftButton());
 
     await this.refreshProfiles();
+    // After the profiles, which show the panel's own model picker: with dsh
+    // answering it is hidden again.
+    await this.dsh.restore();
     await this.refreshConfigured();
   },
 

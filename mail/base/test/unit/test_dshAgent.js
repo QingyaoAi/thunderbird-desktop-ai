@@ -155,6 +155,11 @@ add_task(async function testAPromptAndItsPermission() {
   );
   Assert.stringContains(
     await IOUtils.readUTF8(report.argv[patchAt + 1]),
+    "Start from what they have open",
+    "to begin with the message that is open"
+  );
+  Assert.stringContains(
+    await IOUtils.readUTF8(report.argv[patchAt + 1]),
     "Link every message you cite",
     "and to link the messages it cites"
   );
@@ -362,4 +367,42 @@ add_task(async function testSettingsDefaults() {
   DshSettings.set("dsh", saved.dsh);
   DshSettings.set("workspace", saved.workspace);
   Assert.deepEqual(await DshSettings.get(), saved, "settings are kept");
+});
+
+/**
+ * dsh is what answers in the AI panel from the start, but only where it can:
+ * not once its button has turned it off, and not without a dsh to run or the
+ * mail access it reads the mail through.
+ */
+add_task(async function testAnsweringByDefault() {
+  Assert.ok(
+    !Services.prefs.prefHasUserValue("mail.ai.dsh.on"),
+    "nothing has turned it on or off yet"
+  );
+  Assert.ok(await DshSettings.answersByDefault(), "it does, where it can");
+
+  DshSettings.leftOn(false);
+  Assert.ok(
+    !(await DshSettings.answersByDefault()),
+    "not once it has been turned off"
+  );
+  DshSettings.leftOn(true);
+  Assert.ok(await DshSettings.answersByDefault(), "until it is turned on");
+  Services.prefs.clearUserPref("mail.ai.dsh.on");
+
+  Services.prefs.setBoolPref("mail.mcp.enabled", false);
+  Assert.ok(
+    !(await DshSettings.answersByDefault()),
+    "not with mail access off, when it could not read the mail"
+  );
+  Services.prefs.setBoolPref("mail.mcp.enabled", true);
+
+  const fake = Services.prefs.getStringPref("mail.ai.dsh.path");
+  DshSettings.set("dsh", PathUtils.join(scratch, "nowhere"));
+  Assert.ok(
+    !(await DshSettings.answersByDefault()),
+    "and not where there is no dsh to run"
+  );
+  DshSettings.set("dsh", fake);
+  Assert.ok(await DshSettings.answersByDefault());
 });

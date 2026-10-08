@@ -3,10 +3,11 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 /**
- * The AI panel's dsh mode, driven through the panel the way it is used: the
- * button that turns it on and off, a prompt with the message that is open,
- * a permission to answer, stopping, the model picker, and a fresh session on
- * Clear. dsh itself is replaced by a stand-in (FakeAcpAgent.sys.mjs).
+ * The AI panel's dsh mode, driven through the panel the way it is used: on
+ * from the start and started by the first prompt, which goes with the message
+ * that is open; a permission to answer, stopping, the model picker, a fresh
+ * session on Clear, and the button that turns it off and on. dsh itself is
+ * replaced by a stand-in (FakeAcpAgent.sys.mjs).
  */
 
 const { MessageGenerator } = ChromeUtils.importESModule(
@@ -119,60 +120,119 @@ add_setup(async function () {
 
   await about3Pane.AIPanelUI.toggle(true);
   AIPanel = about3Pane.AIPanel;
+  // The panel opened before there were these settings, with whatever dsh
+  // this machine has, or none. Have it look again now.
+  await AIPanel.dsh.restore();
 
   registerCleanupFunction(async () => {
     await AIPanel.dsh.stop();
-    AIPanel.transcript.replaceChildren();
     for (const pref of [
       "mail.ai.dsh.node",
       "mail.ai.dsh.path",
       "mail.ai.dsh.workspace",
+      "mail.ai.dsh.on",
       "mail.mcp.enabled",
     ]) {
       Services.prefs.clearUserPref(pref);
     }
+    // Back to what the panel opens as here, for whatever runs next.
+    await AIPanel.dsh.restore();
+    AIPanel.transcript.replaceChildren();
     MailMcpServer.stop();
     MailServices.accounts.removeAccount(account, false);
     await IOUtils.remove(scratch, { recursive: true });
   });
 });
 
-add_task(async function testTurningItOn() {
-  const button = doc.getElementById("ai-panel-dsh");
-  Assert.equal(button.getAttribute("aria-pressed"), "false", "off to begin");
-
-  click(button);
-  await TestUtils.waitForCondition(
-    () => AIPanel.dsh.state == "on",
-    "dsh should start"
+add_task(async function testWithoutDshThePanelIsAsItWas() {
+  // Nowhere, as for someone who has never installed dsh.
+  Services.prefs.setStringPref(
+    "mail.ai.dsh.path",
+    PathUtils.join(scratch, "nowhere")
   );
-  Assert.equal(button.getAttribute("aria-pressed"), "true");
+  await AIPanel.dsh.restore();
+  Assert.equal(AIPanel.dsh.state, "off", "the panel's own model answers");
+  Assert.equal(
+    doc.getElementById("ai-panel-dsh").getAttribute("aria-pressed"),
+    "false"
+  );
+  Assert.ok(
+    BrowserTestUtils.isVisible(AIPanel.modelPicker),
+    "with its model picker in the header, as before there was dsh"
+  );
+  Assert.ok(!AIPanel.dsh.agent, "and nothing has been started");
+
+  Services.prefs.setStringPref("mail.ai.dsh.path", fakeDsh);
+  await AIPanel.dsh.restore();
+});
+
+add_task(async function testOnFromTheStart() {
+  Assert.equal(AIPanel.dsh.state, "ready", "dsh is what answers");
+  Assert.equal(
+    doc.getElementById("ai-panel-dsh").getAttribute("aria-pressed"),
+    "true",
+    "and its button says so"
+  );
+  Assert.ok(!AIPanel.dsh.agent, "but nothing runs until something is sent");
   Assert.ok(
     BrowserTestUtils.isHidden(AIPanel.modelPicker),
     "the panel's own model picker makes way"
   );
-  const dshModels = doc.getElementById("ai-panel-dsh-model");
-  Assert.ok(BrowserTestUtils.isVisible(dshModels), "for dsh's");
-  Assert.equal(dshModels.value, "deepseek/v4");
+  Assert.ok(
+    BrowserTestUtils.isHidden(doc.getElementById("ai-panel-dsh-model")),
+    "and dsh's waits for dsh"
+  );
   Assert.ok(
     BrowserTestUtils.isVisible(AIPanel.form),
     "the composer is there, whether or not the panel's model is set up"
   );
 });
 
-add_task(async function testAPrompt() {
+add_task(async function testWhenTheFirstPromptCannotStartIt() {
+  // There, so dsh is still what answers, but not something that can be run.
+  const broken = PathUtils.join(scratch, "not-a-program");
+  await IOUtils.writeUTF8(broken, "nothing to run\n");
+  Services.prefs.setStringPref("mail.ai.dsh.path", broken);
+
+  send("hello");
+  await TestUtils.waitForCondition(
+    () => doc.querySelector(".ai-error .ai-dsh-stderr"),
+    "the reason is shown"
+  );
+  await waitForTurnToEnd();
+  Assert.equal(AIPanel.dsh.state, "ready", "dsh still answers, to try again");
+  Assert.ok(
+    BrowserTestUtils.isVisible(AIPanel.sendButton),
+    "and the composer is ready to"
+  );
+  Assert.ok(!lastAnswerTurn(), "with no answer left waiting");
+
+  Services.prefs.setStringPref("mail.ai.dsh.path", fakeDsh);
+  AIPanel.transcript.replaceChildren();
+});
+
+add_task(async function testTheFirstPromptStartsIt() {
   send("hello");
 
   const allow = await TestUtils.waitForCondition(
     () => doc.querySelector(".ai-dsh-permission-buttons button"),
     "dsh should ask before using its tool"
   );
+  Assert.equal(AIPanel.dsh.state, "on", "sending is what started dsh");
+  const dshModels = doc.getElementById("ai-panel-dsh-model");
+  Assert.ok(BrowserTestUtils.isVisible(dshModels), "whose models are offered");
+  Assert.equal(dshModels.value, "deepseek/v4");
+
   await labelled(allow.parentNode);
   Assert.equal(allow.textContent, "Allow once");
   click(allow);
   await waitForTurnToEnd();
 
   const turn = lastAnswerTurn();
+  Assert.ok(
+    turn.previousElementSibling.classList.contains("ai-notice"),
+    "the answer comes after the notice that dsh is on"
+  );
   const tool = turn.querySelector(".ai-dsh-tool");
   Assert.equal(
     tool.querySelector(".ai-dsh-tool-name").textContent,
@@ -198,6 +258,15 @@ add_task(async function testAPrompt() {
     report.links,
     [folder.getUriForMsg(open)],
     "the open message goes with the prompt"
+  );
+  Assert.deepEqual(
+    report.names,
+    [
+      `the message open in Thunderbird: "${open.mime2DecodedSubject}", ` +
+        `from ${open.mime2DecodedAuthor}, ` +
+        new Date(open.date / 1000).toISOString(),
+    ],
+    "named for what it is, so dsh can tell whether it was what was asked about"
   );
   Assert.equal(doc.activeElement, AIPanel.input, "the composer is ready again");
 });
@@ -346,6 +415,17 @@ add_task(async function testTurningItOff() {
     doc.getElementById("ai-panel-dsh").getAttribute("aria-pressed"),
     "false"
   );
+
+  Assert.ok(
+    !Services.prefs.getBoolPref("mail.ai.dsh.on"),
+    "that it was turned off is remembered"
+  );
+  await AIPanel.dsh.restore();
+  Assert.equal(
+    AIPanel.dsh.state,
+    "off",
+    "so the panel next opens with its own model answering"
+  );
 });
 
 add_task(async function testWhenItCannotStart() {
@@ -364,6 +444,10 @@ add_task(async function testWhenItCannotStart() {
     "with the way to fix it"
   );
   Assert.equal(AIPanel.dsh.state, "off");
+  Assert.ok(
+    !Services.prefs.getBoolPref("mail.ai.dsh.on"),
+    "a start that failed is not remembered as on"
+  );
   Services.prefs.setStringPref("mail.ai.dsh.path", fakeDsh);
 });
 
@@ -392,6 +476,26 @@ add_task(async function testClearingSessions() {
     "and the panel says so"
   );
   Services.env.set("DSH_HOME", "");
+});
+
+add_task(async function testTurningItBackOn() {
+  const button = doc.getElementById("ai-panel-dsh");
+  Assert.equal(button.getAttribute("aria-pressed"), "false", "off to begin");
+
+  click(button);
+  await TestUtils.waitForCondition(
+    () => AIPanel.dsh.state == "on",
+    "the button starts dsh at once"
+  );
+  Assert.equal(button.getAttribute("aria-pressed"), "true");
+  Assert.ok(
+    BrowserTestUtils.isVisible(doc.getElementById("ai-panel-dsh-model")),
+    "with its models"
+  );
+  Assert.ok(
+    Services.prefs.getBoolPref("mail.ai.dsh.on"),
+    "and that it was turned on is remembered too"
+  );
 });
 
 add_task(function testRenderingLinks() {
