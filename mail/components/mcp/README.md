@@ -4,8 +4,10 @@ A local endpoint that lets an AI assistant read this Thunderbird's mail and
 write drafts, plus a bridge that presents it to MCP clients.
 
 It reads mail, writes drafts and tags messages. There is no method that
-sends, moves or deletes anything — the worst outcome of a confused model is a
-draft nobody sent, or a tag to take off again.
+sends anything, or that moves or deletes a message — the worst outcome of a
+confused model is a draft nobody sent, or a tag to take off again. The one
+thing it removes is the version of a draft it was asked to change, and that
+goes to the Trash.
 
 ## Why it lives inside Thunderbird
 
@@ -74,9 +76,11 @@ existing `thunderbird` MCP server registration.
 - **Passwords live with the mail passwords** — encrypted at rest, covered by
   the primary password if one is set. Never in a config file, never in the
   repository.
-- **Read, draft and tag only.** Nothing sends, moves or deletes. Tags can be
-  added and taken off, and Important is the star, so that one stars and
-  unstars; a tag is never created, only chosen from the user's own.
+- **Read, draft and tag only.** Nothing sends, and no message is moved or
+  deleted. A draft can be changed, which saves it again and puts the version
+  it replaces in the Trash; only a message in a Drafts folder can be. Tags
+  can be added and taken off, and Important is the star, so that one stars
+  and unstars; a tag is never created, only chosen from the user's own.
 - Access can be turned off entirely from the same menu, and passwords deleted
   individually or all at once. Deletion takes effect on the next request.
 
@@ -107,12 +111,13 @@ curl -s -X POST http://127.0.0.1:47821/rpc \
 | Method | Purpose |
 | --- | --- |
 | `search` | Ranked full-text search, with filters |
-| `getMessage` | One message: headers, decoded body, attachment list |
+| `getMessage` | One message: headers, decoded body, attachment list; its HTML if asked |
 | `getAttachment` | One attachment, written to a private temporary file |
 | `getThread` | Every message in a conversation, oldest first |
 | `listFolders` | Folders with message and unread counts |
 | `listIdentities` | Addresses this Thunderbird can write as |
 | `createDraft` | Save a draft; never sends |
+| `updateDraft` | Change a draft where it is; never sends |
 | `listTags` | The user's tags: key, name and colour |
 | `tagMessages` | Add tags to messages, or take them off |
 
@@ -148,6 +153,12 @@ Take an `id` from a search result. `includeBody` / `includeBodies` may be
 `false` to skip the body, which is much faster for a long thread. Bodies are
 capped at 100,000 characters, with `truncated: true` when cut.
 
+`getMessage` with `html: true` also returns the body as `html` — what is in
+the body, as the message has it, with pictures set in the text named by
+their `cid:` addresses; `null` for a message whose text is not HTML. It is
+capped the same way, with `htmlTruncated: true`, and is there for changing a
+draft and keeping its formatting (see `updateDraft`).
+
 ### `getAttachment`
 
 Takes the message `id` and either the attachment's `index` from
@@ -174,10 +185,58 @@ leaving the rest of the endpoint on.
 
 ### `createDraft`
 
-`to`, `cc`, `bcc`, `subject`, `body`, `from` (an address from
-`listIdentities`; the default identity otherwise), `replyTo`, and `inReplyTo`
+`to`, `cc`, `bcc`, `subject`, `body` or `html`, `from` (an address from
+`listIdentities`; the default identity otherwise), `replyTo`, `inReplyTo`
 — a message id, which fills in `In-Reply-To`, `References` and a `Re:`
-subject. The draft lands in that identity's Drafts folder. Nothing is sent.
+subject — and `attachments`, a list of files on this computer by full path
+(or `{path, name}` to attach one under another name; 50MB in all). The draft
+lands in that identity's Drafts folder. Nothing is sent.
+
+What the compose window's Options menu sets is set with `priority`
+(`highest`, `high`, `normal`, `low`, `lowest`), `returnReceipt`,
+`deliveryStatusNotification`, `deliveryFormat` (`auto`, `plain`, `html`,
+`both`), `attachmentReminder` and `attachVCard`. Left out, they are what the
+identity gives a new message.
+
+`html` is the text with its formatting, in place of `body`: what goes in the
+body rather than a whole page. Scripts, event handlers and forms are taken
+out of it; styles, tables, links and the rest stay. A picture whose `src` is
+a file's full path, a `file:` URL or a `data:` URL is made part of the
+message and shown from there, as one pasted into the compose window is; one
+on the web is left where it is.
+
+The draft is the one the compose window would have saved, built by the same
+code: `body` is plain text and is saved as HTML where the identity writes
+HTML — paragraphs or line breaks, as `mail.compose.default_to_paragraph` has
+it — with the identity's signature after it and its automatic Cc, Bcc and
+Reply-To filled in. So it opens in the editor the user writes in, as the
+identity it was written as. A reply also remembers the message it answers,
+which is marked as answered when the draft is sent.
+
+Returns `id`, the draft's own id, along with `folder`, `subject`, `from` and
+the names of its `attachments`.
+
+### `updateDraft`
+
+`id`, and any of what `createDraft` takes but `inReplyTo` — `attachments`
+being files to add — plus `removeAttachments` (names to take off). What is
+not given stays as it was — the text exactly, with any pictures set in it,
+the attachments byte for byte, and what was chosen in the Options menu — and
+a field given as an empty string is cleared.
+
+New text replaces the whole text. To change part of a formatted draft, read
+it with `getMessage` and `html: true`, change that HTML and give it back as
+`html`: the pictures it still shows are kept, by the `cid:` addresses it
+shows them with, and it is not signed a second time while its signature
+block is in it.
+
+A message on a server cannot be edited, so the draft is saved again and the
+earlier version deleted, as the compose window does on a second save: the
+result carries the new `id`, and the old one as `replaced`. The earlier
+version is deleted only once the new one is confirmed saved, and goes to the
+Trash rather than for good. Only a message in a Drafts folder can be changed,
+which is what keeps this from deleting anything else; that includes a draft
+the user wrote. An encrypted draft is refused.
 
 ### `tagMessages`
 
@@ -196,8 +255,8 @@ notification is answered `202` with no body. There are no sessions, and a
 `GET` to open a stream of the server's own is answered `405`, which the
 protocol has clients take in their stride.
 
-It offers all nine tools, the tagging ones included. The stdio bridge keeps
-its own list of the first seven, so a client started through it cannot tag.
+It offers all ten tools, the tagging ones included. The stdio bridge keeps
+its own list of the first eight, so a client started through it cannot tag.
 
 `mcp-endpoint.json` records this URL as `mcpUrl`.
 
@@ -283,5 +342,7 @@ the profile. Set `MAIL_MCP_URL` to override.
 **Everything returns 401.** The password was deleted, or belongs to another
 profile. Make a new one.
 
-**A draft is not confirmed within 45 seconds.** Saving to IMAP is a round
-trip; the error says so rather than hanging, and the draft may still arrive.
+**A draft is not confirmed saved in time.** Saving to IMAP is a round trip
+— 45 seconds are allowed, and more for large attachments, up to five
+minutes; the error says so rather than hanging, and the draft may still
+arrive. A draft being changed keeps its earlier version in that case.

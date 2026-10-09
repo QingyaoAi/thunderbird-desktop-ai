@@ -39,6 +39,10 @@ tags = ["dataadapter"]
 
 ["test_mailMcpAttachments.js"]
 
+["test_mailMcpDrafts.js"]
+
+["test_mailMcpDraftsImap.js"]
+
 ["test_mailMcpProtocol.js"]
 
 ["test_mailGlue_distribution.js"]

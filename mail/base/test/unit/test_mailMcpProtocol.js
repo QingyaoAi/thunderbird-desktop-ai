@@ -172,6 +172,7 @@ add_task(async function testToolsList() {
       "list_folders",
       "list_identities",
       "create_draft",
+      "update_draft",
       "list_tags",
       "tag_messages",
     ]

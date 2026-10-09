@@ -45,6 +45,8 @@ run-if = [
 
 ["browser_markAsRead.js"]
 
+["browser_mcpDraftOpens.js"]
+
 ["browser_messageBodyAs.js"]
 
 ["browser_multiMessageView.js"]

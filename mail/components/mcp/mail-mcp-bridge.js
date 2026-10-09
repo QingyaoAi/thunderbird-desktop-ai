@@ -135,8 +135,58 @@ function callEndpoint(method, params) {
   });
 }
 
+/**
+ * What create_draft and update_draft both take for a draft's text and for
+ * what is chosen in the compose window's Options menu.
+ */
+const DRAFT_PROPERTIES = {
+  body: {
+    type: "string",
+    description:
+      "The text, plain, with a blank line between paragraphs. No Markdown, " +
+      "and not the user's signature, which is added. For text that needs " +
+      "formatting, give html instead.",
+  },
+  html: {
+    type: "string",
+    description:
+      "The text as HTML, instead of body, when it needs formatting: bold, " +
+      "colour, lists, links, tables. Only what goes in the body, not a " +
+      "whole page. A picture is set in the text with an <img> whose src is " +
+      "a file's full path. Leave the user's signature out, unless it is in " +
+      "HTML you read from the draft.",
+  },
+  priority: {
+    type: "string",
+    enum: ["highest", "high", "normal", "low", "lowest"],
+  },
+  returnReceipt: {
+    type: "boolean",
+    description: "Ask for a receipt when the message is read",
+  },
+  deliveryStatusNotification: {
+    type: "boolean",
+    description: "Ask the mail server to report the message's delivery",
+  },
+  deliveryFormat: {
+    type: "string",
+    enum: ["auto", "plain", "html", "both"],
+    description:
+      "What the message is sent as: auto (plain text unless it has " +
+      "formatting), plain, html, or both",
+  },
+  attachmentReminder: {
+    type: "boolean",
+    description: "Remind the user to attach something before it is sent",
+  },
+  attachVCard: {
+    type: "boolean",
+    description: "Send the user's contact card with the message",
+  },
+};
+
 /** The tools offered, and what they take. */
-// The same seven are in MailMcpServer.sys.mjs's MCP_TOOLS, which serves them
+// The same eight are in MailMcpServer.sys.mjs's MCP_TOOLS, which serves them
 // on /mcp along with the tagging tools; a change to one belongs in both.
 const TOOLS = [
   {
@@ -196,6 +246,12 @@ const TOOLS = [
       properties: {
         id: { type: "string" },
         includeBody: { type: "boolean" },
+        html: {
+          type: "boolean",
+          description:
+            "Also return the body as HTML -- for a draft whose formatted " +
+            "text is to be changed with update_draft",
+        },
       },
       required: ["id"],
     },
@@ -253,7 +309,12 @@ const TOOLS = [
     description:
       "Save a draft for the user to review and send by hand. Nothing is " +
       "sent. Pass inReplyTo with a message id to draft a reply, which fills " +
-      "in the reply headers and subject.",
+      "in the reply headers and subject. The draft is saved in the format " +
+      "the user writes mail in, with their signature after the text and " +
+      "the addresses they always copy. Everything the compose window sets " +
+      "can be set: formatted text, pictures in it, attachments, priority, " +
+      "receipts. Returns the draft's id: link the draft with it, and to " +
+      "change the draft pass it to update_draft rather than writing another.",
     inputSchema: {
       type: "object",
       properties: {
@@ -261,11 +322,55 @@ const TOOLS = [
         cc: { type: "string" },
         bcc: { type: "string" },
         subject: { type: "string" },
-        body: { type: "string" },
+        ...DRAFT_PROPERTIES,
         from: { type: "string", description: "Which identity to write as" },
         replyTo: { type: "string" },
         inReplyTo: { type: "string", description: "Message id being replied to" },
+        attachments: {
+          type: "array",
+          items: { type: "string" },
+          description:
+            "Files on this computer to attach, each by its full path -- " +
+            "one from get_attachment included",
+        },
       },
+    },
+  },
+  {
+    name: "update_draft",
+    description:
+      "Change a draft where it is: one create_draft saved, or any other " +
+      "message in a Drafts folder. Give its id and only what is to change; " +
+      "everything else stays as it was -- text, formatting, attachments " +
+      "and settings. A field given as an empty string is cleared. New text " +
+      "replaces the whole text: to change part of a draft and keep its " +
+      "formatting, read it with get_message and html: true, change that " +
+      "HTML, and give all of it back as html. The draft is saved again, so " +
+      "it has a new id, which is returned, and the version it replaces " +
+      "goes to the Trash. Nothing is sent.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        id: { type: "string", description: "The draft's id" },
+        to: { type: "string" },
+        cc: { type: "string" },
+        bcc: { type: "string" },
+        subject: { type: "string" },
+        ...DRAFT_PROPERTIES,
+        from: { type: "string", description: "Which identity to write as" },
+        replyTo: { type: "string" },
+        attachments: {
+          type: "array",
+          items: { type: "string" },
+          description: "Files to add, each by its full path",
+        },
+        removeAttachments: {
+          type: "array",
+          items: { type: "string" },
+          description: "Attachments to take off, by name",
+        },
+      },
+      required: ["id"],
     },
   },
 ];
@@ -279,6 +384,7 @@ const METHOD_FOR_TOOL = {
   list_folders: "listFolders",
   list_identities: "listIdentities",
   create_draft: "createDraft",
+  update_draft: "updateDraft",
 };
 
 /**

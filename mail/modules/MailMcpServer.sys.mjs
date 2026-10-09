@@ -20,9 +20,11 @@
  *     with the mail passwords, and can be revoked individually.
  *   - Off unless `mail.mcp.enabled` is set. Nothing listens otherwise.
  *   - Reads mail, writes drafts and tags messages. There is deliberately no
- *     method that sends, moves or deletes anything: a mistake by a model
- *     should cost a draft nobody sent or a tag to take off, not a message
- *     nobody can get back.
+ *     method that sends anything, or that moves or deletes a message: a
+ *     mistake by a model should cost a draft nobody sent or a tag to take
+ *     off, not a message nobody can get back. The one thing it removes is the
+ *     version of a draft it has been asked to change, and that goes to the
+ *     Trash.
  *
  * Two ways in. `/rpc` is plain JSON over HTTP, which `mail-mcp-bridge.js`
  * translates to MCP's stdio transport for clients that start servers as
@@ -38,8 +40,14 @@ ChromeUtils.defineESModuleGetters(lazy, {
   Gloda: "resource:///modules/gloda/GlodaPublic.sys.mjs",
   GlodaMsgSearcher: "resource:///modules/gloda/GlodaMsgSearcher.sys.mjs",
   MailServices: "resource:///modules/MailServices.sys.mjs",
+  // The message the compose window writes out when it saves, as opposed to
+  // gloda's MimeMessage below, which is a message read back.
+  MimeMessage: "resource:///modules/MimeMessage.sys.mjs",
+  MimeParser: "resource:///modules/mimeParser.sys.mjs",
   MsgHdrToMimeMessage: "resource:///modules/gloda/MimeMessage.sys.mjs",
+  MsgUtils: "resource:///modules/MimeMessageUtils.sys.mjs",
   clearTimeout: "resource://gre/modules/Timer.sys.mjs",
+  jsmime: "resource:///modules/jsmime.sys.mjs",
   setTimeout: "resource://gre/modules/Timer.sys.mjs",
 });
 
@@ -76,6 +84,34 @@ const MAX_ATTACHMENT_BYTES = 50 * 1024 * 1024;
 
 /** How long a single attachment may take to fetch from the server. */
 const ATTACHMENT_FETCH_TIMEOUT_MS = 60000;
+
+/**
+ * The files attached to one draft may come to no more than this together. A
+ * draft is a whole message, held in memory while it is put together and then
+ * sent to the server in one piece, and few servers take a larger one anyway.
+ */
+const MAX_DRAFT_ATTACHMENT_BYTES = 50 * 1024 * 1024;
+
+/**
+ * How long saving a draft may take before the caller is told it was not
+ * confirmed: this long, and longer for a large one at DRAFT_SAVE_BYTES_PER_MS,
+ * but never more than DRAFT_SAVE_TIMEOUT_MAX_MS.
+ */
+const DRAFT_SAVE_TIMEOUT_MS = 45000;
+const DRAFT_SAVE_BYTES_PER_MS = 100;
+const DRAFT_SAVE_TIMEOUT_MAX_MS = 300000;
+
+/** How long to wait for a saved draft to appear in its folder's database. */
+const DRAFT_APPEAR_TIMEOUT_MS = 10000;
+
+/** nsMsgKey_None: the key of no message. */
+const NO_KEY = 0xffffffff;
+
+/** The priorities a draft can be given, by the names a caller gives them. */
+const PRIORITIES = ["highest", "high", "normal", "low", "lowest"];
+
+/** The formats a draft can be sent in, by the names a caller gives them. */
+const SEND_FORMATS = ["auto", "plain", "html", "both"];
 
 /**
  * How long, in seconds, a handed-out attachment stays on disk after it was
@@ -718,7 +754,11 @@ const Methods = {
   /**
    * One message, with its body and attachment list.
    *
-   * @param {object} params - {id, includeBody}
+   * The body is given as text. Asked for, it is given as HTML as well, which
+   * is how a draft's text can be changed and its formatting kept: the HTML
+   * is read, changed, and handed to updateDraft.
+   *
+   * @param {object} params - {id, includeBody, html}
    */
   async getMessage(params) {
     const hdr = hdrFromUri(String(params?.id ?? ""));
@@ -726,7 +766,11 @@ const Methods = {
     if (params?.includeBody === false) {
       return json;
     }
-    return { ...json, ...(await bodyOf(hdr)) };
+    return {
+      ...json,
+      ...(await bodyOf(hdr)),
+      ...(isSet(params?.html) ? await htmlOf(hdr) : {}),
+    };
   },
 
   /**
@@ -887,8 +931,16 @@ const Methods = {
    * Write a draft. Nothing is sent: the draft lands in the Drafts folder for
    * the account, to be reviewed and sent by hand.
    *
-   * @param {object} params - {to, cc, bcc, subject, body, from, replyTo,
-   *   inReplyTo}
+   * It is written the way the compose window would have written it -- in the
+   * format the identity composes in, with its signature and the addresses it
+   * always copies -- so that opening it to send is like opening any other
+   * draft. It used to be a plain-text message put together here, which opened
+   * in the plain-text editor whatever the identity normally used.
+   *
+   * @param {object} params - {to, cc, bcc, subject, body, html, from, replyTo,
+   *   inReplyTo, attachments, priority, returnReceipt,
+   *   deliveryStatusNotification, deliveryFormat, attachmentReminder,
+   *   attachVCard}
    */
   async createDraft(params) {
     const identity = pickIdentity(params?.from);
@@ -898,126 +950,189 @@ const Methods = {
 
     // Reply headers, if this is a reply to something we can find.
     let references = "";
-    let inReplyTo = "";
-    let subject = params?.subject ?? "";
+    let subject = String(params?.subject ?? "");
+    let original = null;
     if (params?.inReplyTo) {
-      const original = hdrFromUri(String(params.inReplyTo));
-      inReplyTo = original.messageId ? `<${original.messageId}>` : "";
-      references = [original.getStringProperty("references"), inReplyTo]
+      const replied = hdrFromUri(String(params.inReplyTo));
+      const inReplyTo = replied.messageId ? `<${replied.messageId}>` : "";
+      references = [replied.getStringProperty("references"), inReplyTo]
         .filter(Boolean)
         .join(" ");
       if (!subject) {
-        const original_subject = original.mime2DecodedSubject ?? "";
+        const original_subject = replied.mime2DecodedSubject ?? "";
         subject = /^re:/i.test(original_subject)
           ? original_subject
           : `Re: ${original_subject}`;
       }
+      original = { uri: String(params.inReplyTo), disposition: "replied" };
     }
 
-    const headers = [
-      headerLine(
-        "From",
-        identity.fullName
-          ? `${identity.fullName} <${identity.email}>`
-          : identity.email,
-        true
-      ),
-      params?.to ? headerLine("To", params.to, true) : null,
-      params?.cc ? headerLine("Cc", params.cc, true) : null,
-      params?.bcc ? headerLine("Bcc", params.bcc, true) : null,
-      params?.replyTo ? headerLine("Reply-To", params.replyTo, true) : null,
-      headerLine("Subject", subject),
-      `Date: ${new Date().toUTCString()}`,
-      inReplyTo ? `In-Reply-To: ${inReplyTo}` : null,
-      references ? `References: ${references}` : null,
-      "MIME-Version: 1.0",
-      'Content-Type: text/plain; charset=UTF-8',
-      "Content-Transfer-Encoding: 8bit",
-      "X-Mozilla-Draft-Info: internal/draft",
-    ].filter(Boolean);
+    const folder = draftsFolderFor(identity);
+    if (!folder) {
+      throw new Error("no drafts folder for that identity");
+    }
+    // What the compose window sets for the identity when a message is begun,
+    // unless something else is asked for.
+    const options = draftOptions(params, {
+      priority: "",
+      returnReceipt: identity.requestReturnReceipt,
+      receiptHeaderType: identity.receiptHeaderType,
+      DSN: identity.requestDSN,
+      attachVCard: identity.attachVCard,
+      attachmentReminder: false,
+      deliveryFormat: Ci.nsIMsgCompSendFormat.Unset,
+    });
 
-    const source = `${headers.join("\r\n")}\r\n\r\n${params?.body ?? ""}\r\n`;
+    const written = [];
+    try {
+      return await saveDraft(
+        {
+          identity,
+          to: String(params?.to ?? ""),
+          // What the compose window fills in for the identity, likewise. A
+          // draft is opened as it was saved, so they would not be added
+          // later.
+          cc: withIdentityAddresses(
+            params?.cc,
+            identity.doCc ? identity.doCcList : ""
+          ),
+          bcc: withIdentityAddresses(
+            params?.bcc,
+            identity.doBcc ? identity.doBccList : ""
+          ),
+          replyTo: withIdentityAddresses(params?.replyTo, identity.replyTo),
+          subject,
+          references,
+          ...(await writtenBody(identity, params, Boolean(original), written)),
+          attachments: filesToAttach(params?.attachments),
+          options,
+          original,
+        },
+        folder
+      );
+    } finally {
+      removeFiles(written);
+    }
+  },
 
-    const draftsFolder = draftsFolderFor(identity);
-    if (!draftsFolder) {
+  /**
+   * Change a draft: save it again with what was asked for changed and the
+   * rest as it was, then put the version it replaces in the Trash.
+   *
+   * A message on the server cannot be edited, so this is what the compose
+   * window does when a draft is saved a second time. The earlier version is
+   * deleted only once the new one is confirmed saved, and to the Trash rather
+   * than for good: the draft may be one the user wrote.
+   *
+   * @param {object} params - {id, to, cc, bcc, subject, body, html, from,
+   *   replyTo, attachments, removeAttachments, priority, returnReceipt,
+   *   deliveryStatusNotification, deliveryFormat, attachmentReminder,
+   *   attachVCard}
+   */
+  async updateDraft(params) {
+    const id = String(params?.id ?? "");
+    let earlier;
+    try {
+      earlier = hdrFromUri(id);
+    } catch (ex) {
+      earlier = null;
+    }
+    if (!earlier) {
+      throw new Error(`no draft with id ${id}`);
+    }
+    // The check that keeps this from deleting anything but a draft.
+    if (!isDraftsFolder(earlier.folder)) {
+      throw new Error(
+        "that message is not in a Drafts folder, and only a draft can be " +
+          "changed"
+      );
+    }
+
+    const was = await readDraft(earlier);
+    const identity = params?.from
+      ? pickIdentity(params.from)
+      : identityOfDraft(was.headers);
+    if (!identity) {
+      throw new Error("no identity to send from");
+    }
+    const folder = params?.from ? draftsFolderFor(identity) : earlier.folder;
+    if (!folder) {
       throw new Error("no drafts folder for that identity");
     }
 
-    const file = Services.dirsvc.get("TmpD", Ci.nsIFile);
-    file.append(`mcp-draft-${Date.now()}.eml`);
-    file.createUnique(Ci.nsIFile.NORMAL_FILE_TYPE, 0o600);
-    await IOUtils.write(file.path, new TextEncoder().encode(source));
+    // A field that was not given stays; one given empty is cleared.
+    const given = name => params?.[name] !== undefined && params[name] !== null;
+    const field = (name, header = name) =>
+      given(name) ? String(params[name]) : decodedHeader(was.headers, header);
+    const references = (was.headers.getRawHeader("references") ?? []).join(" ");
 
-    await new Promise((resolve, reject) => {
-      let settled = false;
-      const finish = (fn, value) => {
-        if (settled) {
-          return;
-        }
-        settled = true;
-        try {
-          file.remove(false);
-        } catch (ex) {
-          // Already gone, or never written.
-        }
-        fn(value);
+    const options = draftOptions(params, optionsOfDraft(was.headers, identity));
+    const staying = attachmentsLeft(was, params?.removeAttachments);
+    const added = filesToAttach(params?.attachments);
+
+    // The parts being carried over are in the earlier version, which is
+    // about to go, so they are written out to be attached again from files.
+    const written = [];
+    try {
+      const carried = async part => {
+        const path = await newAttachmentFile(part.name);
+        written.push(path);
+        await IOUtils.write(path, part.bytes);
+        return attachmentOf(path, part);
       };
+      const kept = [];
+      for (const part of staying) {
+        kept.push(await carried(part));
+      }
 
-      // Saving to an IMAP folder is a round trip to the server, which can
-      // hang for as long as the connection does. Better to say so than to
-      // leave the caller waiting on a socket that will never answer.
-      const deadline = lazy.setTimeout(
-        () =>
-          finish(
-            reject,
-            new Error(
-              "the draft was not confirmed saved within 45 seconds; the " +
-                "server may still be working on it"
-            )
-          ),
-        45000
+      // Pictures set in the text belong to the text they are set in: all of
+      // them stay with text that stays, and with new text the ones it still
+      // shows, along with any it brings.
+      const rewritten = given("body") || given("html");
+      const body = rewritten
+        ? await writtenBody(identity, params, Boolean(references), written)
+        : { ...keptBody(was, identity), embedded: [] };
+      const shown = new Set(
+        Array.from(body.body.matchAll(/\bcid:([^"'\s)>]+)/g), match => match[1])
       );
+      const embedded = [...body.embedded];
+      for (const part of was.embedded) {
+        if (!rewritten || shown.has(part.contentId)) {
+          embedded.push(await carried(part));
+        }
+      }
 
-      lazy.MailServices.copy.copyFileMessage(
-        file,
-        draftsFolder,
-        null,
-        true, // isDraft
-        0,
-        "",
+      const originalUri = earlier.getStringProperty("origURIs");
+      const result = await saveDraft(
         {
-          // Without this XPConnect cannot hand the callbacks back to us, so
-          // OnStopCopy never arrives and the request hangs until it is timed
-          // out at the far end.
-          QueryInterface: ChromeUtils.generateQI(["nsIMsgCopyServiceListener"]),
-          onStartCopy() {},
-          onProgress() {},
-          setMessageKey() {},
-          getMessageId() {
-            return "";
-          },
-          onStopCopy(status) {
-            lazy.clearTimeout(deadline);
-            if (Components.isSuccessCode(status)) {
-              finish(resolve);
-            } else {
-              finish(
-                reject,
-                new Error(`could not save the draft (status ${status})`)
-              );
-            }
-          },
+          identity,
+          to: field("to"),
+          cc: field("cc"),
+          bcc: field("bcc"),
+          replyTo: field("replyTo", "reply-to"),
+          subject: given("subject")
+            ? String(params.subject)
+            : String(was.headers.get("subject") ?? ""),
+          references,
+          ...body,
+          attachments: [...kept, ...added],
+          embedded,
+          fcc: (was.headers.getRawHeader("fcc") ?? [])[0] ?? "",
+          options,
+          original: originalUri
+            ? {
+                uri: originalUri,
+                disposition: earlier.getStringProperty("queuedDisposition"),
+              }
+            : null,
         },
-        null
+        folder,
+        earlier
       );
-    });
-
-    return {
-      saved: true,
-      folder: draftsFolder.URI,
-      subject,
-      from: identity.email,
-    };
+      return { ...result, replaced: id };
+    } finally {
+      removeFiles(written);
+    }
   },
 
   /** So a caller can see which addresses it may write as. */
@@ -1129,8 +1244,55 @@ function resolveTags(wanted) {
 // -- MCP over Streamable HTTP ---------------------------------------------
 
 /**
+ * What create_draft and update_draft both take for a draft's text and for
+ * what is chosen in the compose window's Options menu.
+ */
+const DRAFT_PROPERTIES = {
+  body: {
+    type: "string",
+    description:
+      "The text, plain, with a blank line between paragraphs. No Markdown, " +
+      "and not the user's signature, which is added. For text that needs " +
+      "formatting, give html instead.",
+  },
+  html: {
+    type: "string",
+    description:
+      "The text as HTML, instead of body, when it needs formatting: bold, " +
+      "colour, lists, links, tables. Only what goes in the body, not a " +
+      "whole page. A picture is set in the text with an <img> whose src is " +
+      "a file's full path. Leave the user's signature out, unless it is in " +
+      "HTML you read from the draft.",
+  },
+  priority: { type: "string", enum: PRIORITIES },
+  returnReceipt: {
+    type: "boolean",
+    description: "Ask for a receipt when the message is read",
+  },
+  deliveryStatusNotification: {
+    type: "boolean",
+    description: "Ask the mail server to report the message's delivery",
+  },
+  deliveryFormat: {
+    type: "string",
+    enum: SEND_FORMATS,
+    description:
+      "What the message is sent as: auto (plain text unless it has " +
+      "formatting), plain, html, or both",
+  },
+  attachmentReminder: {
+    type: "boolean",
+    description: "Remind the user to attach something before it is sent",
+  },
+  attachVCard: {
+    type: "boolean",
+    description: "Send the user's contact card with the message",
+  },
+};
+
+/**
  * The tools offered over `/mcp`, each with the method above that does its
- * work. `mail-mcp-bridge.js` keeps its own copy of the first seven for the
+ * work. `mail-mcp-bridge.js` keeps its own copy of the first eight for the
  * stdio route; a change to one of those belongs in both.
  */
 const MCP_TOOLS = [
@@ -1196,6 +1358,12 @@ const MCP_TOOLS = [
       properties: {
         id: { type: "string" },
         includeBody: { type: "boolean" },
+        html: {
+          type: "boolean",
+          description:
+            "Also return the body as HTML -- for a draft whose formatted " +
+            "text is to be changed with update_draft",
+        },
       },
       required: ["id"],
     },
@@ -1258,7 +1426,12 @@ const MCP_TOOLS = [
     description:
       "Save a draft for the user to review and send by hand. Nothing is " +
       "sent. Pass inReplyTo with a message id to draft a reply, which fills " +
-      "in the reply headers and subject.",
+      "in the reply headers and subject. The draft is saved in the format " +
+      "the user writes mail in, with their signature after the text and " +
+      "the addresses they always copy. Everything the compose window sets " +
+      "can be set: formatted text, pictures in it, attachments, priority, " +
+      "receipts. Returns the draft's id: link the draft with it, and to " +
+      "change the draft pass it to update_draft rather than writing another.",
     inputSchema: {
       type: "object",
       properties: {
@@ -1266,14 +1439,59 @@ const MCP_TOOLS = [
         cc: { type: "string" },
         bcc: { type: "string" },
         subject: { type: "string" },
-        body: { type: "string" },
+        ...DRAFT_PROPERTIES,
         from: { type: "string", description: "Which identity to write as" },
         replyTo: { type: "string" },
         inReplyTo: {
           type: "string",
           description: "Message id being replied to",
         },
+        attachments: {
+          type: "array",
+          items: { type: "string" },
+          description:
+            "Files on this computer to attach, each by its full path -- " +
+            "one from get_attachment included",
+        },
       },
+    },
+  },
+  {
+    name: "update_draft",
+    method: "updateDraft",
+    description:
+      "Change a draft where it is: one create_draft saved, or any other " +
+      "message in a Drafts folder. Give its id and only what is to change; " +
+      "everything else stays as it was -- text, formatting, attachments " +
+      "and settings. A field given as an empty string is cleared. New text " +
+      "replaces the whole text: to change part of a draft and keep its " +
+      "formatting, read it with get_message and html: true, change that " +
+      "HTML, and give all of it back as html. The draft is saved again, so " +
+      "it has a new id, which is returned, and the version it replaces " +
+      "goes to the Trash. Nothing is sent.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        id: { type: "string", description: "The draft's id" },
+        to: { type: "string" },
+        cc: { type: "string" },
+        bcc: { type: "string" },
+        subject: { type: "string" },
+        ...DRAFT_PROPERTIES,
+        from: { type: "string", description: "Which identity to write as" },
+        replyTo: { type: "string" },
+        attachments: {
+          type: "array",
+          items: { type: "string" },
+          description: "Files to add, each by its full path",
+        },
+        removeAttachments: {
+          type: "array",
+          items: { type: "string" },
+          description: "Attachments to take off, by name",
+        },
+      },
+      required: ["id"],
     },
   },
   {
@@ -1703,27 +1921,6 @@ function pickIdentity(wanted) {
 }
 
 /**
- * One header line, with anything outside ASCII put into RFC 2047 encoded
- * words. A header carrying raw UTF-8 is read back by whatever single-byte
- * charset the reader assumes, which turns a Chinese subject into mojibake.
- *
- * @param {string} name - Field name, without the colon.
- * @param {string} value
- * @param {boolean} [addressing] - True for From, To, Cc, Bcc and Reply-To, so
- *   that display names are encoded and the addresses beside them are left be.
- * @returns {string}
- */
-function headerLine(name, value, addressing = false) {
-  const encoded = lazy.MailServices.mimeConverter.encodeMimePartIIStr_UTF8(
-    value,
-    addressing,
-    name.length + 2,
-    Ci.nsIMimeConverter.MIME_ENCODED_WORD_SIZE
-  );
-  return `${name}: ${encoded}`;
-}
-
-/**
  * @param {nsIMsgIdentity} identity
  * @returns {?nsIMsgFolder}
  */
@@ -1732,6 +1929,1132 @@ function draftsFolderFor(identity) {
   // one saved by hand would. Resolving it by hand is what put drafts in the
   // first account's Drafts folder regardless of which identity was asked for.
   return identity.getOrCreateDraftsFolder();
+}
+
+/**
+ * Whether a folder is one drafts are kept in.
+ *
+ * @param {nsIMsgFolder} folder
+ * @returns {boolean}
+ */
+function isDraftsFolder(folder) {
+  return (
+    folder.getFlag(Ci.nsMsgFolderFlags.Drafts) ||
+    lazy.MailServices.accounts.allIdentities.some(
+      identity => identity.draftsFolderURI == folder.URI
+    )
+  );
+}
+
+/**
+ * A list of addresses with the ones an identity always adds put first, the
+ * way the compose window fills in the Cc, Bcc and Reply-To of a new message.
+ *
+ * @param {?string} given - What the caller asked for.
+ * @param {?string} automatic - What the identity adds, if anything.
+ * @returns {string}
+ */
+function withIdentityAddresses(given, automatic) {
+  const theirs = String(given ?? "").trim();
+  const mine = String(automatic ?? "").trim();
+  if (!mine) {
+    return theirs;
+  }
+  const rest = theirs
+    ? lazy.MailServices.headerParser.removeDuplicateAddresses(theirs, mine)
+    : "";
+  return rest ? `${mine}, ${rest}` : mine;
+}
+
+/**
+ * A file as an attachment a message can be built with.
+ *
+ * @param {string} path
+ * @param {object} part
+ * @param {?string} part.name - The file's own name, if none is given.
+ * @param {?string} part.contentType - Worked out from the file, if not given.
+ * @param {?string} part.contentId - For a picture set in the text.
+ * @returns {nsIMsgAttachment}
+ */
+function attachmentOf(path, { name, contentType, contentId }) {
+  const file = Cc["@mozilla.org/file/local;1"].createInstance(Ci.nsIFile);
+  file.initWithPath(path);
+  const attachment = Cc[
+    "@mozilla.org/messengercompose/attachment;1"
+  ].createInstance(Ci.nsIMsgAttachment);
+  attachment.url = Services.io.newFileURI(file).spec;
+  attachment.name = name || file.leafName;
+  attachment.size = file.fileSize;
+  if (contentType) {
+    attachment.contentType = contentType;
+  }
+  if (contentId) {
+    attachment.contentId = contentId;
+  }
+  return attachment;
+}
+
+/**
+ * The files a caller wants attached to a draft.
+ *
+ * They are read by Thunderbird, not by the caller, so this reaches whatever
+ * Thunderbird may read -- and what is attached can be read back with
+ * get_attachment. That is no more than a program holding a password to the
+ * whole mailbox can usually read for itself, but it is why only an ordinary
+ * file named by its full path is taken: nothing relative to a directory the
+ * caller cannot see, no directory, no device.
+ *
+ * @param {?Array<string|{path: string, name: ?string}>} wanted
+ * @returns {nsIMsgAttachment[]}
+ */
+function filesToAttach(wanted) {
+  const attachments = [];
+  let total = 0;
+  for (const entry of [wanted ?? []].flat()) {
+    const named = typeof entry == "object" && entry !== null;
+    const file = fileAt(String((named ? entry.path : entry) ?? ""));
+    total += file.fileSize;
+    if (total > MAX_DRAFT_ATTACHMENT_BYTES) {
+      throw new Error(
+        `the attachments come to more than the ` +
+          `${MAX_DRAFT_ATTACHMENT_BYTES}-byte limit for one draft`
+      );
+    }
+    attachments.push(
+      attachmentOf(file.path, { name: named ? String(entry.name ?? "") : "" })
+    );
+  }
+  return attachments;
+}
+
+/**
+ * The file a caller named, if it is one that can go into a draft.
+ *
+ * @param {string} named - Its full path, which may begin with ~/.
+ * @returns {nsIFile}
+ */
+function fileAt(named) {
+  let path = named.trim();
+  if (path.startsWith("~/")) {
+    path = Services.dirsvc.get("Home", Ci.nsIFile).path + path.slice(1);
+  }
+  const file = Cc["@mozilla.org/file/local;1"].createInstance(Ci.nsIFile);
+  try {
+    file.initWithPath(path);
+  } catch (ex) {
+    throw new Error(
+      `"${path}" is not the full path of a file on this computer`
+    );
+  }
+  if (!file.exists()) {
+    throw new Error(`there is no file at ${path}`);
+  }
+  if (!file.isFile()) {
+    throw new Error(`${path} is not a file`);
+  }
+  if (!file.isReadable()) {
+    throw new Error(`${path} cannot be read`);
+  }
+  return file;
+}
+
+/**
+ * Delete files written for the making of a draft, now that it is made.
+ *
+ * @param {string[]} paths
+ */
+function removeFiles(paths) {
+  for (const path of paths) {
+    IOUtils.remove(path, { ignoreAbsent: true }).catch(() => {});
+  }
+}
+
+/**
+ * Whether a caller turned something on. A client may send a yes as the word
+ * for it, and the word for no must not count as one.
+ *
+ * @param {*} value
+ * @returns {boolean}
+ */
+function isSet(value) {
+  return value === true || String(value).toLowerCase() == "true";
+}
+
+/**
+ * What is chosen for a draft in the compose window's Options menu, after a
+ * request has changed what it asks to change.
+ *
+ * @param {object} params - The request.
+ * @param {object} standing - What holds where the request says nothing:
+ *   {priority, returnReceipt, receiptHeaderType, DSN, attachVCard,
+ *   attachmentReminder, deliveryFormat}.
+ * @returns {object} The same, as it now is.
+ */
+function draftOptions(params, standing) {
+  const options = { ...standing };
+  const given = name => params?.[name] !== undefined && params[name] !== null;
+  const choice = (name, choices) => {
+    const chosen = String(params[name]).toLowerCase();
+    if (!choices.includes(chosen)) {
+      throw new Error(
+        `${name} must be one of ${choices.join(", ")}, not "${params[name]}"`
+      );
+    }
+    return chosen;
+  };
+
+  if (given("priority")) {
+    // Normal is what a message is without a priority, so it is not given one.
+    const priority = choice("priority", PRIORITIES);
+    options.priority = priority == "normal" ? "" : priority;
+  }
+  if (given("deliveryFormat")) {
+    options.deliveryFormat = {
+      auto: Ci.nsIMsgCompSendFormat.Auto,
+      plain: Ci.nsIMsgCompSendFormat.PlainText,
+      html: Ci.nsIMsgCompSendFormat.HTML,
+      both: Ci.nsIMsgCompSendFormat.Both,
+    }[choice("deliveryFormat", SEND_FORMATS)];
+  }
+  for (const [name, option] of [
+    ["returnReceipt", "returnReceipt"],
+    ["deliveryStatusNotification", "DSN"],
+    ["attachVCard", "attachVCard"],
+    ["attachmentReminder", "attachmentReminder"],
+  ]) {
+    if (given(name)) {
+      options[option] = isSet(params[name]);
+    }
+  }
+  return options;
+}
+
+/**
+ * What was chosen for a draft when it was saved, which it records in its
+ * headers for the compose window to take up again.
+ *
+ * @param {object} headers - The draft's headers, from readDraft.
+ * @param {nsIMsgIdentity} identity
+ * @returns {object} As draftOptions takes it.
+ */
+function optionsOfDraft(headers, identity) {
+  const info = (headers.getRawHeader("x-mozilla-draft-info") ?? [])[0] ?? "";
+  const setting = name => {
+    const found = new RegExp(`\\b${name}=(\\d+)`, "i").exec(info);
+    return found ? Number(found[1]) : null;
+  };
+  // Which header a receipt is asked for with, plus one; nought for none.
+  const receipt = setting("receipt") ?? 0;
+  return {
+    // As the header has it -- "1 (Highest)" -- which is read as well as the
+    // name alone.
+    priority: (headers.getRawHeader("x-priority") ?? [])[0] ?? "",
+    returnReceipt: receipt > 0,
+    receiptHeaderType: receipt > 0 ? receipt - 1 : identity.receiptHeaderType,
+    DSN: setting("DSN") > 0,
+    attachVCard: setting("vcard") > 0,
+    attachmentReminder: setting("attachmentreminder") > 0,
+    deliveryFormat: setting("deliveryformat") ?? Ci.nsIMsgCompSendFormat.Unset,
+  };
+}
+
+/**
+ * @param {string} text
+ * @returns {string}
+ */
+function escapeHtml(text) {
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
+/**
+ * Plain text as the HTML the compose window makes of the same text typed
+ * into it: a paragraph for each block set off by a blank line and a line
+ * break for each line within one -- or line breaks alone, where writing in
+ * paragraphs is turned off. Spaces that HTML would run together are kept.
+ *
+ * @param {string} text
+ * @returns {string}
+ */
+function textToHtml(text) {
+  const line = source => {
+    const indent = /^[ \t]*/.exec(source)[0];
+    return (
+      "&nbsp;".repeat(indent.replace(/\t/g, "    ").length) +
+      escapeHtml(source.slice(indent.length)).replace(
+        / {2,}/g,
+        spaces => " " + "&nbsp;".repeat(spaces.length - 1)
+      )
+    );
+  };
+  const lines = block => block.split("\n").map(line).join("<br>\n");
+  const normalized = String(text ?? "")
+    .replace(/\r\n?/g, "\n")
+    .replace(/^\n+|\s+$/g, "");
+
+  if (!Services.prefs.getBoolPref("mail.compose.default_to_paragraph", false)) {
+    return normalized ? lines(normalized) : "<br>";
+  }
+  if (!normalized) {
+    return "<p><br></p>";
+  }
+  return normalized
+    .split(/\n{2,}/)
+    .map(block => `<p>${lines(block)}</p>`)
+    .join("\n");
+}
+
+/**
+ * A message body's HTML as the whole document a draft holds.
+ *
+ * @param {string} content
+ * @returns {string}
+ */
+function htmlDocument(content) {
+  return (
+    "<!DOCTYPE html>\n<html>\n  <head>\n" +
+    '    <meta http-equiv="content-type" content="text/html; charset=UTF-8">\n' +
+    `  </head>\n  <body>\n${content}\n  </body>\n</html>\n`
+  );
+}
+
+/**
+ * The signature an identity puts on a message, if it has one.
+ *
+ * A signature that is a picture is left out: it would have to be embedded in
+ * the message, and the compose window, changing identity, can still add it.
+ *
+ * @param {nsIMsgIdentity} identity
+ * @param {boolean} isReply
+ * @returns {Promise<?{content: string, isHtml: boolean, text: string}>} With
+ *   `text` being what it reads as, whichever way it is written.
+ */
+async function signatureOf(identity, isReply) {
+  if (isReply && !identity.sigOnReply) {
+    return null;
+  }
+  let content = "";
+  let isHtml = false;
+  if (identity.attachSignature) {
+    const file = identity.signature;
+    try {
+      const type = Cc["@mozilla.org/mime;1"]
+        .getService(Ci.nsIMIMEService)
+        .getTypeFromFile(file);
+      if (!type.startsWith("image/")) {
+        content = await IOUtils.readUTF8(file.path);
+        isHtml = type == "text/html";
+      }
+    } catch (ex) {
+      // No file, or one that cannot be read: no signature, as in the window.
+    }
+  } else {
+    content = identity.htmlSigText;
+    isHtml = identity.htmlSigFormat;
+  }
+  if (!content.trim()) {
+    return null;
+  }
+  return {
+    content,
+    isHtml,
+    text: (isHtml ? lazy.MsgUtils.convertToPlainText(content, false) : content)
+      .replace(/\r\n?/g, "\n")
+      .replace(/\s+$/, ""),
+  };
+}
+
+/**
+ * Whether a signature is to be set off by the usual "-- " line: not where
+ * the identity has turned that off, nor where the signature has its own.
+ *
+ * @param {nsIMsgIdentity} identity
+ * @param {object} signature - From signatureOf.
+ * @returns {boolean}
+ */
+function signatureNeedsSeparator(identity, signature) {
+  return !identity.suppressSigSep && !/(^|\n)-- (\n|$)/.test(signature.text);
+}
+
+/**
+ * Text with the signature taken off its end, if it ends with it.
+ *
+ * The signature is added to what is written, so one written out as well
+ * would be there twice -- and a caller rewriting a draft it has just read
+ * sends the signature back with the rest, since it is part of what it read.
+ *
+ * @param {string} text
+ * @param {string} signature - As text.
+ * @returns {string}
+ */
+function withoutSignature(text, signature) {
+  const trimmed = lines => lines.map(line => line.trim());
+  const written = text.replace(/\r\n?/g, "\n").replace(/\s+$/, "").split("\n");
+  const signed = trimmed(signature.trim().split("\n"));
+  if (
+    signed.length > written.length ||
+    trimmed(written.slice(-signed.length)).join("\n") != signed.join("\n")
+  ) {
+    return text;
+  }
+  const kept = written.slice(0, -signed.length);
+  // And the line that set it off, with the blank lines around that.
+  while (kept.length && /^(--)?$/.test(kept.at(-1).trim())) {
+    kept.pop();
+  }
+  return kept.join("\n");
+}
+
+/**
+ * A signature as it is put after a message's text in HTML: the markup the
+ * compose window gives one, which is also how it finds a signature to
+ * replace when the identity is changed.
+ *
+ * @param {nsIMsgIdentity} identity
+ * @param {object} signature - From signatureOf.
+ * @returns {string}
+ */
+function signatureMarkup(identity, signature) {
+  const separated = signatureNeedsSeparator(identity, signature);
+  const paragraphs = Services.prefs.getBoolPref(
+    "mail.compose.default_to_paragraph",
+    false
+  );
+  return (
+    (paragraphs ? "\n" : "<br>\n") +
+    (signature.isHtml
+      ? `<div class="moz-signature">${separated ? "-- <br>" : ""}` +
+        `${signature.content}</div>`
+      : `<pre class="moz-signature" cols="` +
+        `${Services.prefs.getIntPref("mailnews.wraplength", 72)}">` +
+        `${separated ? "-- \n" : ""}${escapeHtml(signature.text)}</pre>`)
+  );
+}
+
+/**
+ * A picture named in HTML a caller wrote, as a part of the message for the
+ * HTML to show: a file on this computer, or one written into the HTML
+ * itself. A picture on the web, or one already in the message, is no
+ * business of this and is left as it is named.
+ *
+ * @param {string} source - The picture's src.
+ * @param {nsIMsgIdentity} identity
+ * @param {number} number - Which of the message's pictures this is, from 1.
+ * @param {string[]} written - Takes the path of a file written here, for the
+ *   caller to delete once the message is made.
+ * @returns {Promise<?nsIMsgAttachment>} Null for a picture that is left.
+ */
+async function pictureToEmbed(source, identity, number, written) {
+  const contentId = lazy.MsgUtils.makeContentId(identity, number);
+  const inline = /^data:(image\/[\w.+-]+);base64,(.*)$/is.exec(source);
+  if (inline) {
+    let bytes;
+    try {
+      bytes = Uint8Array.from(atob(inline[2].replace(/\s+/g, "")), c =>
+        c.charCodeAt(0)
+      );
+    } catch (ex) {
+      return null;
+    }
+    const contentType = inline[1].toLowerCase();
+    const name = `image.${contentType.replace(/^image\/|\+.*$/g, "")}`;
+    const path = await newAttachmentFile(name);
+    written.push(path);
+    await IOUtils.write(path, bytes);
+    return attachmentOf(path, { name, contentType, contentId });
+  }
+
+  let path;
+  if (/^file:/i.test(source)) {
+    try {
+      path = Services.io.newURI(source).QueryInterface(Ci.nsIFileURL).file.path;
+    } catch (ex) {
+      return null;
+    }
+  } else if (/^(\/|~\/)/.test(source)) {
+    path = source;
+  } else {
+    return null;
+  }
+  const file = fileAt(path);
+  if (file.fileSize > MAX_DRAFT_ATTACHMENT_BYTES) {
+    throw new Error(`${path} is too large to set in a draft's text`);
+  }
+  let contentType = "";
+  try {
+    contentType = Cc["@mozilla.org/mime;1"]
+      .getService(Ci.nsIMIMEService)
+      .getTypeFromFile(file);
+  } catch (ex) {
+    // A file of no known kind is not one of a picture's kinds.
+  }
+  if (!contentType.startsWith("image/")) {
+    throw new Error(
+      `${path} is not a picture, so it cannot be set in the text; attach it`
+    );
+  }
+  return attachmentOf(file.path, { contentType, contentId });
+}
+
+/**
+ * HTML a caller wrote, as a draft's body: with nothing in it that runs or
+ * submits, the pictures it names made part of the message, and the
+ * identity's signature after it unless it is signed already -- as it is when
+ * it is a draft's own HTML, read and changed.
+ *
+ * @param {nsIMsgIdentity} identity
+ * @param {string} html - What goes in the body; a whole page is taken for
+ *   its body.
+ * @param {?object} signature - From signatureOf.
+ * @param {string[]} written - As for pictureToEmbed.
+ * @returns {Promise<{bodyType: string, body: string,
+ *   embedded: nsIMsgAttachment[]}>}
+ */
+async function formattedBody(identity, html, signature, written) {
+  const parserUtils = Cc["@mozilla.org/parserutils;1"].getService(
+    Ci.nsIParserUtils
+  );
+  const doc = new DOMParser().parseFromString("", "text/html");
+  const holder = doc.createElement("div");
+  // The formatting stays, style and all; scripts, handlers and forms go. The
+  // compose window would not run them, but whoever is sent them might.
+  holder.append(
+    parserUtils.parseFragment(
+      html,
+      parserUtils.SanitizerAllowStyle | parserUtils.SanitizerDropForms,
+      false,
+      null,
+      doc.body
+    )
+  );
+
+  const embedded = [];
+  for (const image of holder.querySelectorAll("img[src]")) {
+    const picture = await pictureToEmbed(
+      image.getAttribute("src"),
+      identity,
+      embedded.length + 1,
+      written
+    );
+    if (picture) {
+      embedded.push(picture);
+      image.setAttribute("src", `cid:${picture.contentId}`);
+    }
+  }
+
+  let content = holder.innerHTML;
+  if (signature && !holder.querySelector(".moz-signature")) {
+    const text = lazy.MsgUtils.convertToPlainText(content, false);
+    if (withoutSignature(text, signature.text) == text) {
+      content += signatureMarkup(identity, signature);
+    }
+  }
+  return { bodyType: "text/html", body: htmlDocument(content), embedded };
+}
+
+/**
+ * What a caller wrote, as the body the compose window would have saved for
+ * it. Plain text becomes HTML where the identity writes HTML; HTML is kept
+ * as HTML. Either way the identity's signature comes after it.
+ *
+ * @param {nsIMsgIdentity} identity
+ * @param {?object} params - The request: `body` for plain text, or `html`.
+ * @param {boolean} isReply
+ * @param {string[]} written - As for pictureToEmbed.
+ * @returns {Promise<{bodyType: string, body: string,
+ *   embedded: nsIMsgAttachment[]}>}
+ */
+async function writtenBody(identity, params, isReply, written) {
+  const signature = await signatureOf(identity, isReply);
+  const given = name => params?.[name] !== undefined && params[name] !== null;
+  if (given("html")) {
+    if (given("body")) {
+      throw new Error("give the text as body or as html, not as both");
+    }
+    return formattedBody(identity, String(params.html), signature, written);
+  }
+
+  const text = String(params?.body ?? "");
+  const typed = signature ? withoutSignature(text, signature.text) : text;
+  if (identity.composeHtml) {
+    return {
+      bodyType: "text/html",
+      body: htmlDocument(
+        textToHtml(typed) +
+          (signature ? signatureMarkup(identity, signature) : "")
+      ),
+      embedded: [],
+    };
+  }
+
+  const separated = signature && signatureNeedsSeparator(identity, signature);
+  let body = typed.replace(/\r\n?/g, "\n").replace(/\s+$/, "");
+  if (signature) {
+    body += `\n\n${separated ? "-- \n" : ""}${signature.text}`;
+  }
+  if (Services.prefs.getBoolPref("mailnews.send_plaintext_flowed", true)) {
+    // The message will say its text is flowed, in which a line ending in a
+    // space runs on into the next and a line starting with one loses it.
+    body = body
+      .split("\n")
+      .map(line => (line == "-- " ? line : line.replace(/ +$/, "")))
+      .map(line => (/^( |From )/.test(line) ? ` ${line}` : line))
+      .join("\n");
+  }
+  return { bodyType: "text/plain", body: `${body}\n`, embedded: [] };
+}
+
+/**
+ * A message as it is stored, headers and all.
+ *
+ * @param {nsIMsgDBHdr} hdr
+ * @returns {Promise<string>} One character per byte.
+ */
+function sourceOf(hdr) {
+  const uri = hdr.folder.getUriForMsg(hdr);
+  return new Promise((resolve, reject) => {
+    // A server that stops answering must not hold the request for ever.
+    const timer = lazy.setTimeout(
+      () => reject(new Error("reading the draft timed out")),
+      ATTACHMENT_FETCH_TIMEOUT_MS
+    );
+    let stream = null;
+    let source = "";
+    lazy.MailServices.messageServiceFromURI(uri).streamMessage(
+      uri,
+      {
+        QueryInterface: ChromeUtils.generateQI(["nsIStreamListener"]),
+        onStartRequest() {},
+        onDataAvailable(request, input, offset, count) {
+          if (!stream) {
+            stream = Cc["@mozilla.org/binaryinputstream;1"].createInstance(
+              Ci.nsIBinaryInputStream
+            );
+            stream.setInputStream(input);
+          }
+          source += stream.readBytes(count);
+        },
+        onStopRequest(request, status) {
+          lazy.clearTimeout(timer);
+          if (Components.isSuccessCode(status) && source) {
+            resolve(source);
+          } else {
+            reject(new Error("the draft could not be read"));
+          }
+        },
+      },
+      null,
+      null,
+      false,
+      ""
+    );
+  });
+}
+
+/**
+ * A draft taken apart into what a compose window would show of it: its
+ * headers, its text, and the files attached to it.
+ *
+ * @param {nsIMsgDBHdr} hdr
+ * @returns {Promise<{headers: object, bodyType: string, body: string,
+ *   flowed: boolean, attachments: object[], embedded: object[]}>} The parts
+ *   are each {name, contentType, contentId, bytes}; `embedded` are the
+ *   pictures set in the text, which it refers to by their contentId.
+ */
+async function readDraft(hdr) {
+  // Read whole: every part is wanted, and a part's own bytes are what must
+  // be attached again -- not text put through a change of charset.
+  if (hdr.messageSize > 2 * MAX_DRAFT_ATTACHMENT_BYTES) {
+    throw new Error("the draft is too large to be changed here");
+  }
+  const parts = [];
+  lazy.MimeParser.parseSync(
+    await sourceOf(hdr),
+    {
+      startPart(number, headers) {
+        parts.push({ number, headers, chunks: [] });
+      },
+      deliverPartData(number, data) {
+        parts.findLast(part => part.number == number)?.chunks.push(data);
+      },
+    },
+    { bodyformat: "decode", strformat: "typedarray", decodeSubMessages: false }
+  );
+  if (!parts.length) {
+    throw new Error("the draft could not be read");
+  }
+
+  const typeOf = part => part.headers.contentType.type;
+  const within = (part, container) =>
+    container.number == "" || part.number.startsWith(`${container.number}.`);
+  const containers = parts.filter(
+    part => part.headers.contentType.mediatype == "multipart"
+  );
+  const leaves = parts.filter(part => !containers.includes(part));
+  if (containers.some(part => typeOf(part) == "multipart/encrypted")) {
+    throw new Error("the draft is encrypted, and cannot be changed here");
+  }
+
+  const dispositionOf = part =>
+    (part.headers.getRawHeader("content-disposition") ?? [])[0] ?? "";
+  const isText = part =>
+    ["text/html", "text/plain"].includes(typeOf(part)) &&
+    !/^\s*attachment/i.test(dispositionOf(part));
+  // The text is the first part that can be one. Where it is one of several
+  // versions of the same text, the HTML is kept and the others go.
+  let text = leaves.find(isText);
+  const versions = [];
+  const alternative =
+    text &&
+    containers.findLast(
+      part => typeOf(part) == "multipart/alternative" && within(text, part)
+    );
+  if (alternative) {
+    versions.push(...leaves.filter(p => isText(p) && within(p, alternative)));
+    text = versions.find(part => typeOf(part) == "text/html") ?? text;
+  }
+
+  const bytesOf = part => {
+    const bytes = new Uint8Array(
+      part.chunks.reduce((size, chunk) => size + chunk.length, 0)
+    );
+    let at = 0;
+    for (const chunk of part.chunks) {
+      bytes.set(chunk, at);
+      at += chunk.length;
+    }
+    return bytes;
+  };
+  const attachments = [];
+  const embedded = [];
+  for (const part of leaves) {
+    if (part == text || versions.includes(part)) {
+      continue;
+    }
+    const contentId = (part.headers.getRawHeader("content-id") ?? [])[0]
+      ?.trim()
+      .replace(/^<|>$/g, "");
+    const contentType = part.headers.contentType;
+    const described = {
+      name:
+        lazy.MimeParser.getParameter(dispositionOf(part), "filename") ||
+        (contentType.has("name") ? contentType.get("name") : "") ||
+        "attachment",
+      contentType: contentType.type,
+      contentId,
+      bytes: bytesOf(part),
+    };
+    const related = containers.some(
+      container =>
+        typeOf(container) == "multipart/related" && within(part, container)
+    );
+    (contentId && related ? embedded : attachments).push(described);
+  }
+
+  let body = "";
+  if (text) {
+    const charset = text.headers.contentType.has("charset")
+      ? text.headers.contentType.get("charset")
+      : "utf-8";
+    let decoder;
+    try {
+      decoder = new TextDecoder(charset);
+    } catch (ex) {
+      decoder = new TextDecoder();
+    }
+    body = decoder.decode(bytesOf(text));
+  }
+  return {
+    headers: parts[0].headers,
+    bodyType: text ? typeOf(text) : "text/html",
+    body,
+    flowed:
+      Boolean(text) &&
+      text.headers.contentType.has("format") &&
+      /flowed/i.test(text.headers.contentType.get("format")),
+    attachments,
+    embedded,
+  };
+}
+
+/**
+ * A message's text as HTML, for a caller that means to change a draft and
+ * keep its formatting.
+ *
+ * Only what is in the body: the page around it is put back when a draft is
+ * saved. Pictures set in the text are named as the message names them, and
+ * are found again by those names when the HTML comes back.
+ *
+ * @param {nsIMsgDBHdr} hdr
+ * @returns {Promise<{html: ?string, htmlTruncated: ?boolean}>} With `html`
+ *   null for a message whose text is not HTML, or that cannot be read.
+ */
+async function htmlOf(hdr) {
+  let message;
+  try {
+    message = await readDraft(hdr);
+  } catch (ex) {
+    return { html: null };
+  }
+  if (message.bodyType != "text/html") {
+    return { html: null };
+  }
+  const html = new DOMParser().parseFromString(message.body, "text/html").body
+    .innerHTML;
+  return html.length > MAX_BODY_CHARS
+    ? { html: html.slice(0, MAX_BODY_CHARS), htmlTruncated: true }
+    : { html };
+}
+
+/**
+ * The body of a draft whose text is not being changed.
+ *
+ * @param {object} was - The draft, from readDraft.
+ * @param {nsIMsgIdentity} identity
+ * @returns {{bodyType: string, body: string}}
+ */
+function keptBody(was, identity) {
+  if (was.bodyType == "text/plain" && !was.flowed && identity.composeHtml) {
+    // What this endpoint wrote before it wrote HTML. Saved again as it was,
+    // it would go on opening in the plain-text editor.
+    return { bodyType: "text/html", body: htmlDocument(textToHtml(was.body)) };
+  }
+  return { bodyType: was.bodyType, body: was.body };
+}
+
+/**
+ * The attachments of a draft that stay when some are taken off by name. A
+ * name the draft does not have is an error, which says what it does have.
+ *
+ * @param {object} was - The draft, from readDraft.
+ * @param {?(string|string[])} removed - Names.
+ * @returns {object[]}
+ */
+function attachmentsLeft(was, removed) {
+  const names = [removed ?? []].flat().map(String);
+  for (const name of names) {
+    if (!was.attachments.some(part => part.name == name)) {
+      throw new Error(
+        `the draft has no attachment named "${name}"; it has: ` +
+          (was.attachments.map(part => part.name).join(", ") || "none")
+      );
+    }
+  }
+  return was.attachments.filter(part => !names.includes(part.name));
+}
+
+/**
+ * The identity a draft is written as: the one it names, else whichever has
+ * the address it is from.
+ *
+ * @param {object} headers - The draft's headers, from readDraft.
+ * @returns {?nsIMsgIdentity}
+ */
+function identityOfDraft(headers) {
+  const key = (headers.getRawHeader("x-identity-key") ?? [])[0]?.trim();
+  const from = headers.get("from")?.[0]?.email;
+  return (
+    lazy.MailServices.accounts.allIdentities.find(i => i.key == key) ??
+    (from ? pickIdentity(from) : null) ??
+    defaultIdentity()
+  );
+}
+
+/**
+ * A header of a draft as it would be typed, rather than as it is encoded.
+ *
+ * @param {object} headers - The draft's headers, from readDraft.
+ * @param {string} name
+ * @returns {string}
+ */
+function decodedHeader(headers, name) {
+  const raw = (headers.getRawHeader(name) ?? []).join(", ");
+  return raw
+    ? lazy.MailServices.mimeConverter.decodeMimeHeader(raw, null, false, true)
+    : "";
+}
+
+/**
+ * Put together a draft and save it, as the compose window would.
+ *
+ * The message is built by the code the compose window saves with, so it has
+ * the headers a draft needs to open as one -- which identity it is written
+ * as, where the sent copy goes -- and its attachments are encoded as any
+ * others are.
+ *
+ * @param {object} draft - {identity, to, cc, bcc, replyTo, subject,
+ *   references, bodyType, body, attachments, embedded, fcc, options,
+ *   original}, where `options` is as draftOptions gives it and `original`
+ *   is {uri, disposition} for a message this answers.
+ * @param {nsIMsgFolder} folder - The folder to save into.
+ * @param {?nsIMsgDBHdr} [replaced] - An earlier version, deleted once this
+ *   one is saved.
+ * @returns {Promise<object>} What the caller is told.
+ */
+async function saveDraft(draft, folder, replaced = null) {
+  const { identity } = draft;
+  const fields = Cc[
+    "@mozilla.org/messengercompose/composefields;1"
+  ].createInstance(Ci.nsIMsgCompFields);
+  fields.from = lazy.MailServices.headerParser
+    .makeMailboxObject(identity.fullName, identity.email)
+    .toString();
+  fields.to = draft.to;
+  fields.cc = draft.cc;
+  fields.bcc = draft.bcc;
+  fields.replyTo = draft.replyTo;
+  fields.subject = draft.subject;
+  if (draft.references) {
+    fields.references = draft.references;
+  }
+  if (identity.organization) {
+    fields.organization = identity.organization;
+  }
+  if (draft.fcc) {
+    fields.fcc = draft.fcc;
+  }
+  // What is chosen in the compose window's Options menu. A draft records
+  // most of it in a header of its own, to be taken up when it is opened.
+  const { options } = draft;
+  fields.priority = options.priority;
+  fields.returnReceipt = options.returnReceipt;
+  fields.receiptHeaderType = options.receiptHeaderType;
+  fields.DSN = options.DSN;
+  fields.attachVCard = options.attachVCard;
+  fields.attachmentReminder = options.attachmentReminder;
+  fields.deliveryFormat = options.deliveryFormat;
+  for (const attachment of draft.attachments) {
+    fields.addAttachment(attachment);
+  }
+
+  const originalUri = draft.original?.uri ?? "";
+  const type =
+    draft.original?.disposition == "replied"
+      ? Ci.nsIMsgCompType.Reply
+      : Ci.nsIMsgCompType.New;
+  const message = new lazy.MimeMessage(
+    identity,
+    fields,
+    lazy.MsgUtils.getFcc(identity, fields, originalUri, type),
+    draft.bodyType,
+    // As bytes, one to a character, which is how it takes an attachment too.
+    lazy.jsmime.mimeutils.typedArrayToString(
+      new TextEncoder().encode(draft.body)
+    ),
+    Ci.nsIMsgSend.nsMsgSaveAsDraft,
+    originalUri,
+    type,
+    draft.embedded,
+    null
+  );
+  let file;
+  try {
+    file = await message.createMessageFile();
+  } catch (ex) {
+    throw new Error(
+      ex.data?.name
+        ? `"${ex.data.name}" could not be read to attach it`
+        : `the draft could not be put together: ${ex.message ?? ex}`
+    );
+  }
+
+  const key = await copyToFolder(file, folder, fields.messageId);
+  const hdr = await headerOnceSaved(folder, key, fields.messageId);
+  if (hdr && originalUri) {
+    // So that sending the draft marks the message it answers as answered,
+    // which the compose window arranges in the same way.
+    hdr.setStringProperty("origURIs", originalUri);
+    hdr.setStringProperty("queuedDisposition", draft.original.disposition);
+  }
+  if (replaced) {
+    await discard(replaced);
+  }
+
+  return {
+    saved: true,
+    id: hdr ? folder.getUriForMsg(hdr) : null,
+    folder: folder.URI,
+    subject: draft.subject,
+    from: identity.email,
+    attachments: draft.attachments.map(attachment => attachment.name),
+    // The draft is saved all the same; its folder has just not shown it yet.
+    ...(hdr
+      ? {}
+      : { note: "saved, but its id is not known yet; look in the folder" }),
+  };
+}
+
+/**
+ * Copy a message file into a folder as a draft, and delete the file.
+ *
+ * @param {nsIFile} file
+ * @param {nsIMsgFolder} folder
+ * @param {string} messageId - The message's Message-ID, which a server that
+ *   does not report the new message's key is searched for.
+ * @returns {Promise<number>} The new message's key, or NO_KEY if unknown.
+ */
+function copyToFolder(file, folder, messageId) {
+  return new Promise((resolve, reject) => {
+    let key = NO_KEY;
+    let settled = false;
+    const finish = (fn, value) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      try {
+        file.remove(false);
+      } catch (ex) {
+        // Already gone, or never written.
+      }
+      fn(value);
+    };
+
+    // Saving to an IMAP folder is a round trip to the server, which can
+    // hang for as long as the connection does. Better to say so than to
+    // leave the caller waiting on a socket that will never answer.
+    const allowed = Math.min(
+      DRAFT_SAVE_TIMEOUT_MS + file.fileSize / DRAFT_SAVE_BYTES_PER_MS,
+      DRAFT_SAVE_TIMEOUT_MAX_MS
+    );
+    const deadline = lazy.setTimeout(
+      () =>
+        finish(
+          reject,
+          new Error(
+            `the draft was not confirmed saved within ` +
+              `${Math.round(allowed / 1000)} seconds; the server may still ` +
+              `be working on it`
+          )
+        ),
+      allowed
+    );
+
+    lazy.MailServices.copy.copyFileMessage(
+      file,
+      folder,
+      null,
+      true, // isDraft
+      0,
+      "",
+      {
+        // Without this XPConnect cannot hand the callbacks back to us, so
+        // OnStopCopy never arrives and the request hangs until it is timed
+        // out at the far end.
+        QueryInterface: ChromeUtils.generateQI(["nsIMsgCopyServiceListener"]),
+        onStartCopy() {},
+        onProgress() {},
+        setMessageKey(newKey) {
+          key = newKey;
+        },
+        getMessageId() {
+          return messageId;
+        },
+        onStopCopy(status) {
+          lazy.clearTimeout(deadline);
+          if (Components.isSuccessCode(status)) {
+            finish(resolve, key);
+          } else {
+            finish(
+              reject,
+              new Error(`could not save the draft (status ${status})`)
+            );
+          }
+        },
+      },
+      null
+    );
+  });
+}
+
+/**
+ * The header of a draft just saved, once its folder has it.
+ *
+ * A folder on a server learns of a new message when it next looks, so it is
+ * asked to look, and given a little while. A caller told a draft's id will
+ * use it straight away -- to read the draft back, or to change it.
+ *
+ * @param {nsIMsgFolder} folder
+ * @param {number} key - The message's key, or NO_KEY.
+ * @param {string} messageId - Its Message-ID, to find it by without a key.
+ * @returns {Promise<?nsIMsgDBHdr>}
+ */
+async function headerOnceSaved(folder, key, messageId) {
+  const bareId = messageId.replace(/^<|>$/g, "");
+  const find = () => {
+    try {
+      const database = folder.msgDatabase;
+      // The key is taken on trust only as far as the message it leads to is
+      // this one. A server that does not report the key is searched for the
+      // message instead, and one that answers that search loosely names
+      // another draft -- which, when a draft is being changed, is the one
+      // about to be deleted.
+      if (key != NO_KEY && database.containsKey(key)) {
+        const hdr = database.getMsgHdrForKey(key);
+        if (hdr.messageId == bareId) {
+          return hdr;
+        }
+      }
+      return database.getMsgHdrForMessageID(bareId);
+    } catch (ex) {
+      return null;
+    }
+  };
+  let hdr = find();
+  if (!hdr) {
+    try {
+      folder.updateFolder(null);
+    } catch (ex) {
+      // Offline, or busy; it may still turn up.
+    }
+    const deadline = Date.now() + DRAFT_APPEAR_TIMEOUT_MS;
+    while (!hdr && Date.now() < deadline) {
+      await new Promise(resolve => lazy.setTimeout(resolve, 250));
+      hdr = find();
+    }
+  }
+  return hdr;
+}
+
+/**
+ * Put a draft that has been replaced in the Trash -- or wherever the account
+ * puts what the user deletes.
+ *
+ * @param {nsIMsgDBHdr} hdr
+ * @returns {Promise} Settles when it has gone, or has been given long enough.
+ */
+function discard(hdr) {
+  return new Promise(resolve => {
+    const timer = lazy.setTimeout(resolve, DRAFT_APPEAR_TIMEOUT_MS);
+    const done = () => {
+      lazy.clearTimeout(timer);
+      resolve();
+    };
+    try {
+      hdr.folder.deleteMessages(
+        [hdr],
+        null,
+        false, // deleteStorage: no, it is to be got back if this was a mistake
+        false,
+        {
+          QueryInterface: ChromeUtils.generateQI(["nsIMsgCopyServiceListener"]),
+          onStartCopy() {},
+          onProgress() {},
+          setMessageKey() {},
+          getMessageId() {
+            return "";
+          },
+          onStopCopy: done,
+        },
+        false
+      );
+    } catch (ex) {
+      console.warn("Could not remove the earlier version of a draft:", ex);
+      done();
+    }
+  });
 }
 
 // -- the listener ---------------------------------------------------------
@@ -2066,8 +3389,9 @@ export const MailMcpUI = {
         : "Access is OFF. Nothing is listening.") +
       `\n${tokens.length} password${tokens.length == 1 ? "" : "s"} stored.` +
       "\n\nAn AI tool needs one of these passwords to read your mail, " +
-      "write drafts and tag messages. It can never send, move or delete " +
-      "anything.";
+      "write drafts and tag messages. It can never send anything, and " +
+      "never moves or deletes a message -- only the earlier version of a " +
+      "draft it changes, which goes to the Trash.";
 
     const actions = [
       enabled ? "Turn access OFF" : "Turn access ON",
