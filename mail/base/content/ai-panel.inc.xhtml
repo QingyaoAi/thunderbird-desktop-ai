@@ -11,14 +11,24 @@
 
   <div class="ai-panel-header">
     <h2 class="ai-panel-title" data-l10n-id="ai-panel-title"></h2>
-    <select id="ai-panel-model"
-            class="ai-panel-model"
-            data-l10n-id="ai-panel-model"></select>
-    <!-- dsh's models, shown in place of the picker above while it is on. -->
-    <select id="ai-panel-dsh-model"
-            class="ai-panel-model"
-            hidden="hidden"
-            data-l10n-id="ai-panel-dsh-model"></select>
+    <!-- Which conversation this is, and the way to the earlier ones. -->
+    <button id="ai-panel-history"
+            class="ai-panel-history-button"
+            type="button"
+            aria-expanded="false"
+            aria-controls="ai-panel-history-list"
+            data-l10n-id="ai-panel-history-button">
+      <span id="ai-panel-conversation-new"
+            class="ai-panel-conversation-title"
+            data-l10n-id="ai-panel-conversation-new"></span>
+      <span id="ai-panel-conversation-title"
+            class="ai-panel-conversation-title"
+            hidden="hidden"></span>
+    </button>
+    <button id="ai-panel-new"
+            class="ai-panel-icon-button"
+            type="button"
+            data-l10n-id="ai-panel-new-button"></button>
     <!-- Starts and stops DeepSeek Harness; see ai-panel-dsh.mjs. -->
     <button id="ai-panel-dsh"
             class="ai-panel-dsh-toggle"
@@ -29,14 +39,22 @@
             class="ai-panel-icon-button"
             type="button"
             data-l10n-id="ai-panel-dsh-settings-button"></button>
-    <button id="ai-panel-clear"
-            class="ai-panel-icon-button"
-            type="button"
-            data-l10n-id="ai-panel-clear-button"></button>
     <button id="ai-panel-close"
             class="ai-panel-icon-button"
             type="button"
             data-l10n-id="ai-panel-close-button"></button>
+  </div>
+
+  <!-- The earlier conversations, shown in place of the one open while the
+     - header's title is pressed. -->
+  <div id="ai-panel-history-list" class="ai-panel-history" hidden="hidden">
+    <h3 class="ai-panel-history-heading"
+        data-l10n-id="ai-panel-history-heading"></h3>
+    <ul id="ai-panel-history-items" class="ai-panel-history-items"></ul>
+    <p id="ai-panel-history-empty"
+       class="ai-panel-history-empty"
+       hidden="hidden"
+       data-l10n-id="ai-panel-history-empty"></p>
   </div>
 
   <!-- Shown instead of the conversation until a provider and key exist,
@@ -80,5 +98,19 @@
               data-l10n-id="ai-panel-draft-reply"></button>
     </div>
   </form>
+
+  <!-- Which model answers, under the box it answers. Outside the form, which
+     - is hidden until a model is set up: the picker is how to choose another
+     - one that is. -->
+  <div class="ai-panel-footer">
+    <select id="ai-panel-model"
+            class="ai-panel-model"
+            data-l10n-id="ai-panel-model"></select>
+    <!-- dsh's models, shown in place of the picker above while it is on. -->
+    <select id="ai-panel-dsh-model"
+            class="ai-panel-model"
+            hidden="hidden"
+            data-l10n-id="ai-panel-dsh-model"></select>
+  </div>
 
 </div>

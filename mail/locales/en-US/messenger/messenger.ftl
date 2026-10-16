@@ -937,9 +937,30 @@ ai-panel-model-add-url-anthropic = Address of the API, without a version at the 
 ai-panel-model-add-model = Model name, copied exactly from the provider. This also names the entry in the list.
     Examples: deepseek-v4-flash · qwen3.5-122b · claude-opus-5
 
-ai-panel-clear-button =
-    .title = Clear this conversation
-    .aria-label = Clear
+ai-panel-new-button =
+    .title = New conversation
+    .aria-label = New conversation
+
+# The header's title, which says which conversation is shown. Pressed, it
+# shows the earlier ones instead.
+ai-panel-history-button =
+    .title = Earlier conversations
+
+# The header's title before anything has been asked in the conversation.
+ai-panel-conversation-new = New conversation
+
+ai-panel-history-heading = Earlier conversations
+
+ai-panel-history-empty = No conversations yet. Each is kept here once something has been asked in it.
+
+ai-panel-history-delete =
+    .title = Delete this conversation
+    .aria-label = Delete
+
+ai-panel-history-delete-title = Delete conversation
+
+# $title is the conversation's title: the start of its first question.
+ai-panel-history-delete-confirm = Delete “{ $title }”? It cannot be brought back. If dsh answered in it, its dsh session is deleted too.
 
 ai-panel-input =
     .placeholder = Ask about your mail…
@@ -1055,6 +1076,11 @@ ai-panel-dsh-settings-button =
 ai-panel-dsh-model =
     .title = Which model dsh uses
 
+# Heads each group of dsh's models, so they are not taken for the panel's own.
+# $provider is who provides them, as dsh names it, e.g. "DeepSeek".
+ai-panel-dsh-model-group =
+    .label = DSH { $provider }
+
 ai-panel-dsh-input =
     .placeholder = Ask dsh to find, read or tag mail…
 
@@ -1065,6 +1091,13 @@ ai-panel-dsh-starting = Starting dsh…
 
 # $folder is the folder dsh works in.
 ai-panel-dsh-on = dsh is on. What you send now goes to dsh: it can search and tag your mail, and run commands and read and write files in { $folder }.
+
+# Shown instead of ai-panel-dsh-on when dsh reopens the session an earlier
+# conversation was answered in. $folder is the folder dsh works in.
+ai-panel-dsh-resumed = dsh is on, and carries on this conversation where it left off. It can search and tag your mail, and run commands and read and write files in { $folder }.
+
+# $reason is what dsh said, e.g. that the session is no longer there.
+ai-panel-dsh-resume-failed = dsh could not reopen this conversation’s session ({ $reason }), so it has begun a new one and does not know what was said above.
 
 ai-panel-dsh-off = dsh is off.
 

@@ -17,6 +17,11 @@
  * transcript shows what dsh does as it does it -- its reasoning, each tool it
  * calls and what came back, and its answers. Starting and talking to the
  * program is DshAgent's job; this is the part that shows it.
+ *
+ * Each conversation in the panel is a session of dsh's. A new conversation is
+ * a new session, and carrying on an earlier one reopens the session it was
+ * answered in, so dsh remembers it. What dsh showed is recorded with the
+ * conversation as it arrives, since dsh gives none of it back on reopening.
  */
 
 import {
@@ -26,6 +31,7 @@ import {
 
 const lazy = {};
 ChromeUtils.defineESModuleGetters(lazy, {
+  AIConversations: "resource:///modules/AIConversations.sys.mjs",
   DshAgent: "resource:///modules/DshAgent.sys.mjs",
   DshSessions: "resource:///modules/DshAgent.sys.mjs",
   DshSettings: "resource:///modules/DshAgent.sys.mjs",
@@ -84,13 +90,6 @@ export class DshPanel {
     /** @type {Set<Function>} Permission prompts waiting on an answer. */
     this._waiting = new Set();
     this._allowAll = false;
-    /**
-     * Subject to URI, for every message the mail tools have returned this
-     * session: what an answer's mentions of them are linked to.
-     *
-     * @type {Map<string, string>}
-     */
-    this._mentions = new Map();
 
     this.toggleButton = document.getElementById("ai-panel-dsh");
     this.settingsButton = document.getElementById("ai-panel-dsh-settings");
@@ -166,7 +165,8 @@ export class DshPanel {
       onExit: info => this._onExit(agent, info),
     });
     try {
-      await agent.start();
+      // The session the conversation shown was answered in, if it was.
+      await agent.start({ resume: this.panel.conversation?.dsh });
     } catch (ex) {
       notice.remove();
       if (this.state == "starting") {
@@ -184,11 +184,14 @@ export class DshPanel {
 
     this.agent = agent;
     this._allowAll = false;
-    this._mentions = new Map();
     this._setState("on");
     this._fillModelPicker();
-    const { workspace } = await lazy.DshSettings.get();
-    this._note("ai-panel-dsh-on", { folder: workspace });
+    if (agent.resumeError) {
+      this._note("ai-panel-dsh-resume-failed", { reason: agent.resumeError });
+    }
+    this._note(agent.resumed ? "ai-panel-dsh-resumed" : "ai-panel-dsh-on", {
+      folder: agent.workspace,
+    });
     this.panel.input.focus();
   }
 
@@ -200,26 +203,62 @@ export class DshPanel {
     this.agent = null;
     this._setState("off");
     this._answerWaiting(null);
-    this._endPrompt();
+    this._interruptPrompt();
     this._note("ai-panel-dsh-off");
-    await agent?.stop();
+    await this._retire(agent);
   }
 
   /**
-   * Begin a new conversation: a new session in a new run, since a session's
-   * context cannot be emptied from outside it.
+   * Go on with the conversation the panel now shows, new or earlier: dsh, if
+   * it is running, is started again in that conversation's session, or in a
+   * new one. A new run, since a session's context cannot be emptied or
+   * swapped from outside it. One not yet running starts in the right session
+   * when it is first asked something.
    */
   async restart() {
+    if (this.state == "starting") {
+      await this._starting;
+    }
     if (this.state != "on") {
       return;
     }
     const agent = this.agent;
     this.agent = null;
     this._answerWaiting(null);
-    this._endPrompt();
+    this._interruptPrompt();
     this._setState("ready");
-    await agent?.stop();
+    await this._retire(agent);
     await this.start();
+  }
+
+  /**
+   * Stop a run that is being left. A session nothing was asked in is deleted
+   * as well: it is in no conversation, so nothing could reopen it, and
+   * beginning conversations without asking anything would otherwise leave
+   * one behind each time.
+   *
+   * @param {?DshAgent} agent
+   */
+  async _retire(agent) {
+    if (!agent) {
+      return;
+    }
+    const unused = agent.prompted || agent.resumed ? null : agent.sessionId;
+    await agent.stop();
+    if (unused) {
+      await lazy.DshSessions.remove([unused]).catch(console.error);
+    }
+  }
+
+  /**
+   * End the prompt running, if one is, because dsh is being stopped under
+   * it. What it showed is kept with its conversation, marked as stopped.
+   */
+  _interruptPrompt() {
+    if (this._prompting) {
+      this._recordPart(this._turn, { type: "notice", id: "ai-panel-stopped" });
+    }
+    this._endPrompt();
   }
 
   /** Ask dsh to stop what it is doing. The prompt then settles by itself. */
@@ -249,6 +288,7 @@ export class DshPanel {
     const panel = this.panel;
     panel.input.value = "";
     panel._addTurn("user").textContent = text;
+    const { conversation, answer } = panel._recordExchange(text, "dsh");
 
     // What is open as this is asked, not once dsh has started.
     const blocks = [{ type: "text", text }];
@@ -264,6 +304,17 @@ export class DshPanel {
       answerId: null,
       answerRaw: "",
       tools: new Map(),
+      /** Where what is shown is recorded, once there is an answer. */
+      record: null,
+      thinkingPart: null,
+      answerPart: null,
+      /**
+       * Subject to URI, for every message the mail tools have returned in
+       * the conversation: what an answer's mentions of them are linked to.
+       *
+       * @type {Map<string, string>}
+       */
+      mentions: conversation.mentions,
     };
     this._turn = turn;
     this._prompting = true;
@@ -277,23 +328,32 @@ export class DshPanel {
       }
       // Made only now, so that it comes after the notices starting left.
       turn.body = panel._addTurn("assistant");
+      turn.record = answer;
       const agent = this.agent;
+      panel._attachDshSession(conversation, agent);
       try {
         const stopReason = await agent.prompt(blocks);
-        if (stopReason == "cancelled") {
+        if (this._turn != turn) {
+          // Ended from elsewhere -- another conversation was opened -- which
+          // has recorded how.
+        } else if (stopReason == "cancelled") {
           turn.body.appendChild(panel._notice("ai-panel-stopped"));
+          this._recordPart(turn, { type: "notice", id: "ai-panel-stopped" });
         } else if (stopReason && stopReason != "end_turn") {
-          turn.body.appendChild(
-            this._noticeWith("ai-panel-dsh-stopped-early", {
-              reason: stopReason,
-            })
-          );
+          const part = {
+            type: "notice",
+            id: "ai-panel-dsh-stopped-early",
+            args: { reason: stopReason },
+          };
+          turn.body.appendChild(this._noticeWith(part.id, part.args));
+          this._recordPart(turn, part);
         }
       } catch (ex) {
         // A run that died is explained by _onExit; anything else is shown
         // here.
         if (this.agent == agent && this._turn == turn) {
           turn.body.appendChild(this._error(ex.message));
+          this._recordPart(turn, { type: "error", text: ex.message });
         }
       }
     } finally {
@@ -302,7 +362,21 @@ export class DshPanel {
       if (this._turn == turn) {
         this._endPrompt();
       }
+      // Its own conversation, which by now may not be the one shown.
+      panel._saveConversation(conversation);
     }
+  }
+
+  /**
+   * Record one more thing shown in a turn's answer, in the order shown.
+   *
+   * @param {?object} turn
+   * @param {object} part
+   * @returns {object} The part, to go on filling in.
+   */
+  _recordPart(turn, part) {
+    turn?.record?.parts.push(part);
+    return part;
   }
 
   /**
@@ -406,10 +480,16 @@ export class DshPanel {
    * use, if dsh is on, is kept: dsh has it open.
    */
   async clearSessions() {
-    const keep = this.agent?.sessionId ? [this.agent.sessionId] : [];
-    const count = (await lazy.DshSessions.list()).filter(
-      session => !keep.includes(session.id)
-    ).length;
+    // The one dsh has open, and the one the conversation shown was answered
+    // in, which is reopened when it is carried on.
+    const keep = [
+      this.agent?.sessionId,
+      this.panel.conversation?.dsh?.sessionId,
+    ].filter(Boolean);
+    const ids = (await lazy.DshSessions.list())
+      .map(session => session.id)
+      .filter(id => !keep.includes(id));
+    const count = ids.length;
     const [title, question, none] = await document.l10n.formatValues([
       { id: "ai-panel-dsh-settings-title" },
       {
@@ -428,7 +508,9 @@ export class DshPanel {
       return;
     }
     try {
-      const deleted = await lazy.DshSessions.clear(keep);
+      const deleted = await lazy.DshSessions.remove(ids);
+      // Their conversations go too: there is no carrying them on.
+      await lazy.AIConversations.removeForDshSessions(ids);
       this._note("ai-panel-dsh-clear-sessions-done", { count: deleted });
     } catch (ex) {
       this.panel.transcript.appendChild(this._error(ex.message));
@@ -484,8 +566,15 @@ export class DshPanel {
         if (update.content?.type != "text") {
           break;
         }
-        turn.thinking ??= this.panel._addThinking(turn.body);
+        if (!turn.thinking) {
+          turn.thinking = this.panel._addThinking(turn.body);
+          turn.thinkingPart = this._recordPart(turn, {
+            type: "thinking",
+            text: "",
+          });
+        }
         turn.thinking.text.textContent += update.content.text;
+        turn.thinkingPart.text += update.content.text;
         break;
       }
 
@@ -503,24 +592,36 @@ export class DshPanel {
           turn.body.appendChild(turn.answer);
           turn.answerId = update.messageId;
           turn.answerRaw = "";
+          turn.answerPart = this._recordPart(turn, {
+            type: "answer",
+            text: "",
+          });
         }
         turn.answerRaw += update.content.text;
+        turn.answerPart.text = turn.answerRaw;
         this.panel._renderAnswer(turn.answer, turn.answerRaw, []);
-        linkifyMessageMentions(turn.answer, document, this._mentions);
+        linkifyMessageMentions(turn.answer, document, turn.mentions);
         break;
       }
 
       case "tool_call": {
         this._foldThinking();
         turn.answer = null;
-        turn.tools.set(update.toolCallId, this._addTool(turn.body, update));
+        const tool = this._addTool(turn.body, update);
+        tool.part = this._recordPart(turn, {
+          type: "tool",
+          title: String(update.title ?? "tool"),
+          status: update.status ?? "in_progress",
+          input: tool.inputText,
+        });
+        turn.tools.set(update.toolCallId, tool);
         break;
       }
 
       case "tool_call_update": {
         const tool = turn.tools.get(update.toolCallId);
         if (tool) {
-          this._updateTool(tool, update);
+          this._updateTool(tool, update, turn.mentions);
         }
         break;
       }
@@ -537,13 +638,32 @@ export class DshPanel {
       thinking.details.open = false;
       thinking.details.classList.add("ai-thinking-done");
       this._turn.thinking = null;
+      this._turn.thinkingPart = null;
+    }
+  }
+
+  /**
+   * Show a tool call as it was recorded with an earlier conversation.
+   *
+   * @param {HTMLElement} container
+   * @param {object} part - {title, status, input, output}.
+   */
+  renderTool(container, part) {
+    const tool = this._addTool(container, {
+      title: part.title,
+      status: part.status,
+      rawInput: part.input ?? undefined,
+    });
+    if (part.output) {
+      tool.output.textContent = part.output;
+      tool.output.hidden = false;
     }
   }
 
   /**
    * @param {HTMLElement} container
    * @param {object} call - A tool_call update.
-   * @returns {{details: HTMLElement, name: HTMLElement, output: HTMLElement}}
+   * @returns {{details: HTMLElement, name: HTMLElement, output: HTMLElement, inputText: ?string}}
    */
   _addTool(container, call) {
     const details = document.createElement("details");
@@ -560,14 +680,16 @@ export class DshPanel {
     summary.appendChild(label);
     details.appendChild(summary);
 
+    let inputText = null;
     if (call.rawInput !== undefined) {
       const input = document.createElement("pre");
       input.className = "ai-dsh-tool-input";
-      input.textContent = shorten(
+      inputText = shorten(
         typeof call.rawInput == "string"
           ? call.rawInput
           : JSON.stringify(call.rawInput, null, 2)
       );
+      input.textContent = inputText;
       details.appendChild(input);
     }
     const output = document.createElement("pre");
@@ -580,13 +702,22 @@ export class DshPanel {
       details,
       name: label,
       output,
+      inputText,
       mail: title.startsWith(MAIL_TOOL_PREFIX),
     };
   }
 
-  _updateTool(tool, update) {
+  /**
+   * @param {object} tool - As _addTool made it.
+   * @param {object} update - A tool_call_update.
+   * @param {Map<string, string>} mentions - The conversation's.
+   */
+  _updateTool(tool, update, mentions) {
     if (update.status) {
       tool.details.dataset.status = update.status;
+      if (tool.part) {
+        tool.part.status = update.status;
+      }
     }
     const text = (update.content ?? [])
       .map(item => (item.content?.type == "text" ? item.content.text : ""))
@@ -595,8 +726,11 @@ export class DshPanel {
     if (text) {
       tool.output.textContent = shorten(text);
       tool.output.hidden = false;
+      if (tool.part) {
+        tool.part.output = tool.output.textContent;
+      }
       if (tool.mail) {
-        this._rememberMessages(text);
+        this._rememberMessages(text, mentions);
       }
     }
   }
@@ -607,8 +741,9 @@ export class DshPanel {
    *
    * @param {string} text - The tool's result, which for the mail tools is
    *   JSON: one message, or lists of them.
+   * @param {Map<string, string>} mentions - Where to note them.
    */
-  _rememberMessages(text) {
+  _rememberMessages(text, mentions) {
     let result;
     try {
       result = JSON.parse(text);
@@ -630,7 +765,7 @@ export class DshPanel {
         typeof value.id == "string" &&
         MESSAGE_LINK_RE.test(value.id)
       ) {
-        this._mentions.set(subject, value.id);
+        mentions.set(subject, value.id);
       }
       for (const child of Object.values(value)) {
         visit(child, depth + 1);
@@ -730,6 +865,13 @@ export class DshPanel {
     }
     this.agent = null;
     this._answerWaiting(null);
+    if (this._prompting) {
+      this._recordPart(this._turn, {
+        type: "notice",
+        id: "ai-panel-dsh-exited",
+        args: { code: exitCode },
+      });
+    }
     this._endPrompt();
     // Still what answers: the next thing sent starts it again.
     this._setState("ready");
@@ -755,7 +897,7 @@ export class DshPanel {
     // The panel's own model picker means nothing while dsh answers, and
     // dsh's own means nothing while it does not.
     this.panel.modelPicker.hidden = state != "off";
-    this.modelPicker.hidden = state != "on";
+    this._showModelPicker();
     this.panel.refreshConfigured();
     this.panel.updateDraftButton();
   }
@@ -775,7 +917,7 @@ export class DshPanel {
     const option = this.agent?.configOptions.find(o => o.id == "model");
     this.modelPicker.replaceChildren();
     if (!option) {
-      this.modelPicker.hidden = true;
+      this._showModelPicker();
       return;
     }
     const add = (list, choice) => {
@@ -787,7 +929,10 @@ export class DshPanel {
     for (const entry of option.options ?? []) {
       if (Array.isArray(entry.options)) {
         const group = document.createElement("optgroup");
-        group.label = entry.name;
+        // Marked as dsh's: the panel's own picker sits in the same place.
+        document.l10n.setAttributes(group, "ai-panel-dsh-model-group", {
+          provider: entry.name,
+        });
         entry.options.forEach(choice => add(group, choice));
         this.modelPicker.appendChild(group);
       } else {
@@ -795,7 +940,18 @@ export class DshPanel {
       }
     }
     this.modelPicker.value = option.currentValue;
-    this.modelPicker.hidden = this.state != "on";
+    this._showModelPicker();
+  }
+
+  /**
+   * dsh's model picker is shown once dsh has said what its models are. It
+   * stays where it is while dsh starts again for another conversation, so the
+   * box above it does not jump, but it can only be used while dsh is on.
+   */
+  _showModelPicker() {
+    this.modelPicker.hidden =
+      this.state == "off" || !this.modelPicker.options.length;
+    this.modelPicker.disabled = this.state != "on";
   }
 
   async _changeModel() {

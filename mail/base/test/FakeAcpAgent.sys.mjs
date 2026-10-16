@@ -8,7 +8,9 @@
  * AI panel drives dsh.
  *
  * At session/new it checks that the MCP server it was given answers to the
- * token it was given. Each prompt then produces a thought, one tool call that
+ * token it was given, and names the session afresh; session/resume does the
+ * same check and takes the session it is asked for, unless that is "gone".
+ * Each prompt then produces a thought, one tool call that
  * asks for permission, and a message reporting what the agent saw, as JSON.
  * A prompt of "wait" stays open until it is cancelled; "crash" exits; "link"
  * answers with a link to the message sent with it, and one to a message that
@@ -30,9 +32,12 @@ def send(message):
 def result(rid, value):
     send({"jsonrpc": "2.0", "id": rid, "result": value})
 
+session = None
+resumed = False
+
 def update(value):
     send({"jsonrpc": "2.0", "method": "session/update",
-          "params": {"sessionId": "s1", "update": value}})
+          "params": {"sessionId": session, "update": value}})
 
 inbox = []
 cancelled = []
@@ -61,6 +66,16 @@ def model_options():
                  {"value": "deepseek/v4", "name": "v4"},
                  {"value": "deepseek/v4-pro", "name": "v4 pro"}]}]}]
 
+def count_tools(server):
+    headers = {h["name"]: h["value"] for h in server["headers"]}
+    headers["Content-Type"] = "application/json"
+    request = urllib.request.Request(
+        server["url"], headers=headers,
+        data=json.dumps({"jsonrpc": "2.0", "id": 1,
+                         "method": "tools/list"}).encode())
+    answer = json.load(urllib.request.urlopen(request, timeout=10))
+    return len(answer["result"]["tools"])
+
 tools = None
 cwd = None
 while True:
@@ -70,19 +85,25 @@ while True:
     params = message.get("params") or {}
     if method == "initialize":
         result(rid, {"protocolVersion": 1,
-                     "agentCapabilities": {"mcpCapabilities": {"http": True}}})
+                     "agentCapabilities": {
+                         "mcpCapabilities": {"http": True},
+                         "sessionCapabilities": {"close": {}, "resume": {}}}})
     elif method == "session/new":
-        server = params["mcpServers"][0]
-        headers = {h["name"]: h["value"] for h in server["headers"]}
-        headers["Content-Type"] = "application/json"
-        request = urllib.request.Request(
-            server["url"], headers=headers,
-            data=json.dumps({"jsonrpc": "2.0", "id": 1,
-                             "method": "tools/list"}).encode())
-        answer = json.load(urllib.request.urlopen(request, timeout=10))
-        tools = len(answer["result"]["tools"])
+        tools = count_tools(params["mcpServers"][0])
         cwd = params["cwd"]
-        result(rid, {"sessionId": "s1", "configOptions": model_options()})
+        session = "s-" + os.urandom(4).hex()
+        resumed = False
+        result(rid, {"sessionId": session, "configOptions": model_options()})
+    elif method == "session/resume":
+        if params["sessionId"] == "gone":
+            send({"jsonrpc": "2.0", "id": rid, "error": {
+                "code": -32602, "message": "session is not resumable: gone"}})
+            continue
+        tools = count_tools(params["mcpServers"][0])
+        cwd = params["cwd"]
+        session = params["sessionId"]
+        resumed = True
+        result(rid, {"configOptions": model_options()})
     elif method == "session/prompt":
         text = "".join(b.get("text", "") for b in params["prompt"]
                        if b.get("type") == "text")
@@ -136,7 +157,7 @@ while True:
                 "status": "in_progress", "rawInput": {}})
         send({"jsonrpc": "2.0", "id": "perm-1",
               "method": "session/request_permission",
-              "params": {"sessionId": "s1", "toolCall": {"toolCallId": "t1"},
+              "params": {"sessionId": session, "toolCall": {"toolCallId": "t1"},
                          "options": [
                              {"optionId": "allow-once", "name": "Allow once",
                               "kind": "allow_once"},
@@ -153,7 +174,8 @@ while True:
         report = {"said": text, "tools": tools, "sameDir": same_dir,
                   "path": os.environ["PATH"].split(":")[0],
                   "permission": chosen, "links": links, "names": names,
-                  "argv": sys.argv[1:]}
+                  "argv": sys.argv[1:], "session": session,
+                  "resumed": resumed, "cwd": cwd}
         update({"sessionUpdate": "agent_message_chunk",
                 "content": {"type": "text", "text": json.dumps(report)}})
         result(rid, {"stopReason": "end_turn"})

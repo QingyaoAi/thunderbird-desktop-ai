@@ -16,6 +16,7 @@
 import {
   renderMarkdown,
   linkifyCitations,
+  linkifyMessageMentions,
   MESSAGE_LINK_RE,
 } from "chrome://messenger/content/ai-markdown.mjs";
 import { DshPanel } from "chrome://messenger/content/ai-panel-dsh.mjs";
@@ -23,9 +24,11 @@ import { DshPanel } from "chrome://messenger/content/ai-panel-dsh.mjs";
 const lazy = {};
 ChromeUtils.defineESModuleGetters(lazy, {
   AIConfig: "resource:///modules/AIConfig.sys.mjs",
+  AIConversations: "resource:///modules/AIConversations.sys.mjs",
   AIMailContext: "resource:///modules/AIMailContext.sys.mjs",
   AIFormat: "resource:///modules/AIProvider.sys.mjs",
   AIProvider: "resource:///modules/AIProvider.sys.mjs",
+  DshSessions: "resource:///modules/DshAgent.sys.mjs",
   MailServices: "resource:///modules/MailServices.sys.mjs",
   openLinkExternally: "resource:///modules/LinkHelper.sys.mjs",
 });
@@ -92,8 +95,21 @@ export const AIPanel = {
    */
   _draftAbort: null,
 
-  /** @type {Array<{role: string, content: string}>} Conversation so far. */
+  /**
+   * @type {Array<{role: string, content: string}>} What the panel's own model
+   *   has been asked and has answered in this conversation, which goes with
+   *   each question. The conversation's own `messages`, once there is one.
+   */
   _messages: [],
+
+  /**
+   * @type {?object} The conversation shown, as AIConversations keeps it, or
+   *   null before anything has been asked in it.
+   */
+  conversation: null,
+
+  /** Whether the earlier conversations are shown instead of this one. */
+  _historyOpen: false,
 
   _initialized: false,
 
@@ -148,8 +164,21 @@ export const AIPanel = {
 
     this.stopButton.addEventListener("click", () => this.cancel());
     document
-      .getElementById("ai-panel-clear")
-      .addEventListener("click", () => this.clear());
+      .getElementById("ai-panel-new")
+      .addEventListener("click", () => this.newConversation());
+
+    this.historyButton = document.getElementById("ai-panel-history");
+    this.historyList = document.getElementById("ai-panel-history-list");
+    this.historyItems = document.getElementById("ai-panel-history-items");
+    this.historyEmpty = document.getElementById("ai-panel-history-empty");
+    this.historyButton.addEventListener("click", () => this.toggleHistory());
+    this.historyList.addEventListener("keydown", event => {
+      if (event.key == "Escape") {
+        event.preventDefault();
+        this.toggleHistory(false);
+        this.historyButton.focus();
+      }
+    });
     document
       .getElementById("ai-panel-close")
       .addEventListener("click", () => AIPanelUI.toggle(false));
@@ -410,21 +439,339 @@ export const AIPanel = {
   async refreshConfigured() {
     // dsh brings its own model, so with it on there is nothing to set up.
     const configured = this.dsh?.active || (await lazy.AIConfig.isConfigured());
-    this.setupNotice.hidden = configured;
+    // The earlier conversations take the place of this one while shown.
+    this.setupNotice.hidden = configured || this._historyOpen;
     this.form.hidden = !configured;
-    this.transcript.hidden = !configured;
+    this.transcript.hidden = !configured || this._historyOpen;
     this.actions.hidden = !configured;
     return configured;
   },
 
-  /** Remove the conversation, both on screen and as model context. */
-  clear() {
+  // -- conversations ------------------------------------------------------
+
+  /**
+   * Begin a new conversation. The one that was shown is already kept, with
+   * the earlier ones, if anything was asked in it.
+   */
+  async newConversation() {
     this.cancel();
     this.cancelDraft();
-    this._messages = [];
-    this.transcript.replaceChildren();
+    this._showConversation(null);
+    this.input.focus();
     // dsh's context is its session's, so a new conversation is a new session.
-    this.dsh.restart();
+    await this.dsh.restart();
+  },
+
+  /**
+   * Show an earlier conversation, to read and to carry on with: the panel's
+   * own model is sent what it was asked before, and dsh reopens the session
+   * it answered in.
+   *
+   * @param {string} id
+   */
+  async openConversation(id) {
+    if (id == this.conversation?.id) {
+      this.toggleHistory(false);
+      this.input.focus();
+      return;
+    }
+    const record = await lazy.AIConversations.load(id);
+    if (!record) {
+      // Deleted since the list was made, perhaps from another window.
+      await this._fillHistory();
+      return;
+    }
+    this.cancel();
+    this.cancelDraft();
+    this._showConversation(record);
+    this.input.focus();
+    await this.dsh.restart();
+  },
+
+  /**
+   * Delete a conversation from the list, once it is confirmed, along with the
+   * dsh session it was answered in. Deleting the one shown begins a new one.
+   *
+   * @param {object} entry - As AIConversations.list() gives it.
+   */
+  async deleteConversation(entry) {
+    const [title, question] = await document.l10n.formatValues([
+      { id: "ai-panel-history-delete-title" },
+      {
+        id: "ai-panel-history-delete-confirm",
+        args: { title: entry.title },
+      },
+    ]);
+    if (!Services.prompt.confirm(window, title, question)) {
+      return;
+    }
+    if (entry.id == this.conversation?.id) {
+      // First, so that dsh has closed the session before it is deleted.
+      await this.newConversation();
+      this.toggleHistory(true);
+    }
+    try {
+      await lazy.AIConversations.remove([entry.id]);
+      if (entry.dsh?.sessionId) {
+        await lazy.DshSessions.remove([entry.dsh.sessionId]);
+      }
+    } catch (ex) {
+      console.error("Could not delete the conversation:", ex);
+    }
+    await this._fillHistory();
+  },
+
+  /**
+   * Put a conversation on screen, in place of the one there.
+   *
+   * @param {?object} record - As AIConversations keeps it; null for a new one.
+   */
+  _showConversation(record) {
+    this.conversation = record;
+    this._messages = record?.messages ?? [];
+    this.transcript.replaceChildren();
+    if (record) {
+      this._renderConversation(record);
+    }
+    this._updateConversationTitle();
+    this.toggleHistory(false);
+  },
+
+  /**
+   * Show or hide the earlier conversations.
+   *
+   * @param {boolean} [show] - Omit to flip it.
+   */
+  async toggleHistory(show = !this._historyOpen) {
+    this._historyOpen = show;
+    this.historyButton.setAttribute("aria-expanded", show);
+    this.historyList.hidden = !show;
+    if (!show) {
+      // Emptied, so that opening it again never shows -- for the moment it
+      // takes to fill -- conversations that may have been deleted since.
+      this.historyItems.replaceChildren();
+      await this.refreshConfigured();
+      return;
+    }
+    // At once: refreshConfigured settles this too, but only once it has
+    // looked at the configuration, and the two are never shown together.
+    this.transcript.hidden = true;
+    this.setupNotice.hidden = true;
+    await this._fillHistory();
+    this.historyItems.querySelector("button")?.focus();
+    await this.refreshConfigured();
+  },
+
+  async _fillHistory() {
+    let entries = [];
+    try {
+      entries = await lazy.AIConversations.list();
+    } catch (ex) {
+      console.error("Could not list the conversations:", ex);
+    }
+    this.historyItems.replaceChildren(
+      ...entries.map(entry => this._historyItem(entry))
+    );
+    this.historyEmpty.hidden = !!entries.length;
+  },
+
+  /**
+   * @param {object} entry - As AIConversations.list() gives it.
+   * @returns {HTMLLIElement}
+   */
+  _historyItem(entry) {
+    const item = document.createElement("li");
+    item.className = "ai-history-item";
+    if (entry.id == this.conversation?.id) {
+      item.setAttribute("aria-current", "true");
+    }
+
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "ai-history-open";
+    const title = document.createElement("span");
+    title.className = "ai-history-title";
+    title.textContent = entry.title;
+    button.title = entry.title;
+    const date = document.createElement("span");
+    date.className = "ai-history-date";
+    date.textContent = this._formatDate(entry.updated);
+    button.append(title, date);
+    button.addEventListener("click", () => this.openConversation(entry.id));
+
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "ai-panel-icon-button ai-history-delete";
+    document.l10n.setAttributes(remove, "ai-panel-history-delete");
+    remove.addEventListener("click", () => this.deleteConversation(entry));
+
+    item.append(button, remove);
+    return item;
+  },
+
+  /**
+   * @param {string} iso
+   * @returns {string} The time alone for today, or the date and time.
+   */
+  _formatDate(iso) {
+    const date = new Date(iso);
+    if (isNaN(date)) {
+      return "";
+    }
+    const today = date.toDateString() == new Date().toDateString();
+    return new Services.intl.DateTimeFormat(
+      undefined,
+      today
+        ? { timeStyle: "short" }
+        : { dateStyle: "medium", timeStyle: "short" }
+    ).format(date);
+  },
+
+  _updateConversationTitle() {
+    const title = this.conversation?.title;
+    const shown = document.getElementById("ai-panel-conversation-title");
+    shown.textContent = title ?? "";
+    shown.hidden = !title;
+    document.getElementById("ai-panel-conversation-new").hidden = !!title;
+  },
+
+  /**
+   * Begin recording an exchange: the question, and an answer to fill in as
+   * it comes. The first question begins the conversation, and names it.
+   *
+   * @param {?string} question - Null for an answer with no question of its
+   *   own, as a drafted reply is; that is recorded only in a conversation
+   *   already begun.
+   * @param {"model"|"dsh"} agent - What answers.
+   * @returns {?{conversation: object, answer: object}} Where the answer's
+   *   parts go, or null if nothing is recorded.
+   */
+  _recordExchange(question, agent) {
+    if (!this.conversation) {
+      if (!question) {
+        return null;
+      }
+      this.conversation = lazy.AIConversations.create(question);
+      // The same array, so the history sent with questions is what is kept.
+      this.conversation.messages = this._messages;
+      this._updateConversationTitle();
+    }
+    const conversation = this.conversation;
+    if (question) {
+      conversation.turns.push({ role: "user", text: question });
+    }
+    const answer = { role: "assistant", agent, parts: [] };
+    conversation.turns.push(answer);
+    return { conversation, answer };
+  },
+
+  /**
+   * Keep a conversation as it now is.
+   *
+   * @param {?object} conversation
+   */
+  _saveConversation(conversation) {
+    if (!conversation) {
+      return;
+    }
+    conversation.updated = new Date().toISOString();
+    // As many turns as the transcript shows, for the same reason.
+    if (conversation.turns.length > MAX_TURNS) {
+      conversation.turns.splice(0, conversation.turns.length - MAX_TURNS);
+    }
+    lazy.AIConversations.save(conversation)
+      .then(() => this._historyOpen && this._fillHistory())
+      .catch(ex => console.error("Could not save the conversation:", ex));
+  },
+
+  /**
+   * Note the dsh session a conversation is being answered in, so that it is
+   * the one reopened when the conversation is carried on.
+   *
+   * @param {object} conversation
+   * @param {DshAgent} agent
+   */
+  _attachDshSession(conversation, agent) {
+    if (agent?.sessionId && conversation.dsh?.sessionId != agent.sessionId) {
+      conversation.dsh = {
+        sessionId: agent.sessionId,
+        workspace: agent.workspace,
+      };
+    }
+  },
+
+  /**
+   * Show a conversation as it was kept.
+   *
+   * @param {object} record
+   */
+  _renderConversation(record) {
+    for (const turn of record.turns) {
+      if (turn.role == "user") {
+        this._addTurn("user").textContent = turn.text;
+        continue;
+      }
+      if (!turn.parts.length) {
+        // dsh could not be started to answer it, which was said at the time
+        // outside the conversation.
+        continue;
+      }
+      const body = this._addTurn("assistant");
+      const sources =
+        turn.parts.find(part => part.type == "sources")?.sources ?? [];
+      for (const part of turn.parts) {
+        this._renderPart(body, part, {
+          sources,
+          mentions: turn.agent == "dsh" ? record.mentions : null,
+        });
+      }
+    }
+    this._scrollToEnd();
+  },
+
+  /**
+   * @param {HTMLElement} body - The assistant turn.
+   * @param {object} part - One thing in it, as recorded.
+   * @param {object} context
+   * @param {object[]} context.sources - What citations in the answer cite.
+   * @param {?Map<string, string>} context.mentions - Subjects to link, for dsh.
+   */
+  _renderPart(body, part, { sources, mentions }) {
+    switch (part.type) {
+      case "thinking": {
+        const thinking = this._addThinking(body);
+        thinking.text.textContent = part.text;
+        thinking.details.open = false;
+        thinking.details.classList.add("ai-thinking-done");
+        break;
+      }
+      case "sources":
+        this._renderSources(body, part.sources, part.truncated, part.query);
+        break;
+      case "answer": {
+        const answer = document.createElement("div");
+        answer.className = "ai-answer";
+        body.appendChild(answer);
+        this._renderAnswer(answer, part.text, sources);
+        if (mentions) {
+          linkifyMessageMentions(answer, document, mentions);
+        }
+        break;
+      }
+      case "tool":
+        this.dsh.renderTool(body, part);
+        break;
+      case "notice":
+        body.appendChild(this._notice(part.id, part.args));
+        break;
+      case "error": {
+        const error = document.createElement("div");
+        error.className = "ai-error";
+        error.textContent = part.text;
+        body.appendChild(error);
+        break;
+      }
+    }
   },
 
   /** Abort an in-flight conversation request, if there is one. */
@@ -539,6 +886,10 @@ export const AIPanel = {
    */
   async send() {
     const question = this.input.value.trim();
+    if (question && this._historyOpen) {
+      // What is sent goes into the conversation open, so show it.
+      this.toggleHistory(false);
+    }
     if (this.dsh.active) {
       if (question) {
         await this.dsh.send(question);
@@ -555,6 +906,7 @@ export const AIPanel = {
 
     this.input.value = "";
     this._addTurn("user").textContent = question;
+    const { conversation, answer } = this._recordExchange(question, "model");
     this._messages.push({ role: "user", content: question });
 
     const answerBody = this._addTurn("assistant");
@@ -566,6 +918,8 @@ export const AIPanel = {
     let answerRaw = "";
     let lastRender = 0;
     let sources = [];
+    /** @type {?object} How the answer ended, if not by finishing. */
+    let stopped = null;
 
     this._setBusy(true);
     // Held locally as well, so that a request cancelled and resent before this
@@ -586,6 +940,28 @@ export const AIPanel = {
         controller.signal
       );
       sources = grounded.sources ?? [];
+      answer.parts.push(
+        sources.length
+          ? {
+              type: "sources",
+              // What showing them and following a citation needs, and no
+              // more: the rest is the mail itself, which is not kept here.
+              sources: sources.map(source => ({
+                index: source.index,
+                subject: source.subject,
+                author: source.author,
+                messageCount: source.messageCount,
+                uri: source.uri,
+                messages: (source.messages ?? []).map(message => ({
+                  ref: message.ref,
+                  uri: message.uri,
+                })),
+              })),
+              truncated: grounded.truncated,
+              query: grounded.query,
+            }
+          : { type: "notice", id: "ai-panel-no-context" }
+      );
       const sendMessages = [
         ...this._messages.slice(0, -1),
         { role: "user", content: grounded.content },
@@ -646,12 +1022,14 @@ export const AIPanel = {
       }
 
       if (result.text) {
-        this._messages.push({ role: "assistant", content: result.text });
+        // The conversation's, not necessarily the one shown by now.
+        conversation.messages.push({ role: "assistant", content: result.text });
       }
     } catch (ex) {
       if (ex?.name == "AbortError") {
         // Cancelled by the user; leave whatever arrived in place.
         answerBody.appendChild(this._notice("ai-panel-stopped"));
+        stopped = { type: "notice", id: "ai-panel-stopped" };
       } else {
         console.error("AI request failed:", ex);
         const error = document.createElement("div");
@@ -660,8 +1038,24 @@ export const AIPanel = {
         // the key was rejected, the model was wrong, or nothing answered.
         error.textContent = ex.message;
         answerBody.appendChild(error);
+        stopped = { type: "error", text: ex.message };
       }
     } finally {
+      // In the order shown: the reasoning above the answer, and how it
+      // ended below.
+      if (thinking) {
+        answer.parts.push({
+          type: "thinking",
+          text: thinking.text.textContent,
+        });
+      }
+      if (answerRaw) {
+        answer.parts.push({ type: "answer", text: answerRaw });
+      }
+      if (stopped) {
+        answer.parts.push(stopped);
+      }
+      this._saveConversation(conversation);
       if (this._abort == controller) {
         this._abort = null;
         this._setBusy(false);
@@ -818,12 +1212,13 @@ export const AIPanel = {
 
   /**
    * @param {string} l10nId
+   * @param {object} [args]
    * @returns {HTMLElement}
    */
-  _notice(l10nId) {
+  _notice(l10nId, args) {
     const notice = document.createElement("div");
     notice.className = "ai-notice";
-    document.l10n.setAttributes(notice, l10nId);
+    document.l10n.setAttributes(notice, l10nId, args);
     return notice;
   },
 
@@ -914,14 +1309,16 @@ export const AIPanel = {
    * @param {string} question
    * @param {HTMLElement} answerBody - Where to attach the sources list.
    * @param {AbortSignal} signal - The signal of the request being built for.
-   * @returns {Promise<{system: string, content: string, sources: object[]}>}
+   * @returns {Promise<{system: string, content: string, sources: object[], truncated: ?boolean, query: string}>}
    *   The prompt pieces, plus the threads behind them so that citations
-   *   in the answer can be linked back to the mail they came from.
+   *   in the answer can be linked back to the mail they came from, and what
+   *   was shown about the search.
    */
   async _buildGroundedPrompt(question, answerBody, signal) {
     const config = await lazy.AIConfig.read();
     const context = await this._retrieve(question, answerBody, config, signal);
 
+    const query = context.queries.join(" → ");
     if (!context.sources.length) {
       // Nothing found: say so rather than letting the model invent an
       // answer from no evidence at all.
@@ -937,17 +1334,14 @@ export const AIPanel = {
       };
     }
 
-    this._renderSources(
-      answerBody,
-      context.sources,
-      context.truncated,
-      context.queries.join(" → ")
-    );
+    this._renderSources(answerBody, context.sources, context.truncated, query);
 
     return {
       system: lazy.AIMailContext.systemPrompt(context.sources.length),
       content: lazy.AIMailContext.userPrompt(question, context.prompt),
       sources: context.sources,
+      truncated: context.truncated,
+      query,
     };
   },
 
@@ -1369,6 +1763,8 @@ export const AIPanel = {
       this._messages.push({ role: "user", content: instruction });
       this.updateDraftButton();
     }
+    const exchange = this._recordExchange(instruction || null, "model");
+    let outcome = null;
 
     const answerBody = this._addTurn("assistant");
     answerBody.appendChild(this._notice("ai-panel-drafting"));
@@ -1442,17 +1838,25 @@ export const AIPanel = {
 
       this._openReplyCompose(target, identity, result.text);
       answerBody.replaceChildren(this._notice("ai-panel-draft-opened"));
+      outcome = { type: "notice", id: "ai-panel-draft-opened" };
     } catch (ex) {
       if (ex?.name == "AbortError") {
         answerBody.replaceChildren(this._notice("ai-panel-stopped"));
+        outcome = { type: "notice", id: "ai-panel-stopped" };
       } else {
         console.error("Reply drafting failed:", ex);
         const error = document.createElement("div");
         error.className = "ai-error";
         error.textContent = ex.message;
         answerBody.replaceChildren(error);
+        outcome = { type: "error", text: ex.message };
       }
     } finally {
+      // What became of it, not the draft itself, which is in its own window.
+      if (exchange && outcome) {
+        exchange.answer.parts.push(outcome);
+      }
+      this._saveConversation(exchange?.conversation);
       if (this._draftAbort == controller) {
         this._draftAbort = null;
         this.updateDraftButton();

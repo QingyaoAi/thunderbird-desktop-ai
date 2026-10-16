@@ -28,6 +28,8 @@ support-files = [
 
 ["browser_aiPaneSplitter.js"]
 
+["browser_aiPanelConversations.js"]
+
 ["browser_aiPanelDsh.js"]
 
 ["browser_archive.js"]

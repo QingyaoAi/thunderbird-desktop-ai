@@ -30,18 +30,20 @@
 /* -- header -- */
 
 /* One row at any width the pane allows: the controls are icons of one size,
- * and the model picker gives up width first -- a clipped model name is still
- * readable, a button pushed onto a second row made the header look broken. */
+ * and the conversation's title gives up width first -- a clipped title is
+ * still recognisable, a button pushed onto a second row made the header look
+ * broken. The start is padded less than the end because the title button
+ * pads itself, which puts its text where the header's used to begin. */
 .ai-panel-header {
   display: flex;
   align-items: center;
   gap: 4px;
-  padding: 6px 8px 6px 10px;
+  padding: 6px 8px 6px 4px;
   border-block-end: 1px solid var(--splitter-color);
 }
 
 /* Kept for the pane's accessible name, but not drawn: the header has room
- * for one wide thing beside the buttons, and which model is answering is
+ * for one wide thing beside the buttons, and which conversation this is is
  * worth more there than the word "Assistant". */
 .ai-panel-title {
   position: absolute;
@@ -92,8 +94,8 @@
   --ai-panel-icon: var(--icon-settings);
 }
 
-#ai-panel-clear {
-  --ai-panel-icon: var(--icon-trash);
+#ai-panel-new {
+  --ai-panel-icon: var(--icon-new-chat);
 }
 
 #ai-panel-close {
@@ -127,6 +129,157 @@
   border-color: transparent;
   background-color: var(--selected-item-color);
   color: var(--selected-item-text-color);
+}
+
+/* The conversation's title, which opens the list of earlier ones: plain text
+ * with an arrow after it, so it reads as the header's title first and as a
+ * control second. */
+.ai-panel-history-button {
+  appearance: none;
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  gap: 4px;
+  box-sizing: border-box;
+  min-inline-size: 0;
+  block-size: 24px;
+  margin: 0;
+  padding: 0 6px;
+  border: none;
+  border-radius: var(--border-radius-small);
+  background: transparent;
+  color: var(--layout-color-1);
+  font: inherit;
+  font-size: 0.9rem;
+  font-weight: 600;
+  text-align: start;
+}
+
+.ai-panel-history-button:hover {
+  background-color: var(--button-hover-background-color);
+}
+
+.ai-panel-history-button:focus-visible {
+  outline: 2px solid var(--focus-outline-color);
+  outline-offset: -2px;
+}
+
+.ai-panel-history-button::after {
+  content: "";
+  flex: none;
+  inline-size: 8px;
+  block-size: 8px;
+  background: var(--icon-nav-down-xs) center / 8px no-repeat;
+  -moz-context-properties: fill, stroke;
+  fill: currentColor;
+  stroke: currentColor;
+  opacity: 0.7;
+}
+
+.ai-panel-history-button[aria-expanded="true"]::after {
+  transform: rotate(180deg);
+}
+
+.ai-panel-conversation-title {
+  min-inline-size: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* -- earlier conversations --
+ *
+ * In the transcript's place while open. Each is one row, its title above
+ * when it was last added to; the delete button appears on the row being
+ * pointed at or focused, so a list of them is not a column of bins.
+ */
+
+.ai-panel-history {
+  flex: 1;
+  min-block-size: 0;
+  overflow-y: auto;
+  padding: 8px;
+}
+
+.ai-panel-history-heading {
+  margin: 2px 8px 8px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--layout-color-2);
+}
+
+.ai-panel-history-items {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ai-history-item {
+  display: flex;
+  align-items: center;
+  border-radius: 6px;
+}
+
+.ai-history-item:hover {
+  background-color: var(--layout-background-2);
+}
+
+.ai-history-item[aria-current="true"] {
+  background-color: var(--layout-background-3);
+}
+
+.ai-history-open {
+  appearance: none;
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 1px;
+  min-inline-size: 0;
+  margin: 0;
+  padding: 6px 8px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: start;
+}
+
+.ai-history-open:focus-visible {
+  outline: 2px solid var(--focus-outline-color);
+  outline-offset: -2px;
+}
+
+.ai-history-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.92rem;
+}
+
+.ai-history-date {
+  font-size: 0.78rem;
+  color: var(--layout-color-2);
+}
+
+.ai-history-delete {
+  --ai-panel-icon: var(--icon-trash);
+  margin-inline-end: 4px;
+  visibility: hidden;
+}
+
+.ai-history-item:is(:hover, :focus-within) .ai-history-delete {
+  visibility: visible;
+}
+
+.ai-panel-history-empty {
+  margin: 4px 8px;
+  font-size: 0.9rem;
+  font-style: italic;
+  color: var(--layout-color-2);
 }
 
 /* -- unconfigured state -- */
@@ -290,27 +443,45 @@
   border-block-start: 1px solid var(--splitter-color);
 }
 
-/* The endpoint in use, in the header beside the buttons that act on it.
- * Shrinks before the buttons do, since a truncated model name is still
- * recognisable and a truncated icon button is not. */
+/* The model in use, in a line of its own under the box it answers. It used
+ * to take all the header had to spare, which was most of it, for a choice
+ * made far less often than the header is looked at. */
+.ai-panel-footer {
+  display: flex;
+  padding: 0 8px 6px;
+  margin-block-start: -2px;
+}
+
+/* With dsh about to start there is no model to show yet. */
+.ai-panel-footer:not(:has(> :not([hidden]))) {
+  display: none;
+}
+
+/* As wide as the name in it and no wider, borderless until pointed at, so it
+ * reads as a note of which model this is that can also be changed. */
 .ai-panel-model {
-  /* Takes the width the title used to, and gives it back to the buttons
-   * first: a clipped model name is still readable, a clipped button is not. */
-  flex: 1 1 auto;
+  flex: 0 1 auto;
   min-inline-size: 0;
+  max-inline-size: 100%;
   margin: 0;
   box-sizing: border-box;
-  block-size: 24px;
+  block-size: 22px;
   font: inherit;
-  font-size: 0.85rem;
+  font-size: 0.8rem;
   /* The end is left to the stock select rule, which keeps room there for its
    * arrow; setting it here ran a long model name into the arrow. */
   padding-block: 0;
   padding-inline-start: var(--space-xsmall);
-  border: 1px solid var(--splitter-color);
+  border: 1px solid transparent;
   border-radius: var(--border-radius-small);
+  background-color: transparent;
+  color: var(--layout-color-2);
+}
+
+.ai-panel-model:is(:hover, :focus-visible):not(:disabled) {
+  border-color: var(--splitter-color);
   background-color: var(--layout-background-2);
-  color: inherit;
+  color: var(--layout-color-1);
 }
 
 .ai-panel-input {

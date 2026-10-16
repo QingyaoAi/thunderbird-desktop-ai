@@ -12,6 +12,8 @@ support-files = [
 
 ["test_aiConfig.js"]
 
+["test_aiConversations.js"]
+
 ["test_alertHook.js"]
 tags = ["notifications"]
 

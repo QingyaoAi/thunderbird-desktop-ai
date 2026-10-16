@@ -344,6 +344,20 @@ export const DshSessions = {
    * @returns {Promise<number>} How many were deleted.
    */
   async clear(keep = []) {
+    const ids = (await this.list())
+      .map(session => session.id)
+      .filter(id => !keep.includes(id));
+    return this.remove(ids);
+  },
+
+  /**
+   * Delete some of the sessions Thunderbird started. An id not on record is
+   * left alone, since it is not known to be Thunderbird's.
+   *
+   * @param {string[]} ids
+   * @returns {Promise<number>} How many were deleted.
+   */
+  async remove(ids) {
     let deleted = 0;
     await this._update(async sessions => {
       const sessionsDir = PathUtils.join(this.home, "sessions");
@@ -355,7 +369,7 @@ export const DshSessions = {
       }
       const kept = [];
       for (const session of sessions) {
-        if (keep.includes(session.id)) {
+        if (!ids.includes(session.id)) {
           kept.push(session);
           continue;
         }
@@ -587,8 +601,19 @@ export class DshAgent {
     this._stopping = false;
     /** @type {?string} */
     this.sessionId = null;
+    /** @type {?string} The folder the session belongs to, once started. */
+    this.workspace = null;
     /** @type {object[]} As ACP describes them: the model, and so on. */
     this.configOptions = [];
+    /** Whether the session is an earlier one, reopened. */
+    this.resumed = false;
+    /**
+     * @type {?string} Why an earlier session asked for could not be reopened,
+     *   so that a new one was started instead.
+     */
+    this.resumeError = null;
+    /** Whether anything has been asked in the session. */
+    this.prompted = false;
   }
 
   /** @returns {boolean} */
@@ -599,9 +624,19 @@ export class DshAgent {
   /**
    * Start dsh and open a session in it. On failure everything started is
    * stopped again before the error is thrown.
+   *
+   * @param {object} [options]
+   * @param {{sessionId: string, workspace: string}} [options.resume] - An
+   *   earlier session to reopen instead of starting a new one. dsh is run in
+   *   that session's folder, which it insists on, whatever the setting says
+   *   now. If the session cannot be reopened -- deleted, or a dsh too old to
+   *   reopen one -- a new one is started, and resumeError says why.
    */
-  async start() {
+  async start({ resume } = {}) {
     const settings = await DshSettings.get();
+    if (resume?.workspace) {
+      settings.workspace = resume.workspace;
+    }
     if (!settings.node || !(await IOUtils.exists(settings.node))) {
       throw new DshError(
         "no-node",
@@ -675,30 +710,60 @@ export class DshAgent {
       );
       this._pump();
 
-      await this._connection.request("initialize", {
-        protocolVersion: 1,
-        clientCapabilities: {
-          fs: { readTextFile: false, writeTextFile: false },
-          terminal: false,
-        },
-        clientInfo: { name: "thunderbird", version: Services.appinfo.version },
-      });
-      const session = await this._connection.request("session/new", {
-        cwd: settings.workspace,
-        mcpServers: [
-          {
-            type: "http",
-            name: "thunderbird",
-            url: `http://127.0.0.1:${port}/mcp`,
-            headers: [
-              { name: "Authorization", value: `Bearer ${this._token}` },
-            ],
+      const { agentCapabilities } = await this._connection.request(
+        "initialize",
+        {
+          protocolVersion: 1,
+          clientCapabilities: {
+            fs: { readTextFile: false, writeTextFile: false },
+            terminal: false,
           },
-        ],
-      });
-      this.sessionId = session.sessionId;
-      this.configOptions = session.configOptions ?? [];
-      await DshSessions.remember(this.sessionId, settings.workspace);
+          clientInfo: {
+            name: "thunderbird",
+            version: Services.appinfo.version,
+          },
+        }
+      );
+      const mcpServers = [
+        {
+          type: "http",
+          name: "thunderbird",
+          url: `http://127.0.0.1:${port}/mcp`,
+          headers: [{ name: "Authorization", value: `Bearer ${this._token}` }],
+        },
+      ];
+      this.workspace = settings.workspace;
+
+      if (resume?.sessionId) {
+        if (agentCapabilities?.sessionCapabilities?.resume) {
+          // Set first: what dsh says while reopening it is about this session.
+          this.sessionId = resume.sessionId;
+          try {
+            const session = await this._connection.request("session/resume", {
+              sessionId: resume.sessionId,
+              cwd: settings.workspace,
+              mcpServers,
+            });
+            this.configOptions = session.configOptions ?? [];
+            this.resumed = true;
+          } catch (ex) {
+            this.sessionId = null;
+            this.resumeError = ex.message;
+          }
+        } else {
+          this.resumeError = "this dsh cannot reopen a session";
+        }
+      }
+
+      if (!this.resumed) {
+        const session = await this._connection.request("session/new", {
+          cwd: settings.workspace,
+          mcpServers,
+        });
+        this.sessionId = session.sessionId;
+        this.configOptions = session.configOptions ?? [];
+        await DshSessions.remember(this.sessionId, settings.workspace);
+      }
     } catch (ex) {
       await this.stop();
       // What dsh said on the way down is usually the actual reason, and the
@@ -721,6 +786,7 @@ export class DshAgent {
    * @returns {Promise<string>} Why the turn ended, e.g. "end_turn".
    */
   async prompt(blocks) {
+    this.prompted = true;
     const result = await this._connection.request("session/prompt", {
       sessionId: this.sessionId,
       prompt: blocks,

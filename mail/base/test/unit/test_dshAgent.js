@@ -5,7 +5,7 @@
 /**
  * Tests running an ACP agent the way the AI panel runs dsh: starting it,
  * giving it the mailbox, relaying what it does, answering its permission
- * requests, cancelling, and stopping it cleanly. The agent here is a small
+ * requests, cancelling, stopping it cleanly, and reopening a session. The agent here is a small
  * stand-in written for the test, which speaks just enough of the protocol.
  */
 
@@ -103,7 +103,13 @@ add_task(async function testStartOpensASession() {
   agent = makeAgent();
   await agent.start();
   Assert.ok(agent.running);
-  Assert.equal(agent.sessionId, "s1");
+  Assert.stringMatches(agent.sessionId, /^s-[0-9a-f]{8}$/);
+  Assert.ok(!agent.resumed, "a new session");
+  Assert.equal(agent.workspace, PathUtils.join(scratch, "work"));
+  Assert.ok(
+    (await DshSessions.list()).some(session => session.id == agent.sessionId),
+    "and on record as one Thunderbird started"
+  );
   Assert.equal(agent.configOptions[0].currentValue, "deepseek/v4");
   Assert.ok(
     await IOUtils.exists(PathUtils.join(scratch, "work")),
@@ -131,7 +137,7 @@ add_task(async function testAPromptAndItsPermission() {
   const report = lastReport();
   Assert.equal(report.said, "hello");
   Assert.deepEqual(report.links, ["imap-message://x#1"]);
-  Assert.equal(report.tools, 9, "the mailbox was reachable with its token");
+  Assert.equal(report.tools, 10, "the mailbox was reachable with its token");
   Assert.ok(report.sameDir, "the agent runs in the working folder");
   Assert.equal(
     report.path,
@@ -190,6 +196,14 @@ add_task(async function testChangingTheModel() {
   Assert.equal(agent.configOptions[0].currentValue, "deepseek/v4-pro");
 });
 
+add_task(async function testPromptedIsNoted() {
+  Assert.ok(agent.prompted, "the session has been asked something");
+  const fresh = makeAgent();
+  await fresh.start();
+  Assert.ok(!fresh.prompted, "a new one has not");
+  await fresh.stop();
+});
+
 add_task(async function testStopRevokesTheToken() {
   const token = agent._token;
   Assert.ok(await MailMcpTokens.verify(token), "valid while it runs");
@@ -197,6 +211,59 @@ add_task(async function testStopRevokesTheToken() {
   Assert.ok(!agent.running);
   Assert.ok(!(await MailMcpTokens.verify(token)), "revoked when it stops");
   Assert.deepEqual(exits, [], "stopping on purpose is not reported as exit");
+});
+
+/**
+ * An earlier session is reopened in its own folder, whatever the setting
+ * says now, and dsh is given the mailbox again.
+ */
+add_task(async function testResumingASession() {
+  const earlier = (await DshSessions.list()).at(-1).id;
+  const before = (await DshSessions.list()).length;
+  const elsewhere = PathUtils.join(scratch, "earlier-work");
+
+  agent = makeAgent();
+  await agent.start({
+    resume: { sessionId: earlier, workspace: elsewhere },
+  });
+  Assert.ok(agent.resumed, "it is reopened");
+  Assert.equal(agent.sessionId, earlier);
+  Assert.equal(agent.resumeError, null);
+  Assert.equal(agent.workspace, elsewhere, "in the folder it belongs to");
+  Assert.equal(
+    (await DshSessions.list()).length,
+    before,
+    "nothing new is put on record"
+  );
+
+  updates = [];
+  await agent.prompt([{ type: "text", text: "and then?" }]);
+  const report = lastReport();
+  Assert.equal(report.session, earlier, "what is asked goes to that session");
+  Assert.ok(report.resumed);
+  Assert.equal(report.cwd, elsewhere);
+  Assert.ok(report.sameDir, "with dsh run in its folder");
+  Assert.equal(report.tools, 10, "and the mailbox reachable again");
+  await agent.stop();
+});
+
+add_task(async function testResumingASessionThatIsGone() {
+  agent = makeAgent();
+  await agent.start({
+    resume: { sessionId: "gone", workspace: PathUtils.join(scratch, "work") },
+  });
+  Assert.ok(!agent.resumed, "it cannot be reopened");
+  Assert.stringContains(agent.resumeError, "not resumable", "and says why");
+  Assert.stringMatches(
+    agent.sessionId,
+    /^s-[0-9a-f]{8}$/,
+    "so a new one is begun instead"
+  );
+  Assert.ok(
+    (await DshSessions.list()).some(session => session.id == agent.sessionId),
+    "and put on record"
+  );
+  await agent.stop();
 });
 
 add_task(async function testAnAgentThatDies() {
@@ -272,23 +339,41 @@ add_task(async function testClearingSessions() {
     await IOUtils.writeUTF8(PathUtils.join(dir, id, "log.jsonl"), "{}");
     await IOUtils.writeUTF8(PathUtils.join(cache, `${id}.json`), "{}");
   };
-  // "s1" is the stand-in's, from the runs above; the last is dsh's own.
-  for (const id of ["s1", "tb-2", "tb-3"]) {
+  // The stand-in's, from the runs above.
+  const earlier = (await DshSessions.list()).map(session => session.id);
+  for (const id of [...earlier, "tb-2", "tb-3", "tb-4"]) {
     await makeSession(project, id);
   }
+  // dsh's own.
   await makeSession(elsewhere, "started-in-dsh");
 
   await DshSessions.remember("tb-2", "/work");
   await DshSessions.remember("tb-3", "/work");
+  await DshSessions.remember("tb-4", "/work");
   await DshSessions.remember("../escape", "/work");
   Assert.deepEqual(
     (await DshSessions.list()).map(session => session.id).sort(),
-    ["s1", "tb-2", "tb-3"],
+    [...earlier, "tb-2", "tb-3", "tb-4"].sort(),
     "the sessions started here are on record, an unsafe id is not"
   );
 
-  Assert.equal(await DshSessions.clear(["tb-3"]), 2, "two deleted");
-  for (const id of ["s1", "tb-2"]) {
+  Assert.equal(
+    await DshSessions.remove(["tb-4", "started-in-dsh"]),
+    1,
+    "one session deleted by its id"
+  );
+  Assert.ok(!(await IOUtils.exists(PathUtils.join(project, "tb-4"))));
+  Assert.ok(
+    await IOUtils.exists(PathUtils.join(elsewhere, "started-in-dsh")),
+    "and not one that is not on record"
+  );
+
+  Assert.equal(
+    await DshSessions.clear(["tb-3"]),
+    earlier.length + 1,
+    "the rest deleted"
+  );
+  for (const id of [...earlier, "tb-2"]) {
     Assert.ok(
       !(await IOUtils.exists(PathUtils.join(project, id))),
       `${id} log`
