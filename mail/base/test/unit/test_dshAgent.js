@@ -176,8 +176,8 @@ add_task(async function testAPromptAndItsPermission() {
     "and to link the messages it cites"
   );
   Assert.ok(
-    !(await IOUtils.readUTF8(report.argv[patchAt + 1])).includes("{{cwd}}"),
-    "a dsh of no known version is not asked to fill in {{cwd}}"
+    !(await IOUtils.readUTF8(report.argv[patchAt + 1])).includes("{{"),
+    "a dsh of no known version is asked to fill in none of its variables"
   );
 });
 

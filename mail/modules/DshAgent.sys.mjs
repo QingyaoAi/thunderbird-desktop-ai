@@ -78,19 +78,25 @@ const DSH_CANDIDATES = ["/opt/homebrew/bin/dsh", "/usr/local/bin/dsh"];
  * here rather than only in the mail endpoint's MCP instructions because dsh
  * does not pass on the instructions of an MCP server a client attaches. This
  * goes to dsh as a patch layer for this run only -- the `--patch` it is started
- * with -- so dsh started any other way is not affected. `{{model}}` is dsh's
- * own template variable. A patch replaces the whole of the row's config, so
- * the suffix dsh would otherwise add is Thunderbird's to restate: see
- * CWD_SUFFIX.
+ * with -- so dsh started any other way is not affected.
+ *
+ * It names none of dsh's template variables. dsh fails every turn of a
+ * persona naming one it no longer has, before any model request, and its
+ * variables change between versions: `{{cwd}}` went in 0.2.1-alpha.2. So the
+ * model is not told its own name, as dsh's own persona does with `{{model}}`;
+ * nothing it does with mail depends on knowing it. A patch replaces the whole
+ * of the row's config, so the suffix dsh would otherwise add is Thunderbird's
+ * to restate: see CWD_SUFFIX, the one exception, given only to a dsh known to
+ * fill it in.
  */
 const PERSONA_PATCH = `# Written by Thunderbird each time it starts dsh, for that run only.
 - id: system-prompt
   config:
     personaPrefix: >-
-      You are the mail assistant in the user's Thunderbird, powered by the
-      {{model}} model. The user is talking to you from their mail client,
-      with their mail in front of them. The thunderbird tools are already
-      attached; there is no skill to load before using them.
+      You are the mail assistant in the user's Thunderbird. The user is
+      talking to you from their mail client, with their mail in front of
+      them. The thunderbird tools are already attached; there is no skill to
+      load before using them.
 
       Start from what they have open. A request that comes with a resource
       link named "the message open in Thunderbird" tells you what is on
