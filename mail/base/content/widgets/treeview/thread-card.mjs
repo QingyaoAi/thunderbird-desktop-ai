@@ -16,10 +16,16 @@ import "chrome://messenger/content/thread-card-tags.mjs";
 const lazy = {};
 ChromeUtils.defineESModuleGetters(lazy, {
   Gloda: "resource:///modules/gloda/GlodaPublic.sys.mjs",
+  MailServices: "resource:///modules/MailServices.sys.mjs",
   MsgHdrToMimeMessage: "resource:///modules/gloda/MimeMessage.sys.mjs",
   mimeMsgToContentSnippetAndMeta:
     "resource:///modules/gloda/GlodaContent.sys.mjs",
 });
+ChromeUtils.defineLazyGetter(
+  lazy,
+  "l10n",
+  () => new Localization(["messenger/messenger.ftl"], true)
+);
 
 // How many characters of body text to keep for the preview; the CSS clamps
 // the display to PREVIEW_LINES lines regardless, so this only needs to be
@@ -40,21 +46,86 @@ function cachePreview(key, text) {
   previewCache.set(key, text);
 }
 
-// Which child of a collapsed thread is the newest, keyed by
-// "<thread key>#<child count>". Finding it means reading every child's date,
-// and that happens before the preview cache can be consulted -- so without
-// this, scrolling past a long conversation re-walked the whole thread every
-// time one of its rows was recycled. The child count is part of the key so
-// the answer is dropped as soon as the thread gains or loses a message.
-// Only the index is kept, never the header, so this retains nothing.
-const newestChildCache = new Map();
-const NEWEST_CHILD_CACHE_MAX = 500;
+// Which children of a collapsed thread its card is drawn from (see
+// cardChildrenFor), keyed by "<thread key>#<child count>". Finding them means
+// reading every child's date, and that happens before the preview cache can
+// be consulted -- so without this, scrolling past a long conversation
+// re-walked the whole thread every time one of its rows was recycled. The
+// child count is part of the key so the answer is dropped as soon as the
+// thread gains or loses a message. Only indices are kept, never headers, so
+// this retains nothing.
+const cardChildrenCache = new Map();
+const CARD_CHILDREN_CACHE_MAX = 500;
 
-function cacheNewestChild(key, childIndex) {
-  if (newestChildCache.size >= NEWEST_CHILD_CACHE_MAX) {
-    newestChildCache.delete(newestChildCache.keys().next().value);
+function cacheCardChildren(key, children) {
+  if (cardChildrenCache.size >= CARD_CHILDREN_CACHE_MAX) {
+    cardChildrenCache.delete(cardChildrenCache.keys().next().value);
   }
-  newestChildCache.set(key, childIndex);
+  cardChildrenCache.set(key, children);
+}
+
+// How many of a collapsed thread's latest writers its sender line names. The
+// line ends in an ellipsis when it runs out of room, so on a narrow card it
+// is the earlier writer that goes.
+const SENDERS_SHOWN = 2;
+
+/**
+ * The address a header's first author writes from, to tell writers apart.
+ *
+ * @param {nsIMsgDBHdr} hdr
+ * @returns {string}
+ */
+function authorAddress(hdr) {
+  const author = hdr.mime2DecodedAuthor || "";
+  const [first] = lazy.MailServices.headerParser.parseDecodedHeader(author);
+  return (first?.email || author).toLowerCase();
+}
+
+/**
+ * The children of a collapsed thread its card is drawn from, as indices into
+ * the thread: `newest`, whose date, subject and preview stand for the whole
+ * conversation, and `senders` -- the newest message from each of the last
+ * SENDERS_SHOWN people to write, newest first.
+ *
+ * @param {nsIMsgThread} thread
+ * @returns {{newest: number, senders: number[]}}
+ */
+function cardChildrenFor(thread) {
+  const memoKey = `${thread.threadKey}#${thread.numChildren}`;
+  const memo = cardChildrenCache.get(memoKey);
+  if (memo) {
+    return memo;
+  }
+
+  const children = [];
+  for (let i = 0; i < thread.numChildren; i++) {
+    const hdr = thread.getChildHdrAt(i);
+    if (hdr) {
+      children.push({ index: i, hdr });
+    }
+  }
+  // Newest first. The sort is stable, so of two dated the same the first
+  // child is still the one taken as newest.
+  children.sort((a, b) => b.hdr.date - a.hdr.date);
+
+  const senders = [];
+  const seen = new Set();
+  for (const { index, hdr } of children) {
+    const address = authorAddress(hdr);
+    if (!seen.has(address)) {
+      seen.add(address);
+      senders.push(index);
+      if (senders.length == SENDERS_SHOWN) {
+        break;
+      }
+    }
+  }
+
+  const result = { newest: children[0]?.index ?? -1, senders };
+  if (children.length) {
+    cacheCardChildren(memoKey, result);
+  }
+  return result;
 }
 
 /**
@@ -75,30 +146,90 @@ function representativeHeaderFor(view, index, isCollapsedThread) {
   if (!thread) {
     return ownHdr;
   }
-  const numChildren = thread.numChildren;
-  const memoKey = `${thread.threadKey}#${numChildren}`;
-  const memo = newestChildCache.get(memoKey);
-  if (memo !== undefined) {
-    const hdr = thread.getChildHdrAt(memo);
-    if (hdr) {
-      return hdr;
+  const { newest } = cardChildrenFor(thread);
+  return (newest >= 0 && thread.getChildHdrAt(newest)) || ownHdr;
+}
+
+// The sender line's text for an author header, keyed by
+// "<mail.displayname.version>|<author>". Formatting looks the address up in
+// every address book, too slow to repeat for each row recycled as the list
+// scrolls. The version goes up whenever the display prefs change, so a stale
+// key is simply never asked for again; a contact edited meanwhile is as
+// stale here as in nsMsgDBView's own "sender_name" cache.
+const senderTextCache = new Map();
+const SENDER_TEXT_CACHE_MAX = 500;
+
+/**
+ * The sender as the thread pane displays it, mirroring nsMsgDBView's
+ * FetchAuthor(): the address book's name for a known address, otherwise the
+ * header's name and address in the form mail.addressDisplayFormat asks for.
+ *
+ * @param {nsIMsgDBHdr} hdr
+ * @returns {string}
+ */
+function senderForHeader(hdr) {
+  const author = hdr.mime2DecodedAuthor || "";
+  const version = Services.prefs.getIntPref("mail.displayname.version", 0);
+  const cacheKey = `${version}|${author}`;
+  const cached = senderTextCache.get(cacheKey);
+  if (cached !== undefined) {
+    return cached;
+  }
+
+  const addresses = lazy.MailServices.headerParser.parseDecodedHeader(author);
+  if (!addresses.length) {
+    return author;
+  }
+  const { name: headerName, email } = addresses[0];
+  let sender = "";
+  if (Services.prefs.getBoolPref("mail.showCondensedAddresses", true)) {
+    sender = lazy.MailServices.ab.cardForEmailAddress(email)?.displayName ?? "";
+  }
+  if (!sender) {
+    const full =
+      headerName && email ? `${headerName} <${email}>` : headerName || email;
+    // A name that looks like an address may not be the one it is sent from,
+    // so it is not shown alone (NoSpoofingSender).
+    const shortName = /@.*\./.test(headerName) ? full : headerName;
+    const format = Services.prefs.getIntPref("mail.addressDisplayFormat", 0);
+    if (format == 0) {
+      sender = full;
+    } else if (format == 1 && email) {
+      sender = email;
+    } else {
+      sender = shortName || email;
     }
   }
-  let newestHdr = null;
-  let newestDate = -1;
-  let newestIndex = -1;
-  for (let i = 0; i < numChildren; i++) {
-    const hdr = thread.getChildHdrAt(i);
-    if (hdr && hdr.date > newestDate) {
-      newestDate = hdr.date;
-      newestHdr = hdr;
-      newestIndex = i;
-    }
+  if (addresses.length > 1) {
+    sender += " " + lazy.l10n.formatValueSync("and-others");
   }
-  if (newestIndex >= 0) {
-    cacheNewestChild(memoKey, newestIndex);
+
+  if (senderTextCache.size >= SENDER_TEXT_CACHE_MAX) {
+    senderTextCache.delete(senderTextCache.keys().next().value);
   }
-  return newestHdr || ownHdr;
+  senderTextCache.set(cacheKey, sender);
+  return sender;
+}
+
+/**
+ * The sender line of a collapsed thread's card: the last people to write,
+ * newest first, rather than whoever started the conversation.
+ *
+ * @param {nsIMsgDBView} view
+ * @param {integer} index
+ * @returns {?string} null when the row's own sender should stay.
+ */
+function latestSendersFor(view, index) {
+  const thread = view.getThreadContainingIndex(index);
+  if (!thread) {
+    return null;
+  }
+  const names = cardChildrenFor(thread)
+    .senders.map(i => thread.getChildHdrAt(i))
+    .filter(Boolean)
+    .map(senderForHeader)
+    .filter(Boolean);
+  return names.length ? names.join(", ") : null;
 }
 
 /**
@@ -234,13 +365,31 @@ class ThreadCard extends TreeViewTableRow {
       return;
     }
 
-    this.senderLine.textContent = data.sender;
-    this.senderLine.title = data.sender;
     this.dateLine.textContent = data.date;
 
     const isCollapsedThread =
       this.classList.contains("children") &&
       this.classList.contains("collapsed");
+
+    // A collapsed thread row stands in for the conversation, so name the last
+    // people to write in it, newest first, not whoever started it. In an
+    // outgoing folder the line shows recipients instead; those stay the
+    // root's.
+    let displaySender = data.sender;
+    if (
+      isCollapsedThread &&
+      window.threadPane.cardColumns.includes("senderCol")
+    ) {
+      try {
+        displaySender =
+          latestSendersFor(this.view, this._index) ?? displaySender;
+      } catch (ex) {
+        console.error("thread-card sender failed:", ex);
+      }
+    }
+    this.senderLine.textContent = displaySender;
+    this.senderLine.title = displaySender;
+
     const representativeHdr = representativeHeaderFor(
       this.view,
       this._index,
@@ -272,7 +421,7 @@ class ThreadCard extends TreeViewTableRow {
     this.threadCardTags.setAttribute("tags", data.tagKeys);
 
     // Follow the layout order.
-    ariaLabelPromises.push(data.sender);
+    ariaLabelPromises.push(displaySender);
     ariaLabelPromises.push(data.date);
     ariaLabelPromises.push(displaySubject);
     ariaLabelPromises.push(data.tags);

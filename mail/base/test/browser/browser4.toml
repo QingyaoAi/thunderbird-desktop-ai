@@ -28,6 +28,8 @@ tags = ["dataadapter"]
 ["browser_tagsMode.js"]
 tags = ["virtualfolders"]
 
+["browser_threadCardSenders.js"]
+
 ["browser_threadHorizontal.js"]
 
 ["browser_threadTreeDeleting.js"]
