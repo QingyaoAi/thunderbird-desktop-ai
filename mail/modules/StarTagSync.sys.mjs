@@ -42,8 +42,12 @@ const RECONCILE_CHUNK = 200;
  */
 const RECONCILED_PREF = "mail.startagsync.reconciledVersion";
 
-/** 2: messages that arrived already starred were never tagged. */
-const RECONCILE_VERSION = 2;
+/**
+ * 2: messages that arrived already starred were never tagged.
+ * 3: stars synced by the mail check that opening the first window starts,
+ *    which ran before the listeners did, were never tagged.
+ */
+const RECONCILE_VERSION = 3;
 
 /**
  * Whether a header carries the Important tag.

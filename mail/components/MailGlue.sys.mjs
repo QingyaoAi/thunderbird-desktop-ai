@@ -676,6 +676,11 @@ MailGlue.prototype = {
     // as soon as its tab comes up, and a term not yet known matches nothing.
     lazy.ThreadTagSearchTerm.register();
 
+    // Before any window too: opening the first one checks the default
+    // account's mail before its first tab has loaded, and a star synced
+    // before the listeners exist is never tagged.
+    lazy.StarTagSync.start();
+
     if (
       AppConstants.platform == "macosx" &&
       Services.startup.wasSilentlyStarted
@@ -771,11 +776,6 @@ MailGlue.prototype = {
   _onFirstWindowLoaded() {
     // Start these services.
     this._checkForOldBuildUpdates();
-
-    // Not on idle with the reconcile: the startup mail check begins as soon as
-    // the first tab is up, and a star synced before the listeners exist is
-    // never tagged.
-    lazy.StarTagSync.start();
 
     // On Windows 7 and above, initialize the jump list module.
     const WINTASKBAR_CONTRACTID = "@mozilla.org/windows-taskbar;1";
