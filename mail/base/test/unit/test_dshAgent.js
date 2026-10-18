@@ -12,8 +12,14 @@
 const { MailMcpServer, MailMcpTokens } = ChromeUtils.importESModule(
   "resource:///modules/MailMcpServer.sys.mjs"
 );
-const { AcpConnection, DshAgent, DshError, DshSessions, DshSettings } =
-  ChromeUtils.importESModule("resource:///modules/DshAgent.sys.mjs");
+const {
+  AcpConnection,
+  DshAgent,
+  DshError,
+  DshSessions,
+  DshSettings,
+  dshFillsInCwd,
+} = ChromeUtils.importESModule("resource:///modules/DshAgent.sys.mjs");
 const { Subprocess } = ChromeUtils.importESModule(
   "resource://gre/modules/Subprocess.sys.mjs"
 );
@@ -168,6 +174,72 @@ add_task(async function testAPromptAndItsPermission() {
     await IOUtils.readUTF8(report.argv[patchAt + 1]),
     "Link every message you cite",
     "and to link the messages it cites"
+  );
+  Assert.ok(
+    !(await IOUtils.readUTF8(report.argv[patchAt + 1])).includes("{{cwd}}"),
+    "a dsh of no known version is not asked to fill in {{cwd}}"
+  );
+});
+
+add_task(async function testWhichDshFillsInCwd() {
+  /**
+   * A dsh package as npm and a checkout both lay it out, with its entry
+   * script at lib/bin.js.
+   *
+   * @param {string} version
+   * @param {string} [name]
+   * @returns {string} The entry script.
+   */
+  const dshAt = async (version, name = "@deepseek-ai/dsh") => {
+    const dir = PathUtils.join(
+      scratch,
+      "packages",
+      `${name.replace(/\W/g, "_")}-${version}`
+    );
+    await IOUtils.makeDirectory(PathUtils.join(dir, "lib"));
+    await IOUtils.writeJSON(PathUtils.join(dir, "package.json"), {
+      name,
+      version,
+    });
+    const script = PathUtils.join(dir, "lib", "bin.js");
+    await IOUtils.writeUTF8(script, "");
+    return script;
+  };
+
+  for (const [version, expected] of [
+    ["0.2.0-rc.2", true],
+    ["0.2.1-alpha.1", true],
+    ["0.2.1-alpha.2", false],
+    ["0.2.1-rc.2", false],
+    ["0.2.1", false],
+    ["0.3.0", false],
+    ["1.0.0", false],
+  ]) {
+    Assert.equal(
+      await dshFillsInCwd(await dshAt(version)),
+      expected,
+      `dsh ${version} ${expected ? "fills" : "does not fill"} in {{cwd}}`
+    );
+  }
+
+  // `npm install -g` puts a link to the script on the PATH.
+  const link = PathUtils.join(scratch, "packages", "dsh");
+  await Subprocess.call({
+    command: await Subprocess.pathSearch("ln"),
+    arguments: ["-s", await dshAt("0.2.0-rc.2"), link],
+  }).then(proc => proc.wait());
+  Assert.ok(
+    await dshFillsInCwd(link),
+    "the version is that of the package the link leads to"
+  );
+
+  Assert.ok(
+    !(await dshFillsInCwd(await dshAt("0.1.0", "something-else"))),
+    "another package's version says nothing"
+  );
+  Assert.ok(
+    !(await dshFillsInCwd(PathUtils.join(scratch, "nowhere", "bin.js"))),
+    "nor does a dsh that is not there"
   );
 });
 

@@ -78,8 +78,10 @@ const DSH_CANDIDATES = ["/opt/homebrew/bin/dsh", "/usr/local/bin/dsh"];
  * here rather than only in the mail endpoint's MCP instructions because dsh
  * does not pass on the instructions of an MCP server a client attaches. This
  * goes to dsh as a patch layer for this run only -- the `--patch` it is started
- * with -- so dsh started any other way is not affected. `{{model}}` and
- * `{{cwd}}` are dsh's own template variables.
+ * with -- so dsh started any other way is not affected. `{{model}}` is dsh's
+ * own template variable. A patch replaces the whole of the row's config, so
+ * the suffix dsh would otherwise add is Thunderbird's to restate: see
+ * CWD_SUFFIX.
  */
 const PERSONA_PATCH = `# Written by Thunderbird each time it starts dsh, for that run only.
 - id: system-prompt
@@ -123,8 +125,59 @@ const PERSONA_PATCH = `# Written by Thunderbird each time it starts dsh, for tha
       exactly as the tool gave it, and never write one that did not come from
       a tool result. Do not name a message in quotation marks or 《》 instead
       of linking it.
-    personaSuffix: Your working directory is {{cwd}}.
 `;
+
+/**
+ * The persona suffix dsh's ACP mode had of its own before 0.2.1-alpha.2, and
+ * the only way its model learnt the folder it works in. From that version on
+ * dsh tells the model itself, has no `{{cwd}}` to fill in, and fails every
+ * turn of a persona that still names it ("unknown prompt variable"). So it is
+ * added only for a dsh known to be older; see dshFillsInCwd.
+ */
+const CWD_SUFFIX = "    personaSuffix: Your working directory is {{cwd}}.\n";
+
+/**
+ * Whether the dsh at `path` fills in `{{cwd}}` in a persona: whether it is
+ * older than 0.2.1-alpha.2. Its version is read from the package.json of the
+ * @deepseek-ai/dsh package `path` belongs to -- `path` being its entry script,
+ * or the link to it that `npm install -g` makes. A dsh whose version cannot be
+ * told is taken to be a later one: getting that wrong costs its model a
+ * sentence, where the other way round costs every turn.
+ *
+ * @param {string} path
+ * @returns {Promise<boolean>}
+ */
+export async function dshFillsInCwd(path) {
+  let version;
+  try {
+    const file = Cc["@mozilla.org/file/local;1"].createInstance(Ci.nsIFile);
+    file.initWithPath(path);
+    // Follows the link to the script, so the package is the one it is in.
+    file.normalize();
+    // The script is <package>/lib/bin.js; look a little further up in case
+    // that moves.
+    for (let dir = file.parent, i = 0; dir && i < 3; dir = dir.parent, i++) {
+      const manifest = PathUtils.join(dir.path, "package.json");
+      if (await IOUtils.exists(manifest)) {
+        const json = await IOUtils.readJSON(manifest);
+        if (json?.name == "@deepseek-ai/dsh") {
+          version = json.version;
+          break;
+        }
+      }
+    }
+  } catch (ex) {
+    return false;
+  }
+  const match = /^(\d+)\.(\d+)\.(\d+)(?:-(.+))?$/.exec(version ?? "");
+  if (!match) {
+    return false;
+  }
+  // Against 0.2.1: anything below it, or 0.2.1's first alpha.
+  const [major, minor, patch] = match.slice(1, 4).map(Number);
+  const order = major || minor - 2 || patch - 1;
+  return order < 0 || (order == 0 && match[4] == "alpha.1");
+}
 
 /** How long a closing session may take before the process is killed. */
 const CLOSE_TIMEOUT_MS = 3000;
@@ -678,7 +731,12 @@ export class DshAgent {
         PathUtils.profileDir,
         "dsh-thunderbird.patch.yml"
       );
-      await IOUtils.writeUTF8(patch, PERSONA_PATCH);
+      // What is written depends only on which dsh is set, so runs starting
+      // side by side write the same file alike.
+      await IOUtils.writeUTF8(
+        patch,
+        PERSONA_PATCH + ((await dshFillsInCwd(settings.dsh)) ? CWD_SUFFIX : "")
+      );
 
       // dsh's own entry point is a script for node to run; an installed
       // `dsh` is a program in its own right.
