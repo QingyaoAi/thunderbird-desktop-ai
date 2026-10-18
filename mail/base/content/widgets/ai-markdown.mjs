@@ -28,6 +28,22 @@ const SAFE_SCHEMES = ["http:", "https:", "mailto:"];
 export const MESSAGE_LINK_RE =
   /^(?:mailbox|imap|news|ews|graph)-message:\/\/[^\s]/;
 
+/**
+ * A link to a file on this computer, which is how dsh is asked to point at
+ * the files it writes: a full path, a path from the home folder, or a file:
+ * URL. Rendered as an inert link that linkifyFiles then points at the file,
+ * or turns back into text if there is no such file.
+ */
+const FILE_TARGET_RE = /^(?:\/|~\/|file:\/\/)/;
+
+/**
+ * Code that could be naming a file: a path as above, or a name with an
+ * extension. What a model puts in code is mostly commands and identifiers;
+ * linkifyFiles links one only once it has found the file it names.
+ */
+const FILE_NAME_RE =
+  /^(?:(?:\/|~\/|file:\/\/)[^\n]+|[^\n]*\.[\p{L}\p{N}]{1,10})$/u;
+
 /** Bare URLs, linkified as a convenience. */
 const AUTOLINK_RE = /https?:\/\/[^\s<>()[\]]+[^\s<>()[\].,;:!?'"]/g;
 
@@ -105,14 +121,24 @@ function renderInline(parent, text, doc) {
     renderInline(parent, text.slice(0, linkMatch.index), doc);
     const [whole, label] = linkMatch;
     const url = linkMatch[2] ?? linkMatch[3];
+    // Backslash escapes are Markdown's, not part of what is shown.
+    const shown = label.replace(/\\([!-/:-@[-`{-~])/g, "$1") || url;
     if (isSafeUrl(url)) {
       const anchor = doc.createElement("a");
       anchor.href = url;
-      // Backslash escapes are Markdown's, not part of what is shown.
-      anchor.textContent = label.replace(/\\([!-/:-@[-`{-~])/g, "$1") || url;
+      anchor.textContent = shown;
       if (MESSAGE_LINK_RE.test(url)) {
         anchor.classList.add("ai-message-link");
       }
+      parent.appendChild(anchor);
+    } else if (FILE_TARGET_RE.test(url)) {
+      // Never a real href: a click is the panel's to handle, and the panel
+      // decides what opening the file means.
+      const anchor = doc.createElement("a");
+      anchor.href = "#";
+      anchor.className = "ai-file-link";
+      anchor.dataset.target = url;
+      anchor.textContent = shown;
       parent.appendChild(anchor);
     } else {
       parent.appendChild(doc.createTextNode(whole));
@@ -444,6 +470,54 @@ export function linkifyCitations(root, doc, isKnown, onActivate) {
       parts.appendChild(doc.createTextNode(text.slice(last)));
     }
     node.replaceWith(parts);
+  }
+}
+
+/**
+ * Point an answer's file links at the files they name, and link file names
+ * it gives in code: a model asked to link the files it writes still sometimes
+ * gives just the name, as it would in a terminal. Either is linked only if
+ * `fileFor` finds the file; a link to a file that is not there goes back to
+ * being text.
+ *
+ * A linked file is in the link's `data-path`, and shown as its title.
+ *
+ * @param {Node} root
+ * @param {Document} doc
+ * @param {function(string): ?string} fileFor - The full path of the file
+ *   that a link target or a name in code means, or null if there is none.
+ */
+export function linkifyFiles(root, doc, fileFor) {
+  for (const anchor of root.querySelectorAll("a.ai-file-link")) {
+    if (anchor.dataset.path) {
+      continue;
+    }
+    const path = fileFor(anchor.dataset.target);
+    if (path) {
+      anchor.dataset.path = path;
+      anchor.title = path;
+    } else {
+      anchor.replaceWith(doc.createTextNode(anchor.textContent));
+    }
+  }
+
+  for (const code of root.querySelectorAll("code")) {
+    const written = code.textContent.trim();
+    if (code.closest("pre, a") || !FILE_NAME_RE.test(written)) {
+      continue;
+    }
+    const path = fileFor(written);
+    if (!path) {
+      continue;
+    }
+    const anchor = doc.createElement("a");
+    anchor.href = "#";
+    anchor.className = "ai-file-link";
+    anchor.dataset.target = written;
+    anchor.dataset.path = path;
+    anchor.title = path;
+    code.replaceWith(anchor);
+    anchor.appendChild(code);
   }
 }
 

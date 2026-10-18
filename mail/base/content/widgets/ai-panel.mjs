@@ -16,6 +16,7 @@
 import {
   renderMarkdown,
   linkifyCitations,
+  linkifyFiles,
   linkifyMessageMentions,
   MESSAGE_LINK_RE,
 } from "chrome://messenger/content/ai-markdown.mjs";
@@ -32,6 +33,55 @@ ChromeUtils.defineESModuleGetters(lazy, {
   MailServices: "resource:///modules/MailServices.sys.mjs",
   openLinkExternally: "resource:///modules/LinkHelper.sys.mjs",
 });
+
+/**
+ * The kinds of file a click on a file link opens, in whatever the system
+ * opens them with: documents, pictures and recordings. The link is model
+ * output, and the mail a model reads can talk it into linking anything, so
+ * anything else -- a program, a script, an archive, a web page -- is shown in
+ * the Finder instead, for the user to open themselves if they mean to.
+ */
+const OPENABLE_EXTENSIONS = new Set([
+  // Documents.
+  "pdf",
+  "txt",
+  "md",
+  "rtf",
+  "csv",
+  "tsv",
+  "json",
+  "doc",
+  "docx",
+  "xls",
+  "xlsx",
+  "ppt",
+  "pptx",
+  "odt",
+  "ods",
+  "odp",
+  "pages",
+  "numbers",
+  "key",
+  "ics",
+  "vcf",
+  "eml",
+  // Pictures.
+  "png",
+  "jpg",
+  "jpeg",
+  "gif",
+  "heic",
+  "webp",
+  "bmp",
+  "tif",
+  "tiff",
+  // Recordings.
+  "mp3",
+  "m4a",
+  "wav",
+  "mp4",
+  "mov",
+]);
 
 /**
  * Keeps a long session bounded: both the turns shown and the history sent
@@ -803,6 +853,7 @@ export const AIPanel = {
         this._renderPart(body, part, {
           sources,
           mentions: turn.agent == "dsh" ? record.mentions : null,
+          folder: turn.agent == "dsh" ? record.dsh?.workspace : null,
         });
       }
     }
@@ -815,8 +866,10 @@ export const AIPanel = {
    * @param {object} context
    * @param {object[]} context.sources - What citations in the answer cite.
    * @param {?Map<string, string>} context.mentions - Subjects to link, for dsh.
+   * @param {?string} context.folder - The folder dsh worked in, for the
+   *   names of the files it wrote.
    */
-  _renderPart(body, part, { sources, mentions }) {
+  _renderPart(body, part, { sources, mentions, folder }) {
     switch (part.type) {
       case "thinking": {
         const thinking = this._addThinking(body);
@@ -836,6 +889,7 @@ export const AIPanel = {
         if (mentions) {
           linkifyMessageMentions(answer, document, mentions);
         }
+        this.linkFiles(answer, folder);
         break;
       }
       case "tool":
@@ -1163,6 +1217,13 @@ export const AIPanel = {
     if (!anchor) {
       return;
     }
+    if (anchor.classList.contains("ai-file-link")) {
+      event.preventDefault();
+      if (anchor.dataset.path) {
+        this._openFile(anchor.dataset.path);
+      }
+      return;
+    }
     // Citations point at mail rather than the web, and have their own
     // handler which has already run by now.
     const href = anchor.getAttribute("href");
@@ -1187,6 +1248,97 @@ export const AIPanel = {
     }
     event.preventDefault();
     lazy.openLinkExternally(uri);
+  },
+
+  /**
+   * Link the files an answer names, where they can be found.
+   *
+   * @param {HTMLElement} answer - The rendered answer.
+   * @param {?string} folder - The folder its agent worked in, where a file
+   *   named without a path is looked for.
+   */
+  linkFiles(answer, folder) {
+    linkifyFiles(answer, document, target => this._fileFor(target, folder));
+  },
+
+  /**
+   * The file that a file link's target, or a name an answer gives in code,
+   * means: a full path, a file: URL, a path from the home folder, or a name in
+   * the folder the agent works in.
+   *
+   * @param {string} target
+   * @param {?string} folder
+   * @returns {?string} Its full path, or null if there is no such file.
+   */
+  _fileFor(target, folder) {
+    let path = target.trim();
+    try {
+      if (path.startsWith("file://")) {
+        path = Services.io.newURI(path).QueryInterface(Ci.nsIFileURL).file.path;
+      } else if (path.startsWith("~/")) {
+        path = PathUtils.joinRelative(
+          Services.dirsvc.get("Home", Ci.nsIFile).path,
+          path.slice(2)
+        );
+      } else if (!path.startsWith("/")) {
+        if (!folder) {
+          return null;
+        }
+        path = PathUtils.joinRelative(folder, path);
+      }
+      // "the folder/" names the folder.
+      path = path.replace(/(.)\/+$/, "$1");
+      const file = Cc["@mozilla.org/file/local;1"].createInstance(Ci.nsIFile);
+      file.initWithPath(path);
+      return file.exists() ? file.path : null;
+    } catch {
+      // Not a path this system can use: not a file, then.
+      return null;
+    }
+  },
+
+  /**
+   * Open a file an answer links: a document in what the system opens it
+   * with, a folder in the Finder, and anything else shown in the Finder
+   * rather than opened (see OPENABLE_EXTENSIONS). A file gone since the
+   * answer was shown is shown by its folder, if that is still there.
+   *
+   * @param {string} path
+   */
+  _openFile(path) {
+    try {
+      let file = Cc["@mozilla.org/file/local;1"].createInstance(Ci.nsIFile);
+      file.initWithPath(path);
+      if (!file.exists()) {
+        file = file.parent;
+        if (!file?.exists()) {
+          return;
+        }
+      }
+      if (this._opensFile(file)) {
+        file.launch();
+      } else {
+        file.reveal();
+      }
+    } catch (ex) {
+      console.error("Could not open the linked file:", ex);
+    }
+  },
+
+  /**
+   * Whether a click on a link to this file opens it, rather than showing it
+   * in the Finder.
+   *
+   * @param {nsIFile} file
+   * @returns {boolean}
+   */
+  _opensFile(file) {
+    const extension = /\.([^./]+)$/.exec(file.leafName)?.[1].toLowerCase();
+    // A folder with an extension is a package -- an application, often --
+    // which opening would run.
+    return file.isDirectory()
+      ? !extension
+      : OPENABLE_EXTENSIONS.has(extension) && !file.isExecutable();
   },
 
   /**

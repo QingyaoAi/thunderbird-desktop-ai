@@ -17,7 +17,10 @@
  * seconds and then does what any other prompt does; "crash" exits;
  * "link" answers with a link to the message sent with it, and one to a
  * message that does not exist; "mention" has a mail tool return that message
- * and names it without a link; "stubborn" answers nothing, and from then on
+ * and names it without a link; "file" writes report.xlsx and an executable
+ * run.command in its folder, links the first by its full path and names both
+ * in code, beside a name in code and a link that are no file; "stubborn"
+ * answers nothing, and from then on
  * the program goes on running when its input ends, as dsh does not always
  * exit when it should.
  */
@@ -146,6 +149,20 @@ while True:
             time.sleep(3)
             update({"sessionUpdate": "agent_message_chunk",
                     "content": {"type": "text", "text": "done slowly"}})
+            result(rid, {"stopReason": "end_turn"})
+            continue
+        if text == "file":
+            for name, mode in (("report.xlsx", 0o644), ("run.command", 0o755)):
+                path = os.path.join(cwd, name)
+                with open(path, "w") as out:
+                    out.write("")
+                os.chmod(path, mode)
+            update({"sessionUpdate": "agent_message_chunk",
+                    "content": {"type": "text", "text":
+                        "Wrote [report.xlsx](<" +
+                        os.path.join(cwd, "report.xlsx") + ">), that is " +
+                        "\`report.xlsx\`, with \`run.command\` beside it; " +
+                        "not \`missing.xlsx\`, nor [gone.pdf](</nowhere/gone.pdf>)."}})
             result(rid, {"stopReason": "end_turn"})
             continue
         if text == "link":

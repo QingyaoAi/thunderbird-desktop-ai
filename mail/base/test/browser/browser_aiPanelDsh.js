@@ -576,6 +576,101 @@ add_task(async function testUnlinkedMentions() {
   );
 });
 
+add_task(async function testFileLinks() {
+  const work = PathUtils.join(scratch, "work");
+  send("file");
+  await waitForTurnToEnd();
+  const answer = lastAnswerTurn().querySelector(".ai-answer");
+  const links = [...answer.querySelectorAll("a.ai-file-link")];
+  Assert.deepEqual(
+    links.map(link => [link.textContent, link.dataset.path]),
+    [
+      ["report.xlsx", PathUtils.join(work, "report.xlsx")],
+      ["report.xlsx", PathUtils.join(work, "report.xlsx")],
+      ["run.command", PathUtils.join(work, "run.command")],
+    ],
+    "a file linked by its full path, and names in code of files in the " +
+      "folder dsh works in, are linked to the file"
+  );
+  Assert.equal(links[0].title, links[0].dataset.path, "showing where it is");
+  Assert.ok(links[1].querySelector("code"), "a name in code stays code");
+  Assert.ok(
+    [...answer.querySelectorAll("code")].some(
+      code => code.textContent == "missing.xlsx" && !code.closest("a")
+    ),
+    "a name in code that is no file is not linked"
+  );
+  Assert.ok(
+    answer.textContent.includes("nor gone.pdf.") &&
+      !answer.querySelector('a[data-target="/nowhere/gone.pdf"]'),
+    "nor is a link to a file that is not there, which shows as its text"
+  );
+
+  const opened = [];
+  const openFile = AIPanel._openFile;
+  AIPanel._openFile = path => opened.push(path);
+  try {
+    click(links[0]);
+    click(links[2]);
+  } finally {
+    AIPanel._openFile = openFile;
+  }
+  Assert.deepEqual(
+    opened,
+    [PathUtils.join(work, "report.xlsx"), PathUtils.join(work, "run.command")],
+    "a click is the panel's to handle, with the file's path"
+  );
+
+  /**
+   * @param {string} name - Made in the scratch folder.
+   * @param {object} [options]
+   * @param {boolean} [options.folder]
+   * @param {boolean} [options.executable]
+   * @returns {boolean} Whether a click on a link to it opens it.
+   */
+  const opens = async (name, { folder: isFolder, executable } = {}) => {
+    const path = PathUtils.join(scratch, name);
+    if (isFolder) {
+      await IOUtils.makeDirectory(path);
+    } else {
+      await IOUtils.writeUTF8(path, "");
+      await IOUtils.setPermissions(path, executable ? 0o755 : 0o644);
+    }
+    return AIPanel._opensFile(await IOUtils.getFile(path));
+  };
+  Assert.ok(await opens("table.xlsx"), "a document opens");
+  Assert.ok(await opens("Photo.JPG"), "whatever the case of its extension");
+  Assert.ok(await opens("Results", { folder: true }), "so does a folder");
+  Assert.ok(!(await opens("page.html")), "a web page is shown instead");
+  Assert.ok(!(await opens("setup.command")), "so is a script");
+  Assert.ok(
+    !(await opens("sheet.xlsx", { executable: true })),
+    "and a document that could be run"
+  );
+  Assert.ok(
+    !(await opens("Tool.app", { folder: true })),
+    "and a folder that is an application"
+  );
+
+  const kept = AIPanel.conversation;
+  Assert.equal(
+    kept.dsh.workspace,
+    work,
+    "the conversation keeps the folder dsh worked in"
+  );
+  const shownAgain = doc.createElement("div");
+  AIPanel._renderPart(
+    shownAgain,
+    kept.turns.at(-1).parts.find(part => part.type == "answer"),
+    { sources: [], mentions: null, folder: kept.dsh.workspace }
+  );
+  Assert.equal(
+    shownAgain.querySelectorAll("a.ai-file-link[data-path]").length,
+    3,
+    "and an answer shown again from what was kept links its files the same"
+  );
+});
+
 add_task(async function testDeletingAConversation() {
   const current = AIPanel.conversation;
   const session = current.dsh.sessionId;

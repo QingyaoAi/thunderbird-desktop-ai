@@ -1016,6 +1016,7 @@ export class DshPanel {
         turn.answerPart.text = turn.answerRaw;
         this.panel._renderAnswer(turn.answer, turn.answerRaw, []);
         linkifyMessageMentions(turn.answer, document, turn.mentions);
+        this.panel.linkFiles(turn.answer, run.agent?.workspace);
         break;
       }
 

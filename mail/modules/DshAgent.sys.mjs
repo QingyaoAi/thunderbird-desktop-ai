@@ -76,7 +76,10 @@ const DSH_CANDIDATES = ["/opt/homebrew/bin/dsh", "/usr/local/bin/dsh"];
  *
  * A message it cites should be a link the user can click. The link rule is
  * here rather than only in the mail endpoint's MCP instructions because dsh
- * does not pass on the instructions of an MCP server a client attaches. This
+ * does not pass on the instructions of an MCP server a client attaches. So
+ * should a file it writes, by its full path: it named them in code, relative
+ * to a working folder the user never sees, and the panel can only find a
+ * name like that in the folder dsh is working in now. This
  * goes to dsh as a patch layer for this run only -- the `--patch` it is started
  * with -- so dsh started any other way is not affected.
  *
@@ -131,6 +134,13 @@ const PERSONA_PATCH = `# Written by Thunderbird each time it starts dsh, for tha
       exactly as the tool gave it, and never write one that did not come from
       a tool result. Do not name a message in quotation marks or 《》 instead
       of linking it.
+
+      Link every file you mention -- one you wrote, or one the user should
+      open -- so that they can open it with a click. Give its whole path,
+      starting with /, in angle brackets, like this:
+      [summary.xlsx](</Users/me/work/summary.xlsx>). Use the file's name as
+      the link text. A path from your working folder is not enough on its
+      own: write the folder out in full.
 `;
 
 /**
