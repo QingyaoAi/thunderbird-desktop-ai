@@ -16,13 +16,31 @@
  * `index.json` beside them lists them with their titles, so that the list in
  * the panel does not mean reading every conversation in full. It is rebuilt
  * from the files themselves if it is lost.
+ *
+ * Nothing here is kept for ever: a conversation nobody has asked anything in
+ * or opened for a while is deleted, with its dsh session (see prune()).
  */
+
+const lazy = {};
+ChromeUtils.defineESModuleGetters(lazy, {
+  DshSessions: "resource:///modules/DshAgent.sys.mjs",
+});
 
 /** Bumped if what is kept changes in a way older code would misread. */
 const VERSION = 1;
 
 /** How much of the first question a conversation is named with. */
 const TITLE_LENGTH = 80;
+
+/**
+ * How many days a conversation is kept once nobody asks anything in it or
+ * opens it. 0 keeps every one. Each is small, but with its dsh session they
+ * come to some 150KB a question, and nothing else ever deletes them.
+ */
+const KEEP_DAYS_PREF = "mail.ai.conversations.keepDays";
+const KEEP_DAYS_DEFAULT = 90;
+
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 /**
  * Whether an id is safe to make a file name of. Ours are UUIDs, but the
@@ -39,7 +57,7 @@ function isSafeId(id) {
  * What the list needs of a conversation.
  *
  * @param {object} record
- * @returns {{id: string, title: string, created: string, updated: string, dsh: ?object}}
+ * @returns {{id: string, title: string, created: string, updated: string, opened: ?string, dsh: ?object}}
  */
 function entryFor(record) {
   return {
@@ -47,8 +65,22 @@ function entryFor(record) {
     title: record.title,
     created: record.created,
     updated: record.updated,
+    opened: record.opened ?? null,
     dsh: record.dsh ?? null,
   };
+}
+
+/**
+ * @param {object} entry - As the list has it.
+ * @returns {number} When the conversation was last added to or opened, in
+ *   ms since the epoch: Infinity if it does not say, so that it is not taken
+ *   for old.
+ */
+function lastUsed(entry) {
+  const times = [entry.updated, entry.opened]
+    .map(time => Date.parse(time))
+    .filter(time => !isNaN(time));
+  return times.length ? Math.max(...times) : Infinity;
 }
 
 export const AIConversations = {
@@ -62,6 +94,9 @@ export const AIConversations = {
    * @type {Set<string>}
    */
   _removed: new Set(),
+
+  /** When pruneNowAndThen() last pruned, in ms since the epoch. */
+  _lastPruned: 0,
 
   /** @returns {string} */
   get _dir() {
@@ -156,6 +191,8 @@ export const AIConversations = {
       title: this.titleFor(question),
       created: now,
       updated: now,
+      /** When it was last opened from the list, which updated is not. */
+      opened: null,
       dsh: null,
       messages: [],
       mentions: new Map(),
@@ -289,5 +326,78 @@ export const AIConversations = {
       await this.remove(ids);
     }
     return ids;
+  },
+
+  /**
+   * Delete what has gone unused: the conversations nothing was asked in, nor
+   * opened, since a time, with the dsh sessions they were answered in; and
+   * the sessions Thunderbird started before then that no conversation has
+   * -- begun and left without a question, or from before conversations were
+   * kept -- since nothing could reopen those.
+   *
+   * @param {object} options
+   * @param {number} options.before - The time, in ms since the epoch.
+   * @param {string[]} [options.keep] - Conversations to leave, whatever their
+   *   age: those in use.
+   * @param {string[]} [options.keepSessions] - dsh sessions to leave: those
+   *   a run of dsh has open.
+   * @returns {Promise<{conversations: number, sessions: number}>} How many of
+   *   each were deleted.
+   */
+  async prune({ before, keep = [], keepSessions = [] }) {
+    // Chosen and deleted in one go, so that a conversation saved meanwhile
+    // -- opened again, just now -- is not deleted for how old it was.
+    const { gone, kept } = await this._queue(async () => {
+      const entries = await this._readIndex();
+      const old = entries.filter(
+        entry => !keep.includes(entry.id) && lastUsed(entry) < before
+      );
+      for (const entry of old) {
+        this._removed.add(entry.id);
+        await IOUtils.remove(this._file(entry.id), { ignoreAbsent: true });
+      }
+      const rest = entries.filter(entry => !old.includes(entry));
+      if (old.length) {
+        await this._writeIndex(rest);
+      }
+      return { gone: old, kept: rest };
+    });
+
+    const wanted = new Set([
+      ...keepSessions,
+      ...kept.map(entry => entry.dsh?.sessionId),
+    ]);
+    const theirs = new Set(gone.map(entry => entry.dsh?.sessionId));
+    const stale = (await lazy.DshSessions.list())
+      .filter(
+        session =>
+          !wanted.has(session.id) &&
+          (theirs.has(session.id) || Date.parse(session.created) < before)
+      )
+      .map(session => session.id);
+    return {
+      conversations: gone.length,
+      sessions: stale.length ? await lazy.DshSessions.remove(stale) : 0,
+    };
+  },
+
+  /**
+   * Prune what the setting says has gone unused for long enough, unless that
+   * was done less than a day ago. The panel calls this whenever there is a
+   * moment for it -- as it opens, as the list is shown, as a conversation is
+   * saved -- since Thunderbird may stay open for weeks.
+   *
+   * @param {object} inUse - keep and keepSessions, as prune() takes them.
+   * @returns {Promise<?object>} What prune() returned, or null if it was not
+   *   time to.
+   */
+  pruneNowAndThen(inUse) {
+    const days = Services.prefs.getIntPref(KEEP_DAYS_PREF, KEEP_DAYS_DEFAULT);
+    const now = Date.now();
+    if (days <= 0 || now - this._lastPruned < DAY_MS) {
+      return Promise.resolve(null);
+    }
+    this._lastPruned = now;
+    return this.prune({ before: now - days * DAY_MS, ...inUse });
   },
 };

@@ -187,6 +187,41 @@
   white-space: nowrap;
 }
 
+/* After the title, while dsh goes on answering in a conversation that was
+ * left: pulsing as the reasoning label does while it works, and steady, in
+ * the warning colour, while it waits on a permission. */
+.ai-panel-out-of-sight {
+  flex: none;
+  inline-size: 7px;
+  block-size: 7px;
+  border-radius: var(--border-radius-circle);
+  background-color: var(--selected-item-color);
+  animation: ai-thinking-pulse 1.6s ease-in-out infinite;
+}
+
+.ai-panel-out-of-sight.waiting {
+  background-color: var(--icon-color-warning);
+  animation: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ai-panel-out-of-sight {
+    animation: none;
+  }
+}
+
+/* A dot that is only a background would be painted over in high contrast. */
+@media (forced-colors: active) {
+  .ai-panel-out-of-sight {
+    forced-color-adjust: none;
+    background-color: SelectedItem;
+  }
+
+  .ai-panel-out-of-sight.waiting {
+    background-color: Mark;
+  }
+}
+
 /* -- earlier conversations --
  *
  * In the transcript's place while open. Each is one row, its title above
@@ -263,6 +298,17 @@
 .ai-history-date {
   font-size: 0.78rem;
   color: var(--layout-color-2);
+}
+
+/* In the date's place while dsh is answering in the conversation, in the
+ * colours of the header's dot. */
+.ai-history-status {
+  font-size: 0.78rem;
+  color: var(--selected-item-color);
+}
+
+.ai-history-status.waiting {
+  color: var(--color-text-warning);
 }
 
 .ai-history-delete {

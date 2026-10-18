@@ -12,10 +12,14 @@
  * same check and takes the session it is asked for, unless that is "gone".
  * Each prompt then produces a thought, one tool call that
  * asks for permission, and a message reporting what the agent saw, as JSON.
- * A prompt of "wait" stays open until it is cancelled; "crash" exits; "link"
- * answers with a link to the message sent with it, and one to a message that
- * does not exist; "mention" has a mail tool return that message and names it
- * without a link.
+ * A prompt of "wait" stays open until it is cancelled; "slow" thinks for three
+ * seconds and then answers "done slowly", asking nothing; "later" waits three
+ * seconds and then does what any other prompt does; "crash" exits;
+ * "link" answers with a link to the message sent with it, and one to a
+ * message that does not exist; "mention" has a mail tool return that message
+ * and names it without a link; "stubborn" answers nothing, and from then on
+ * the program goes on running when its input ends, as dsh does not always
+ * exit when it should.
  */
 
 /**
@@ -23,7 +27,7 @@
  * for node -- so the "node" setting only decides what leads its PATH.
  */
 export const FAKE_ACP_AGENT = `#!/usr/bin/env python3
-import json, os, sys, urllib.request
+import json, os, sys, time, urllib.request
 
 def send(message):
     sys.stdout.write(json.dumps(message) + "\\n")
@@ -41,10 +45,13 @@ def update(value):
 
 inbox = []
 cancelled = []
+stubborn = []
 
 def read():
     line = sys.stdin.readline()
     if not line:
+        if stubborn:
+            time.sleep(600)
         sys.exit(0)
     return json.loads(line)
 
@@ -133,6 +140,14 @@ while True:
                         links[0] + ">)."}})
             result(rid, {"stopReason": "end_turn"})
             continue
+        if text == "slow":
+            update({"sessionUpdate": "agent_thought_chunk",
+                    "content": {"type": "text", "text": "thinking slowly"}})
+            time.sleep(3)
+            update({"sessionUpdate": "agent_message_chunk",
+                    "content": {"type": "text", "text": "done slowly"}})
+            result(rid, {"stopReason": "end_turn"})
+            continue
         if text == "link":
             update({"sessionUpdate": "agent_message_chunk",
                     "content": {"type": "text", "text":
@@ -150,6 +165,12 @@ while True:
             cancelled.clear()
             result(rid, {"stopReason": "cancelled"})
             continue
+        if text == "stubborn":
+            stubborn.append(True)
+            result(rid, {"stopReason": "end_turn"})
+            continue
+        if text == "later":
+            time.sleep(3)
         update({"sessionUpdate": "agent_thought_chunk",
                 "content": {"type": "text", "text": "thinking"}})
         update({"sessionUpdate": "tool_call", "toolCallId": "t1",

@@ -962,6 +962,25 @@ ai-panel-history-delete-title = Delete conversation
 # $title is the conversation's title: the start of its first question.
 ai-panel-history-delete-confirm = Delete “{ $title }”? It cannot be brought back. If dsh answered in it, its dsh session is deleted too.
 
+# In the list, in place of when a conversation was last added to, while dsh
+# goes on answering in it after it was left.
+ai-panel-history-answering = dsh is answering…
+
+# As ai-panel-history-answering, while what dsh does next waits on a
+# permission only the user can give.
+ai-panel-history-waiting = Waiting for you to allow a tool
+
+# A dot on the header's title while dsh goes on answering in a conversation
+# that was left.
+ai-panel-answering-elsewhere =
+    .title = dsh is answering in another conversation
+    .aria-label = dsh is answering in another conversation
+
+# As ai-panel-answering-elsewhere, while dsh waits there on a permission.
+ai-panel-waiting-elsewhere =
+    .title = dsh is waiting for you to allow a tool in another conversation
+    .aria-label = dsh is waiting for you to allow a tool in another conversation
+
 ai-panel-input =
     .placeholder = Ask about your mail…
     .aria-label = Message to the assistant
@@ -1111,6 +1130,24 @@ ai-panel-dsh-exited = dsh stopped unexpectedly (exit code { $code }).
 # $reason is the reason dsh gave, e.g. max_tokens.
 ai-panel-dsh-stopped-early = dsh ended its turn early ({ $reason }).
 
+# Shown in the conversation opened, when dsh was answering in the one left
+# but could not go on there. $count is how many conversations dsh may go on
+# answering at once after they are left.
+ai-panel-dsh-too-many =
+    { $count ->
+        [one] dsh stopped answering in the conversation you left: it is already answering in another one, and goes on in only 1 at a time.
+       *[other] dsh stopped answering in the conversation you left: it is already answering in { $count } others, and goes on in no more than that at a time.
+    }
+
+# Recorded in a conversation dsh went on answering after it was left, when
+# dsh was stopped for waiting too long there for a tool to be allowed.
+# $minutes is how long it waited.
+ai-panel-dsh-unanswered =
+    { $minutes ->
+        [one] Stopped: dsh waited 1 minute for a tool to be allowed, and nobody did.
+       *[other] Stopped: dsh waited { $minutes } minutes for a tool to be allowed, and nobody did.
+    }
+
 # $tool is the name of the tool dsh wants to use.
 ai-panel-dsh-permission = dsh wants to use { $tool }.
 
@@ -1167,8 +1204,8 @@ ai-panel-dsh-clear-sessions-confirm =
 # As ai-panel-dsh-clear-sessions-confirm, while dsh is on.
 ai-panel-dsh-clear-sessions-confirm-keeping =
     { $count ->
-        [one] Delete the 1 earlier dsh session Thunderbird started, with its conversation? This cannot be undone. The session open now, and sessions started in dsh itself, are kept.
-       *[other] Delete the { $count } earlier dsh sessions Thunderbird started, with their conversations? This cannot be undone. The session open now, and sessions started in dsh itself, are kept.
+        [one] Delete the 1 earlier dsh session Thunderbird started, with its conversation? This cannot be undone. Sessions in use now, and sessions started in dsh itself, are kept.
+       *[other] Delete the { $count } earlier dsh sessions Thunderbird started, with their conversations? This cannot be undone. Sessions in use now, and sessions started in dsh itself, are kept.
     }
 
 # $count is how many sessions were deleted.

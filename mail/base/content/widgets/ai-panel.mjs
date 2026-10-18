@@ -171,6 +171,7 @@ export const AIPanel = {
     this.historyList = document.getElementById("ai-panel-history-list");
     this.historyItems = document.getElementById("ai-panel-history-items");
     this.historyEmpty = document.getElementById("ai-panel-history-empty");
+    this.outOfSightMark = document.getElementById("ai-panel-out-of-sight");
     this.historyButton.addEventListener("click", () => this.toggleHistory());
     this.historyList.addEventListener("keydown", event => {
       if (event.key == "Escape") {
@@ -224,6 +225,7 @@ export const AIPanel = {
     // answering it is hidden again.
     await this.dsh.restore();
     await this.refreshConfigured();
+    this._pruneNowAndThen();
   },
 
   /**
@@ -454,18 +456,14 @@ export const AIPanel = {
    * the earlier ones, if anything was asked in it.
    */
   async newConversation() {
-    this.cancel();
-    this.cancelDraft();
-    this._showConversation(null);
-    this.input.focus();
-    // dsh's context is its session's, so a new conversation is a new session.
-    await this.dsh.restart();
+    await this._switchConversation(null);
   },
 
   /**
    * Show an earlier conversation, to read and to carry on with: the panel's
    * own model is sent what it was asked before, and dsh reopens the session
-   * it answered in.
+   * it answered in -- or, if it is still answering in it out of sight, the
+   * conversation comes back as it was left, with dsh still going.
    *
    * @param {string} id
    */
@@ -475,16 +473,36 @@ export const AIPanel = {
       this.input.focus();
       return;
     }
-    const record = await lazy.AIConversations.load(id);
+    const record =
+      this.dsh.answering(id) ?? (await lazy.AIConversations.load(id));
     if (!record) {
       // Deleted since the list was made, perhaps from another window.
       await this._fillHistory();
       return;
     }
-    this.cancel();
+    // Which keeps it from being deleted as unused, but is not adding to it:
+    // where it is in the list, and the date there, stay as they were.
+    record.opened = new Date().toISOString();
+    lazy.AIConversations.save(record).catch(ex =>
+      console.error("Could not save the conversation:", ex)
+    );
+    await this._switchConversation(record);
+  },
+
+  /**
+   * Show another conversation in place of this one. dsh answering in this
+   * one goes on answering out of sight; anything else answering is stopped.
+   *
+   * @param {?object} record - As AIConversations keeps it; null for a new one.
+   */
+  async _switchConversation(record) {
+    if (!this.dsh.leave()) {
+      this.cancel();
+    }
     this.cancelDraft();
     this._showConversation(record);
     this.input.focus();
+    // dsh's context is its session's, so a new conversation is a new session.
     await this.dsh.restart();
   },
 
@@ -505,11 +523,13 @@ export const AIPanel = {
     if (!Services.prompt.confirm(window, title, question)) {
       return;
     }
+    // First, so that dsh has closed the session before it is deleted.
     if (entry.id == this.conversation?.id) {
-      // First, so that dsh has closed the session before it is deleted.
       await this.newConversation();
       this.toggleHistory(true);
     }
+    // Answering in it out of sight -- since it was left just now, perhaps.
+    await this.dsh.stopAnswering(entry.id);
     try {
       await lazy.AIConversations.remove([entry.id]);
       if (entry.dsh?.sessionId) {
@@ -529,9 +549,17 @@ export const AIPanel = {
   _showConversation(record) {
     this.conversation = record;
     this._messages = record?.messages ?? [];
-    this.transcript.replaceChildren();
-    if (record) {
-      this._renderConversation(record);
+    // One dsh is still answering in comes back as it was left, and goes on
+    // being written into; any other is drawn from what was kept.
+    const left = this.dsh.takeHidden(record);
+    if (left) {
+      this.transcript.replaceChildren(left);
+      this._scrollToEnd();
+    } else {
+      this.transcript.replaceChildren();
+      if (record) {
+        this._renderConversation(record);
+      }
     }
     this._updateConversationTitle();
     this.toggleHistory(false);
@@ -557,9 +585,26 @@ export const AIPanel = {
     // looked at the configuration, and the two are never shown together.
     this.transcript.hidden = true;
     this.setupNotice.hidden = true;
+    // First, so that what is about to go is not listed.
+    await this._pruneNowAndThen();
     await this._fillHistory();
     this.historyItems.querySelector("button")?.focus();
     await this.refreshConfigured();
+  },
+
+  /**
+   * Delete the conversations nobody has used for a while, and the dsh
+   * sessions nothing could reopen, at most once a day (see
+   * AIConversations.prune), leaving alone what is in use here.
+   *
+   * @returns {Promise<void>}
+   */
+  async _pruneNowAndThen() {
+    try {
+      await lazy.AIConversations.pruneNowAndThen(this.dsh.inUse());
+    } catch (ex) {
+      console.error("Could not delete the unused conversations:", ex);
+    }
   },
 
   async _fillHistory() {
@@ -573,6 +618,35 @@ export const AIPanel = {
       ...entries.map(entry => this._historyItem(entry))
     );
     this.historyEmpty.hidden = !!entries.length;
+    this.showOutOfSight(this.dsh.outOfSight());
+  },
+
+  /**
+   * Mark the conversations dsh is answering out of sight: in the list, each
+   * saying so in place of when it was last added to, and with a dot on the
+   * header's title -- so that one waiting for a permission is not left
+   * waiting unseen.
+   *
+   * @param {Map<string, "answering"|"waiting">} states - By conversation id.
+   */
+  showOutOfSight(states) {
+    for (const item of this.historyItems.children) {
+      const state = states.get(item.dataset.conversation);
+      const note = item.querySelector(".ai-history-status");
+      note.hidden = !state;
+      note.classList.toggle("waiting", state == "waiting");
+      item.querySelector(".ai-history-date").hidden = !!state;
+      if (state) {
+        document.l10n.setAttributes(note, `ai-panel-history-${state}`);
+      }
+    }
+    const waiting = [...states.values()].includes("waiting");
+    this.outOfSightMark.hidden = !states.size;
+    this.outOfSightMark.classList.toggle("waiting", waiting);
+    document.l10n.setAttributes(
+      this.outOfSightMark,
+      waiting ? "ai-panel-waiting-elsewhere" : "ai-panel-answering-elsewhere"
+    );
   },
 
   /**
@@ -582,6 +656,7 @@ export const AIPanel = {
   _historyItem(entry) {
     const item = document.createElement("li");
     item.className = "ai-history-item";
+    item.dataset.conversation = entry.id;
     if (entry.id == this.conversation?.id) {
       item.setAttribute("aria-current", "true");
     }
@@ -596,7 +671,11 @@ export const AIPanel = {
     const date = document.createElement("span");
     date.className = "ai-history-date";
     date.textContent = this._formatDate(entry.updated);
-    button.append(title, date);
+    // In the date's place while dsh is answering in it out of sight.
+    const note = document.createElement("span");
+    note.className = "ai-history-status";
+    note.hidden = true;
+    button.append(title, date, note);
     button.addEventListener("click", () => this.openConversation(entry.id));
 
     const remove = document.createElement("button");
@@ -681,7 +760,8 @@ export const AIPanel = {
     }
     lazy.AIConversations.save(conversation)
       .then(() => this._historyOpen && this._fillHistory())
-      .catch(ex => console.error("Could not save the conversation:", ex));
+      .catch(ex => console.error("Could not save the conversation:", ex))
+      .then(() => this._pruneNowAndThen());
   },
 
   /**

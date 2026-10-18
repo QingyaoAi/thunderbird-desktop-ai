@@ -32,6 +32,8 @@ support-files = [
 
 ["browser_aiPanelDsh.js"]
 
+["browser_aiPanelDshRuns.js"]
+
 ["browser_archive.js"]
 tags = ["archive"]
 

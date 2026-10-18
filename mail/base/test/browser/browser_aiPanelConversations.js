@@ -233,12 +233,19 @@ add_task(async function testCarryingOnAnEarlierConversation() {
     "with the one shown marked"
   );
 
+  const before = (await AIConversations.list())[1];
   click(items[1].querySelector(".ai-history-open"));
   await TestUtils.waitForCondition(
     () => AIPanel.conversation?.title == "budget meeting",
     "the earlier conversation is open"
   );
   Assert.ok(BrowserTestUtils.isHidden(AIPanel.historyList), "the list closes");
+  const opened = await TestUtils.waitForCondition(async () => {
+    const entry = (await AIConversations.list())[1];
+    return entry?.opened && entry;
+  }, "that it was opened is kept, so it is not deleted as unused");
+  Assert.equal(opened.id, before.id, "though it is not moved up the list");
+  Assert.equal(opened.updated, before.updated, "nor its date changed");
   Assert.deepEqual(
     [...doc.querySelectorAll(".ai-turn-user")].map(turn => turn.textContent),
     ["budget meeting"],

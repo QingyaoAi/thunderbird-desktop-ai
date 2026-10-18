@@ -129,6 +129,12 @@ const PERSONA_PATCH = `# Written by Thunderbird each time it starts dsh, for tha
 /** How long a closing session may take before the process is killed. */
 const CLOSE_TIMEOUT_MS = 3000;
 
+/**
+ * How long dsh is given to exit by itself once its input has ended, before
+ * it is killed.
+ */
+const EXIT_GRACE_MS = 500;
+
 /** How much of dsh's error output to keep, for when it fails to start. */
 const STDERR_KEEP = 4000;
 
@@ -846,7 +852,23 @@ export class DshAgent {
       } catch (ex) {
         // Already closed.
       }
-      await process.kill(CLOSE_TIMEOUT_MS).catch(() => {});
+      // A program whose input has ended usually exits by itself, and only
+      // one that has not is killed: killing one that has just exited, before
+      // Subprocess has noticed, is an error it leaves unhandled.
+      let timer;
+      const exited = await Promise.race([
+        process.wait().then(
+          () => true,
+          () => true
+        ),
+        new Promise(resolve => {
+          timer = lazy.setTimeout(() => resolve(false), EXIT_GRACE_MS);
+        }),
+      ]);
+      lazy.clearTimeout(timer);
+      if (!exited) {
+        await process.kill(CLOSE_TIMEOUT_MS).catch(() => {});
+      }
     }
     if (this._token) {
       lazy.MailMcpTokens.revokeEphemeral(this._token);

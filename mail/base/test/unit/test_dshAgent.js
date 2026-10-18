@@ -214,6 +214,26 @@ add_task(async function testStopRevokesTheToken() {
 });
 
 /**
+ * dsh usually exits once its input ends, and is then not killed. One that
+ * goes on running is, and stopping waits for that.
+ */
+add_task(async function testStoppingOneThatWillNotExit() {
+  agent = makeAgent();
+  await agent.start();
+  const process = agent._process;
+  await agent.stop();
+  Assert.equal(process.exitCode, 0, "it exits by itself, as asked");
+
+  agent = makeAgent();
+  await agent.start();
+  await agent.prompt([{ type: "text", text: "stubborn" }]);
+  const stubborn = agent._process;
+  await agent.stop();
+  Assert.less(stubborn.exitCode, 0, "one that will not is killed");
+  Assert.deepEqual(exits, [], "neither is reported as having died");
+});
+
+/**
  * An earlier session is reopened in its own folder, whatever the setting
  * says now, and dsh is given the mailbox again.
  */

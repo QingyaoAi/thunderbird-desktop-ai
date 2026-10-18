@@ -5,12 +5,18 @@
 /**
  * Tests for AIConversations: keeping the AI panel's conversations, listing
  * them latest first, reading one back whole, and deleting them -- one by one,
- * or with the dsh session they were answered in.
+ * with the dsh session they were answered in, or once they have gone unused
+ * for long enough, with the dsh sessions nothing could reopen.
  */
 
 const { AIConversations } = ChromeUtils.importESModule(
   "resource:///modules/AIConversations.sys.mjs"
 );
+const { DshSessions } = ChromeUtils.importESModule(
+  "resource:///modules/DshAgent.sys.mjs"
+);
+
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 const dir = () => PathUtils.join(PathUtils.profileDir, "ai-conversations");
 
@@ -63,7 +69,7 @@ add_task(async function testSavingAndReading() {
   Assert.equal(listed.length, 1);
   Assert.deepEqual(
     Object.keys(listed[0]).sort(),
-    ["created", "dsh", "id", "title", "updated"],
+    ["created", "dsh", "id", "opened", "title", "updated"],
     "the list has what it shows, not the conversation itself"
   );
   Assert.equal(listed[0].title, "When is the meeting?");
@@ -176,4 +182,141 @@ add_task(async function testRemovingWithDshSessions() {
     (await AIConversations.list()).some(entry => !entry.dsh),
     "and so is one dsh did not answer"
   );
+});
+
+/**
+ * @param {number} days
+ * @returns {string} That many days ago.
+ */
+function daysAgo(days) {
+  return new Date(Date.now() - days * DAY_MS).toISOString();
+}
+
+/**
+ * Put a session on record as Thunderbird's, begun some days ago, with its
+ * log where dsh keeps it.
+ *
+ * @param {string} home - dsh's home folder.
+ * @param {string} id
+ * @param {number} days
+ * @returns {Promise<string>} Its log folder.
+ */
+async function plantSession(home, id, days) {
+  const log = PathUtils.join(home, "sessions", "--work--", id);
+  await IOUtils.makeDirectory(log, { createAncestors: true });
+  await DshSessions._update(sessions => [
+    ...sessions,
+    { id, workspace: "/work", created: daysAgo(days) },
+  ]);
+  return log;
+}
+
+add_task(async function testPruning() {
+  await AIConversations.remove(
+    (await AIConversations.list()).map(entry => entry.id)
+  );
+  const home = await IOUtils.createUniqueDirectory(PathUtils.tempDir, "dsh");
+  Services.env.set("DSH_HOME", home);
+
+  /**
+   * @param {string} question
+   * @param {number} days - Since it was last added to.
+   * @param {?string} [session]
+   * @returns {Promise<object>}
+   */
+  async function conversation(question, days, session) {
+    const record = makeConversation(question);
+    record.created = record.updated = daysAgo(days);
+    record.dsh = session ? { sessionId: session, workspace: "/work" } : null;
+    return record;
+  }
+
+  const old = await conversation("long ago", 100, "s-old");
+  const oldLog = await plantSession(home, "s-old", 100);
+  const reopened = await conversation("long ago, but opened lately", 100);
+  reopened.opened = daysAgo(3);
+  const recent = await conversation("lately", 3, "s-recent");
+  const recentLog = await plantSession(home, "s-recent", 3);
+  const shown = await conversation("long ago, and on screen", 100);
+  const plain = await conversation("long ago, without dsh", 100);
+  for (const record of [old, reopened, recent, shown, plain]) {
+    await AIConversations.save(record);
+  }
+  // Nothing was asked in these, or they are from before conversations were
+  // kept: in no conversation, so there is no reopening them.
+  const strayLog = await plantSession(home, "s-stray", 100);
+  const newLog = await plantSession(home, "s-new", 3);
+  // dsh has this one open, which nothing else says.
+  const openLog = await plantSession(home, "s-open", 100);
+
+  const result = await AIConversations.prune({
+    before: Date.now() - 90 * DAY_MS,
+    keep: [shown.id],
+    keepSessions: ["s-open"],
+  });
+  Assert.deepEqual(result, { conversations: 2, sessions: 2 });
+
+  const left = (await AIConversations.list()).map(entry => entry.id).sort();
+  Assert.deepEqual(
+    left,
+    [reopened.id, recent.id, shown.id].sort(),
+    "those unused for long enough are deleted; opening one is using it"
+  );
+  Assert.equal(await AIConversations.load(old.id), null, "with their files");
+  Assert.equal(await AIConversations.load(plain.id), null);
+
+  Assert.ok(!(await IOUtils.exists(oldLog)), "and their dsh sessions");
+  Assert.ok(!(await IOUtils.exists(strayLog)), "as are old ones in none");
+  Assert.ok(await IOUtils.exists(recentLog), "but not a session in use");
+  Assert.ok(await IOUtils.exists(newLog), "nor a new one in none, yet");
+  Assert.ok(await IOUtils.exists(openLog), "nor one dsh has open");
+  Assert.deepEqual(
+    (await DshSessions.list()).map(session => session.id).sort(),
+    ["s-new", "s-open", "s-recent"],
+    "and the record says the same"
+  );
+
+  // Saved after it went, as a panel that had it might.
+  await AIConversations.save(old);
+  Assert.equal(
+    await AIConversations.load(old.id),
+    null,
+    "a deleted one is not brought back"
+  );
+
+  Services.env.set("DSH_HOME", "");
+  await IOUtils.remove(home, { recursive: true });
+});
+
+add_task(async function testPruningNowAndThen() {
+  await AIConversations.remove(
+    (await AIConversations.list()).map(entry => entry.id)
+  );
+  const record = makeConversation("a year ago");
+  record.created = record.updated = daysAgo(365);
+  await AIConversations.save(record);
+
+  Services.prefs.setIntPref("mail.ai.conversations.keepDays", 0);
+  Assert.equal(
+    await AIConversations.pruneNowAndThen({}),
+    null,
+    "0 keeps every conversation"
+  );
+  Assert.ok(await AIConversations.load(record.id));
+
+  Services.prefs.clearUserPref("mail.ai.conversations.keepDays");
+  AIConversations._lastPruned = 0;
+  const result = await AIConversations.pruneNowAndThen({});
+  Assert.equal(result.conversations, 1, "the setting is 90 days to begin with");
+  Assert.equal(await AIConversations.load(record.id), null);
+
+  const another = makeConversation("also a year ago");
+  another.created = another.updated = daysAgo(365);
+  await AIConversations.save(another);
+  Assert.equal(
+    await AIConversations.pruneNowAndThen({}),
+    null,
+    "and it is done at most once a day"
+  );
+  Assert.ok(await AIConversations.load(another.id));
 });
