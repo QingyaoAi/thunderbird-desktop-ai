@@ -1544,9 +1544,9 @@ const MCP_TOOLS = [
  * so the AI panel's dsh is given the same rule in its persona (DshAgent).
  */
 const MCP_INSTRUCTIONS =
-  "This is the user's own mailbox in Thunderbird. A message's id -- as " +
+  "This is the user's own mailbox in Thunderbird AI. A message's id -- as " +
   "search_mail, get_message and get_thread return it -- is also a link to " +
-  "that message in Thunderbird. Whenever an answer mentions a particular " +
+  "that message in Thunderbird AI. Whenever an answer mentions a particular " +
   "message, link it in Markdown with its id in angle brackets as the target: " +
   "[short subject or description](<id>). The user can click it to open the " +
   "message. Copy ids exactly as given, and never write one that did not come " +

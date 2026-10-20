@@ -84,7 +84,7 @@
 			<key>UTTypeReferenceURL</key>
 			<string>https://thunderbird.net</string>
 			<key>UTTypeDescription</key>
-			<string>Thunderbird Mail Message</string>
+			<string>Thunderbird AI Mail Message</string>
 			<key>UTTypeConformsTo</key>
 			<array>
 				<string>public.data</string>
@@ -116,7 +116,7 @@
 			</array>
 
 			<key>CFBundleTypeName</key>
-			<string>Thunderbird Mail Message</string>
+			<string>Thunderbird AI Mail Message</string>
 			<key>CFBundleTypeRole</key>
 			<string>Viewer</string>
 			<key>LSTypeIsPackage</key>
@@ -132,7 +132,7 @@
 			    <string>eml</string>
 			</array>
 			<key>CFBundleTypeName</key>
-			<string>Thunderbird Email</string>
+			<string>Thunderbird AI Email</string>
 			<key>CFBundleTypeRole</key>
 			<string>Viewer</string>
 		</dict>

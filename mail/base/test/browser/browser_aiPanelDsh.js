@@ -293,7 +293,7 @@ add_task(async function testTheFirstPromptStartsIt() {
   Assert.deepEqual(
     report.names,
     [
-      `the message open in Thunderbird: "${open.mime2DecodedSubject}", ` +
+      `the message open in Thunderbird AI: "${open.mime2DecodedSubject}", ` +
         `from ${open.mime2DecodedAuthor}, ` +
         new Date(open.date / 1000).toISOString(),
     ],

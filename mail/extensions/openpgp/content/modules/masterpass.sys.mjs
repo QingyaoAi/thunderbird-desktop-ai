@@ -75,7 +75,7 @@ export var OpenPGPMasterpass = {
         let info;
         if (!unprot) {
           info =
-            "Your Thunderbird Profile contains inconsistent or corrupted OpenPGP data. You have secret keys that were previously protected with an automatic passphrase, " +
+            "Your Thunderbird AI Profile contains inconsistent or corrupted OpenPGP data. You have secret keys that were previously protected with an automatic passphrase, " +
             "but file encrypted-openpgp-passphrase.txt is missing. File " +
             secFileName +
             " that contains your secret keys cannot be accessed. " +
@@ -83,7 +83,7 @@ export var OpenPGPMasterpass = {
             "The OpenPGP functionality will be disabled until repaired. ";
         } else {
           info =
-            "Your Thunderbird Profile contains inconsistent or corrupted OpenPGP data. You have secret keys that were previously protected with an automatic passphrase, " +
+            "Your Thunderbird AI Profile contains inconsistent or corrupted OpenPGP data. You have secret keys that were previously protected with an automatic passphrase, " +
             "but file encrypted-openpgp-passphrase.txt is missing. File " +
             secFileName +
             " contains secret keys cannot be accessed. However, it also contains unprotected keys, which you may continue to access. " +
@@ -98,7 +98,7 @@ export var OpenPGPMasterpass = {
         // only unprotected keys
         // maybe https://bugzilla.mozilla.org/show_bug.cgi?id=1656287
         const info =
-          "Your Thunderbird Profile contains inconsistent or corrupted OpenPGP data. You have secret keys, " +
+          "Your Thunderbird AI Profile contains inconsistent or corrupted OpenPGP data. You have secret keys, " +
           "but file encrypted-openpgp-passphrase.txt is missing. " +
           "If you have recently used Enigmail version 2.2 to migrate your old keys, an incomplete migration is probably the cause of the corruption. " +
           "An automatic repair can be attempted. " +

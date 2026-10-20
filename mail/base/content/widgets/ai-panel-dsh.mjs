@@ -802,7 +802,7 @@ export class DshPanel {
       type: "resource_link",
       uri: hdr.folder.getUriForMsg(hdr),
       name:
-        `the message open in Thunderbird: "${hdr.mime2DecodedSubject}", ` +
+        `the message open in Thunderbird AI: "${hdr.mime2DecodedSubject}", ` +
         `from ${hdr.mime2DecodedAuthor}, ${date}`,
     };
   }

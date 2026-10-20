@@ -388,7 +388,7 @@ account-hub-address-book-username-error-text = Please enter a username
 
 account-hub-server-label = URL/Hostname
 
-account-hub-server-tip = Thunderbird will try to automatically detect your hostname
+account-hub-server-tip = { -brand-short-name } will try to automatically detect your hostname
 
 account-hub-server-warning-icon = Invalid URL
 

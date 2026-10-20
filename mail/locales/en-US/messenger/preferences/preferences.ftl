@@ -1237,17 +1237,17 @@ sync-disconnected-turn-on-sync = Turn on Syncing…
 
 ## Mobile QR Export Pane
 
-qr-export-pane-header = Export accounts to { -brand-product-name } Mobile
+qr-export-pane-header = Export accounts to Thunderbird Mobile
 
 qr-export-description = Quickly transfer your account settings from desktop to mobile by generating a QR code. Select which accounts to include, decide if you want to transfer your password, and scan the code with your mobile device. Fast, secure, and simple.
 
-qr-export-get-app = Don’t have { -brand-product-name } on mobile yet? <a data-l10n-name="app-link">Get it on Google Play</a>
+qr-export-get-app = Don’t have Thunderbird on mobile yet? <a data-l10n-name="app-link">Get it on Google Play</a>
 
 qr-export-create = Create a QR code to export your accounts
 
 qr-export-select-accounts = Select which accounts to export:
 
-qr-export-no-accounts = Not seeing all your accounts? Some accounts may be disabled because they are not supported by { -brand-product-name } for Android. <a data-l10n-name="account-support-link">Support</a>
+qr-export-no-accounts = Not seeing all your accounts? Some accounts may be disabled because they are not supported by Thunderbird for Android. <a data-l10n-name="account-support-link">Support</a>
 
 qr-export-accounts-legend = Email accounts
 
@@ -1276,11 +1276,11 @@ qr-export-scan-progress = { $count ->
 # Variables:
 # $count (Number) - Total number of QR codes to step through.
 qr-export-scan-description = { $count ->
-    [one] Scan QR code with { -brand-product-name } on your mobile device
-    *[other] Scan QR codes with { -brand-product-name } on your mobile device
+    [one] Scan QR code with Thunderbird on your mobile device
+    *[other] Scan QR codes with Thunderbird on your mobile device
 }
 
-qr-export-scan-step1 = Open { -brand-product-name } on your mobile device
+qr-export-scan-step1 = Open Thunderbird on your mobile device
 qr-export-scan-step2 = Go to settings
 
 # The strong label should match https://hosted.weblate.org/translate/tb-android/settings-import/en/?checksum=bd1817a6fc9f758b&sort_by=-priority,position#translations
@@ -1332,7 +1332,7 @@ accent-color-os =
     .label = Follow operating system
 
 accent-color-thunderbird =
-    .label = Thunderbird blue
+    .label = { -brand-short-name } blue
 
 accent-color-purple =
     .label = Purple

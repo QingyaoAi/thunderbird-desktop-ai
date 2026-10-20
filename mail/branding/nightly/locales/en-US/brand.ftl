@@ -16,6 +16,6 @@
 -brand-full-name = Thunderbird AI
 # This brand name can be used in messages where the product name needs to
 # remain unchanged across different versions (Daily, Beta, etc.).
--brand-product-name = Thunderbird
+-brand-product-name = Thunderbird AI
 -vendor-short-name = mozilla.org
 trademarkInfo = { " " }

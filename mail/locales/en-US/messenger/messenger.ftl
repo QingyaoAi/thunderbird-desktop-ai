@@ -1188,24 +1188,24 @@ ai-panel-dsh-restart = The new settings apply the next time dsh is turned on.
 # record.
 ai-panel-dsh-settings-clear-sessions =
     { $count ->
-        [one] Delete the 1 dsh session Thunderbird started…
-       *[other] Delete the { $count } dsh sessions Thunderbird started…
+        [one] Delete the 1 dsh session { -brand-short-name } started…
+       *[other] Delete the { $count } dsh sessions { -brand-short-name } started…
     }
 
-ai-panel-dsh-clear-sessions-none = There are no dsh sessions from Thunderbird to delete.
+ai-panel-dsh-clear-sessions-none = There are no dsh sessions from { -brand-short-name } to delete.
 
 # $count is how many sessions will be deleted.
 ai-panel-dsh-clear-sessions-confirm =
     { $count ->
-        [one] Delete the 1 dsh session Thunderbird started, with its conversation? This cannot be undone. Sessions started in dsh itself are not touched.
-       *[other] Delete the { $count } dsh sessions Thunderbird started, with their conversations? This cannot be undone. Sessions started in dsh itself are not touched.
+        [one] Delete the 1 dsh session { -brand-short-name } started, with its conversation? This cannot be undone. Sessions started in dsh itself are not touched.
+       *[other] Delete the { $count } dsh sessions { -brand-short-name } started, with their conversations? This cannot be undone. Sessions started in dsh itself are not touched.
     }
 
 # As ai-panel-dsh-clear-sessions-confirm, while dsh is on.
 ai-panel-dsh-clear-sessions-confirm-keeping =
     { $count ->
-        [one] Delete the 1 earlier dsh session Thunderbird started, with its conversation? This cannot be undone. Sessions in use now, and sessions started in dsh itself, are kept.
-       *[other] Delete the { $count } earlier dsh sessions Thunderbird started, with their conversations? This cannot be undone. Sessions in use now, and sessions started in dsh itself, are kept.
+        [one] Delete the 1 earlier dsh session { -brand-short-name } started, with its conversation? This cannot be undone. Sessions in use now, and sessions started in dsh itself, are kept.
+       *[other] Delete the { $count } earlier dsh sessions { -brand-short-name } started, with their conversations? This cannot be undone. Sessions in use now, and sessions started in dsh itself, are kept.
     }
 
 # $count is how many sessions were deleted.
