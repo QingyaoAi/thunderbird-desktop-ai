@@ -37,8 +37,6 @@ ChromeUtils.defineESModuleGetters(lazy, {
   ExtensionSupport: "resource:///modules/ExtensionSupport.sys.mjs",
   checkInstalledExtensions: "resource:///modules/ExtensionUtilities.sys.mjs",
   ExtensionsUI: "resource:///modules/ExtensionsUI.sys.mjs",
-  InAppNotifications:
-    "moz-src:///comm/mail/components/inappnotifications/modules/InAppNotifications.sys.mjs",
   LightweightThemeConsumer:
     "resource://gre/modules/LightweightThemeConsumer.sys.mjs",
   MailMigrator: "resource:///modules/MailMigrator.sys.mjs",
@@ -986,15 +984,6 @@ MailGlue.prototype = {
           lazy.TagMessageCounts.start();
           // Listeners only; the count itself waits until a VIP row is drawn.
           lazy.VipUnreadCounts.start();
-        },
-      },
-      {
-        condition: Services.prefs.getBoolPref(
-          "mail.inappnotifications.enabled",
-          false
-        ),
-        task: () => {
-          lazy.InAppNotifications.init().catch(console.error);
         },
       },
       // This implements a special pref that allows used to launch the

@@ -359,24 +359,6 @@ aside.settings-btn-container {
   }
 }
 
-/* Custom link style */
-.donation-link {
-  color: var(--color-primary-default);
-  font-style: italic;
-  font-weight: 600;
-  transition: color 0.2s;
-  cursor: pointer;
-
-  &:hover {
-    color: var(--color-primary-hover);
-  }
-
-  &:focus-visible:not(:hover) {
-    outline: var(--focus-outline);
-    outline-offset: var(--focus-outline-offset);
-  }
-}
-
 .btn-link {
   appearance: none;
   display: flex;

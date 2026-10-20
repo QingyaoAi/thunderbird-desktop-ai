@@ -25,7 +25,7 @@
   <link rel="localization" href="messenger/aboutDialog.ftl"/>
   <script defer="true" src="chrome://messenger/content/aboutDialog.js"></script>
 </head>
-<body aria-describedby="version distribution distributionId currentChannelText communityDesc contributeDesc trademark">
+<body aria-describedby="version distribution distributionId currentChannelText communityDesc trademark">
   <xul:keyset id="mainKeyset">
     <xul:key keycode="VK_ESCAPE" oncommand="window.close();"/>
 #ifdef XP_MACOSX
@@ -162,12 +162,6 @@
           <div class="text-blurb" id="communityDesc" data-l10n-id="community-desc">
             <a class="text-link browser-link" href="https://www.mozilla.org/" data-l10n-name="community-mozilla-link"></a>
             <a class="text-link tab-link" href="about:credits" data-l10n-name="community-credits-link"></a>
-          </div>
-          <div class="text-blurb" id="contributeDesc" data-l10n-id="about-donation">
-            <a class="text-link browser-link" href="https://www.thunderbird.net/donate/?utm_source=thunderbird-client&amp;utm_medium=referral&amp;utm_content=about-dialog"
-               data-l10n-name="helpus-donate-link"></a>
-            <a class="text-link browser-link" href="https://www.thunderbird.net/participate/"
-               data-l10n-name="helpus-get-involved-link"></a>
           </div>
         </xul:vbox>
       </xul:vbox>

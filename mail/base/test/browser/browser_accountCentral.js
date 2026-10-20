@@ -480,24 +480,6 @@ add_task(async function testLocal() {
 
   // Test links.
 
-  EventUtils.synthesizeMouseAtCenter(
-    doc.getElementById("donationLink"),
-    {},
-    win
-  );
-  Assert.equal(
-    MockExternalProtocolService.urls.length,
-    1,
-    "should have attempted to open exactly 1 URL in a browser"
-  );
-  Assert.ok(
-    MockExternalProtocolService.urls[0].startsWith(
-      "https://www.thunderbird.net/donate/"
-    ),
-    "should have attempted to open the right URL"
-  );
-  MockExternalProtocolService.urls.length = 0;
-
   for (const [id, url] of [
     ["supportLink", "https://support.mozilla.org/products/thunderbird"],
     ["involvedLink", "https://www.thunderbird.net/participate/"],
@@ -522,7 +504,6 @@ add_task(async function testLocal() {
       "setupFeeds",
       "setupNewsgroups",
       "importButton",
-      "donationLink",
       "supportLink",
       "involvedLink",
       "developerLink",

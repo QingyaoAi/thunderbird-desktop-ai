@@ -84,8 +84,6 @@ community-experimental = <a data-l10n-name="community-exp-mozilla-link">{ -vendo
 
 community-desc = { -brand-short-name } is designed by <a data-l10n-name="community-mozilla-link">{ -vendor-short-name }</a>, a <a data-l10n-name="community-credits-link">global community</a> working together to keep the Web open, public and accessible to all.
 
-about-donation = Want to help? <a data-l10n-name="helpus-donate-link">Make a donation</a> or <a data-l10n-name="helpus-get-involved-link">get involved!</a>
-
 bottom-links-license = Licensing Information
 bottom-links-rights = End-User Rights
 bottom-links-privacy = Privacy Policy

@@ -385,18 +385,6 @@ var gMailInit = {
       gSpacesToolbar.onLoad();
     }
 
-    if (Services.prefs.getBoolPref("mail.inappnotifications.enabled", false)) {
-      import("moz-src:///comm/mail/components/inappnotifications/content/in-app-notification-manager.mjs")
-        .then(() => {
-          document
-            .querySelector(".in-app-notification-root")
-            .replaceChildren(
-              document.createElement("in-app-notification-manager")
-            );
-        })
-        .catch(console.error);
-    }
-
     Glean.inappnotifications.preferences["mail.inappnotifications.enabled"].set(
       Services.prefs.getBoolPref("mail.inappnotifications.enabled", false)
     );

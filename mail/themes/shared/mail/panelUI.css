@@ -1154,10 +1154,6 @@ menulist {
   list-style-image: var(--icon-handshake);
 }
 
-#appmenu_makeDonation {
-  list-style-image: var(--icon-heart);
-}
-
 #appmenu_submitFeedback {
   list-style-image: var(--icon-chat);
 }

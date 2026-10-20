@@ -225,10 +225,6 @@ appmenu-help-get-involved =
   .label = Get Involved
   .accesskey = G
 
-appmenu-help-donation =
-  .label = Make a Donation
-  .accesskey = D
-
 appmenu-help-share-feedback =
   .label = Share Ideas and Feedback
   .accesskey = S

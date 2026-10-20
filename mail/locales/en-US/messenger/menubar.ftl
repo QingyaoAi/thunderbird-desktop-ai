@@ -42,10 +42,6 @@ menu-help-get-involved =
     .label = Get Involved
     .accesskey = G
 
-menu-help-donation =
-    .label = Make a Donation
-    .accesskey = D
-
 menu-help-share-feedback =
     .label = Share Ideas and Feedback
     .accesskey = S

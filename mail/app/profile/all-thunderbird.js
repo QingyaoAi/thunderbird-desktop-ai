@@ -1571,8 +1571,11 @@ pref("browser.theme.dark-private-windows", true);
 // system theme and forced-colors palette to style the chrome.
 pref("browser.theme.forced-colors-override.enabled", true);
 
-// In-app notifications are disabled while the feature is being implemented.
-pref("mail.inappnotifications.enabled", true);
+// In-app notifications carry the Thunderbird project's donation appeals,
+// surveys and announcements, which are not this application's to show. Off,
+// and nothing starts them: MailGlue and the main window no longer load the
+// component, and the branding has neither a server URL nor built-in ones.
+pref("mail.inappnotifications.enabled", false);
 // Refresh interval for in-app notifications in ms (6 hours)
 pref("mail.inappnotifications.refreshInterval", 21600000);
 // In-app notification server endpoint is specified by branding prefs.

@@ -38,9 +38,3 @@ pref("app.update.checkInstallTime.days", 2);
 pref("app.update.badgeWaitTime", 0);
 
 pref("app.vendorURL", "https://www.thunderbird.net/%LOCALE%/");
-
-// In-app notification server endpoint
-pref(
-  "mail.inappnotifications.url",
-  "https://notifications.thunderbird.net/%IAN_SCHEMA_VERSION%/notifications.json"
-);

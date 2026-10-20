@@ -19,8 +19,6 @@ account-hub-release-notes = Release notes
 
 account-hub-support = Support
 
-account-hub-donate = Donate
-
 ## Initial setup page
 
 account-hub-email-setup-button = Email Account

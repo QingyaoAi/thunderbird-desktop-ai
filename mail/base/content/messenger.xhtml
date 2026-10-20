@@ -64,10 +64,6 @@
   <link rel="stylesheet" href="chrome://messenger/skin/input-fields.css" />
   <link
     rel="stylesheet"
-    href="chrome://messenger/skin/inAppNotificationManager.css"
-  />
-  <link
-    rel="stylesheet"
     href="chrome://messenger/skin/openpgp/inlineNotification.css"
   />
   <link rel="stylesheet" href="chrome://messenger/skin/spacesToolbar.css" />
@@ -127,7 +123,6 @@
   <link rel="localization" href="messenger/chat.ftl" />
   <link rel="localization" href="messenger/messageheader/headerFields.ftl" />
   <link rel="localization" href="messenger/mailWidgets.ftl" />
-  <link rel="localization" href="messenger/inAppNotifications.ftl" />
   <link rel="localization" href="messenger/unifiedToolbar.ftl" />
   <link rel="localization" href="messenger/unifiedToolbarItems.ftl" />
   <link rel="localization" href="messenger/extensionsUI.ftl" />
@@ -470,15 +465,6 @@
 
 #include ../../components/im/content/chat-menu.inc.xhtml
 </popupset>
-
-<!--
-  Include in app notifications first to make them as easy as possible to get to
-  when navigating via keyboard. This is important if they miss the instructions
-  for the key command to be able to find what was announced.
--->
-#include ../../components/inappnotifications/content/inAppNotificationTemplates.inc.xhtml
-
-<div class="in-app-notification-root" role="status"></div>
 
 <!-- Include the new calendar dialog. -->
 #include ../../components/calendar/content/calendar.inc.xhtml
