@@ -768,7 +768,17 @@ export class DshAgent {
           "--patch",
           patch,
         ],
-        environment: { PATH: pathFor(settings.node) },
+        environment: {
+          PATH: pathFor(settings.node),
+          // dsh loads a native module of its own (node-addon-require-builtin)
+          // from a copy it makes in the temp folder, unless told not to.
+          // Thunderbird is LSFileQuarantineEnabled, so the copy a dsh started
+          // from here writes is quarantined, and macOS then refuses to load it
+          // ("Apple could not verify ... is free of malware") -- in this dsh
+          // and in every later one, the terminal's too, that finds the copy.
+          // The original in dsh's own install carries no quarantine.
+          NARB_DISABLE_NATIVE_CACHE: "1",
+        },
         environmentAppend: true,
         workdir: settings.workspace,
         stderr: "pipe",
