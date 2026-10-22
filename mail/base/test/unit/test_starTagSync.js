@@ -21,6 +21,20 @@ const { TagMessageCounts } = ChromeUtils.importESModule(
 const { TestUtils } = ChromeUtils.importESModule(
   "resource://testing-common/TestUtils.sys.mjs"
 );
+const { setTimeout } = ChromeUtils.importESModule(
+  "resource://gre/modules/Timer.sys.mjs"
+);
+
+/**
+ * Let time pass. The waits here are the point: they outlast the sync's
+ * settling and its check after a change, to see that nothing more happens.
+ *
+ * @param {number} ms
+ */
+function waitOut(ms) {
+  // eslint-disable-next-line mozilla/no-arbitrary-setTimeout
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
 
 const IMPORTANT = "$label1";
 
@@ -142,6 +156,97 @@ add_task(async function testAChangeThatDoesNotTakeIsRetried() {
     60,
     200
   );
+});
+
+/**
+ * Start from a message neither starred nor tagged, once the sync has settled
+ * that. A check still due from an earlier test acts only on a star and tag
+ * that disagree, so it does not need waiting out.
+ */
+async function startUnstarred() {
+  folder.markMessagesFlagged([hdr], false);
+  folder.removeKeywordsFromMessages([hdr], IMPORTANT);
+  await waitOut(2000);
+  Assert.ok(!starred() && !keywords().includes(IMPORTANT), "neither to begin");
+}
+
+/**
+ * Long enough for a change to settle and for the check after it to have run.
+ */
+const SETTLE_AND_CHECK_MS = 7000;
+
+/**
+ * Record each star and Important tag change to the message from now on.
+ *
+ * @returns {string[]} "star on", "tag off" and so on, filled in as they come.
+ */
+function recordChanges() {
+  const changes = [];
+  const listener = {
+    onFolderPropertyFlagChanged(msg, property, oldFlag, newFlag) {
+      if (msg.messageKey == hdr.messageKey && property == "Flagged") {
+        changes.push(
+          newFlag & Ci.nsMsgMessageFlags.Marked ? "star on" : "star off"
+        );
+      }
+    },
+    msgPropertyChanged(msg, property, oldValue, newValue) {
+      if (msg.messageKey == hdr.messageKey && property == "keywords") {
+        changes.push(newValue.includes(IMPORTANT) ? "tag on" : "tag off");
+      }
+    },
+    QueryInterface: ChromeUtils.generateQI([
+      "nsIFolderListener",
+      "nsIMsgFolderListener",
+    ]),
+  };
+  MailServices.mailSession.AddFolderListener(
+    listener,
+    Ci.nsIFolderListener.propertyFlagChanged
+  );
+  MailServices.mfn.addListener(listener, MailServices.mfn.msgPropertyChanged);
+  registerCleanupFunction(() => {
+    MailServices.mailSession.RemoveFolderListener(listener);
+    MailServices.mfn.removeListener(listener);
+  });
+  return changes;
+}
+
+/**
+ * The flag lists an IMAP server sends back can predate the star they answer,
+ * and each is written onto the header as it comes: the star goes off for a
+ * moment and comes back with the next one. That moment was taken for an
+ * unstar, and a Gmail star flickered off and on and ended up off.
+ */
+add_task(async function testAStarBrieflyTakenBackStays() {
+  await startUnstarred();
+  folder.markMessagesFlagged([hdr], true);
+  // What nsImapMailFolder::NotifyMessageFlags does with a stale flag list
+  // and then a fresh one.
+  folder.msgDatabase.markMarked(hdr.messageKey, false, null);
+  folder.msgDatabase.markMarked(hdr.messageKey, true, null);
+
+  const changes = recordChanges();
+  await waitOut(SETTLE_AND_CHECK_MS);
+  Assert.ok(starred(), "still starred");
+  Assert.ok(keywords().includes(IMPORTANT), "and tagged");
+  Assert.deepEqual(changes, ["tag on"], "with nothing taken back on the way");
+});
+
+/**
+ * Starring by mistake and unstarring at once leaves neither, and the check
+ * after the first change does not put the star back.
+ */
+add_task(async function testAStarUndoneAtOnceStaysUndone() {
+  await startUnstarred();
+  folder.markMessagesFlagged([hdr], true);
+  folder.markMessagesFlagged([hdr], false);
+
+  const changes = recordChanges();
+  await waitOut(SETTLE_AND_CHECK_MS);
+  Assert.ok(!starred(), "unstarred");
+  Assert.ok(!keywords().includes(IMPORTANT), "and untagged");
+  Assert.deepEqual(changes, [], "with nothing coming back later");
 });
 
 /**

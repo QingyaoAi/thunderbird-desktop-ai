@@ -10,6 +10,8 @@ environment = [
 ["test_bccProperty.js"]
 
 ["test_starTagSyncImap.js"]
+# Waits out the sync's settling and its check after a change, twice over.
+requesttimeoutfactor = 2
 
 ["test_tagMessageCountsImap.js"]
 

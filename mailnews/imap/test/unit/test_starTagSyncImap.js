@@ -20,6 +20,20 @@ const { StarTagSync } = ChromeUtils.importESModule(
 const { TestUtils } = ChromeUtils.importESModule(
   "resource://testing-common/TestUtils.sys.mjs"
 );
+const { setTimeout } = ChromeUtils.importESModule(
+  "resource://gre/modules/Timer.sys.mjs"
+);
+
+/**
+ * Let time pass. The waits here are the point: they outlast the sync's
+ * settling and its check after a change, to see that nothing more happens.
+ *
+ * @param {number} ms
+ */
+function waitOut(ms) {
+  // eslint-disable-next-line mozilla/no-arbitrary-setTimeout
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
 
 const IMPORTANT = "$label1";
 const generator = new MessageGenerator();
@@ -140,6 +154,35 @@ add_task(async function testAMessageThatArrivesStarredIsTagged() {
     () => isTagged(headerFor(synth)),
     "a message that arrives already starred should be tagged Important"
   );
+});
+
+/**
+ * Tagging a message stars it, and the star goes to the server as a STORE of
+ * its own. A flag list from before that STORE can arrive after it, and is
+ * written onto the header: the star goes off. The next flag list has it on
+ * again -- unless the star going off was taken for an unstar and the tag
+ * taken off too.
+ */
+add_task(async function testAStarSetForATagSurvivesAStaleFlagList() {
+  const { synth } = addServerMessage([]);
+  await resyncInbox();
+  const hdr = headerFor(synth);
+
+  IMAPPump.inbox.addKeywordsToMessages([hdr], IMPORTANT);
+  await TestUtils.waitForCondition(() => isStarred(hdr), "tagging stars it");
+
+  // What nsImapMailFolder::NotifyMessageFlags does with a flag list from
+  // before the star reached the server.
+  IMAPPump.inbox.msgDatabase.markMarked(hdr.messageKey, false, null);
+  // The next one comes a couple of seconds later.
+  await waitOut(2000);
+  await resyncInbox();
+
+  await TestUtils.waitForCondition(() => isStarred(hdr), "the star is back");
+  // Past when a star going off would have been acted on.
+  await waitOut(8000);
+  Assert.ok(isStarred(hdr), "still starred");
+  Assert.ok(isTagged(hdr), "and the tag was never taken off");
 });
 
 add_task(function endTest() {
