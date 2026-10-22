@@ -112,6 +112,34 @@ add_task(async function test_static_interestingness_boost_works() {
 });
 
 /**
+ * The scores a searcher hands on, which Search Messages sorts its results by,
+ * count a week of age as a point, as DASCORE does.  A star (16 points) still
+ * lifts a message above one a day old when it is two weeks old, but not when
+ * it is a year old.
+ */
+add_task(async function test_scores_count_age() {
+  const ustr = unique_string();
+  const [, oldStarred, recent, recentStarred] =
+    await messageInjection.makeFoldersWithSets(1, [
+      { count: 1, subject: ustr, age: { weeks: 52 } },
+      { count: 1, subject: ustr, age: { days: 1 } },
+      { count: 1, subject: ustr, age: { weeks: 2 } },
+    ]);
+  await waitForGlodaIndexer();
+  Assert.ok(
+    ...assertExpectedMessagesIndexed([oldStarred, recent, recentStarred])
+  );
+  oldStarred.setStarred(true);
+  recentStarred.setStarred(true);
+  await waitForGlodaIndexer();
+  Assert.ok(...assertExpectedMessagesIndexed([oldStarred, recentStarred]));
+
+  const scoreOf = await searchScores(ustr);
+  Assert.greater(scoreOf(recentStarred), scoreOf(recent));
+  Assert.greater(scoreOf(recent), scoreOf(oldStarred));
+});
+
+/**
  * Make sure that the query does not retrieve more than actually matches.
  */
 add_task(async function test_joins_do_not_return_everybody() {
@@ -137,6 +165,33 @@ function unique_string() {
     String.fromCharCode(97 + (uval % 26)) +
     "aa";
   return s;
+}
+
+/**
+ * Search for aFulltextStr and return a function giving the score the searcher
+ * gave the one message of a set.
+ *
+ * @param {string} aFulltextStr - The fulltext query string.
+ * @returns {Function} From a SyntheticMessageSet to its message's score.
+ */
+async function searchScores(aFulltextStr) {
+  Services.prefs.setIntPref("mailnews.database.global.search.msg.limit", 10);
+  const searcher = new GlodaMsgSearcher(null, aFulltextStr);
+  const collection = await new Promise(resolve =>
+    searcher.getCollection({
+      onItemsAdded() {},
+      onItemsModified() {},
+      onItemsRemoved() {},
+      onQueryCompleted: resolve,
+    })
+  );
+  return set => {
+    const index = collection.items.findIndex(
+      item => item.headerMessageID == set.synMessages[0].messageId
+    );
+    Assert.greaterOrEqual(index, 0, "the message is in the results");
+    return searcher.scores[index];
+  };
 }
 
 /**

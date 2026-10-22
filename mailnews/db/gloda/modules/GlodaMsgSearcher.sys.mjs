@@ -207,6 +207,21 @@ function scoreOffsets(aMessage, aContext) {
 }
 
 /**
+ * Score the message on its date, at the exchange rate DASCORE uses: a point
+ *  for each week.  This is the DASCORE date term divided through by
+ *  FUZZSCORE_TIMESTAMP_FACTOR, so a message a week newer is worth one more
+ *  point.  Without it the relevance order kept the date only as a tie-break:
+ *  a star and a tag (24 points) put a message above every unstarred one
+ *  however old it was, so searching for a person listed their 2023 mail
+ *  before this year's.
+ *
+ * @param {GlodaMessage} aMessage
+ */
+function scoreDate(aMessage) {
+  return ((aMessage.date ?? 0) * 1000) / FUZZSCORE_TIMESTAMP_FACTOR;
+}
+
+/**
  * The searcher basically looks like a query, but is specialized for fulltext
  *  search against messages.  Most of the explicit specialization involves
  *  crafting a SQL query that attempts to order the matches by likelihood that
@@ -366,7 +381,7 @@ GlodaMsgSearcher.prototype = {
         terms: this.fulltextTerms,
         stashedColumns: aCollection.stashedColumns,
       },
-      [scoreOffsets]
+      [scoreOffsets, scoreDate]
     );
     if (this.scores) {
       this.scores = this.scores.concat(newScores);
