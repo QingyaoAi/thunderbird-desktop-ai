@@ -152,3 +152,51 @@ add_task(async function test_fix_missing_contacts_and_fallout() {
     GlodaDatastore._schemaVersion
   );
 });
+
+/**
+ * A sender or recipient without an address book card adds no notability, and
+ *  a database indexed while each of them counted as having one is rescored
+ *  once.
+ */
+add_task(async function test_fix_inflated_notability() {
+  const repairedPref = "mailnews.database.global.datastore.notabilityRepaired";
+  // A database gloda creates has nothing to repair.
+  Assert.ok(Services.prefs.getBoolPref(repairedPref));
+
+  // - Mail from someone without a card to four people, one with a card.
+  const abPeeps = msgGen.makeNamesAndAddresses(1);
+  const nonAbPeeps = msgGen.makeNamesAndAddresses(4);
+  makeABCardForAddressPair(abPeeps[0]);
+  const [, msgSet] = await messageInjection.makeFoldersWithSets(1, [
+    { count: 2, from: nonAbPeeps[0], to: [...nonAbPeeps.slice(1), abPeeps[0]] },
+  ]);
+  await waitForGlodaIndexer();
+  Assert.ok(...assertExpectedMessagesIndexed([msgSet], { augment: true }));
+  await waitForGlodaDBFlush();
+
+  const ids = msgSet.glodaMessages.map(message => message.id).join(", ");
+  const storedNotabilities = async () =>
+    (await sqlRun(`SELECT notability FROM messages WHERE id IN (${ids})`)).map(
+      row => row.getInt64(0)
+    );
+  // Only the recipient with a card counts, as the first address book contact
+  //  involved: 8 points.
+  Assert.deepEqual(await storedNotabilities(), [8, 8]);
+
+  // - Store what counting everyone gave -- 10 for the sender, 8 + 3 * 2 for
+  //    the recipients -- and forget the messages.
+  await sqlRun(`UPDATE messages SET notability = 24 WHERE id IN (${ids})`);
+  nukeGlodaCachesAndCollections();
+  Services.prefs.setBoolPref(repairedPref, false);
+
+  // -- Test
+  GlodaMsgIndexer._notabilityRepairInitiated = false;
+  GlodaMsgIndexer.disable();
+  GlodaMsgIndexer.enable();
+  await waitForGlodaIndexer();
+  Assert.ok(...assertExpectedMessagesIndexed([]));
+  await waitForGlodaDBFlush();
+
+  Assert.deepEqual(await storedNotabilities(), [8, 8]);
+  Assert.ok(Services.prefs.getBoolPref(repairedPref));
+});

@@ -509,6 +509,7 @@ export var GlodaMsgIndexer = {
     this._enabled = true;
 
     this._considerSchemaMigration();
+    this._considerNotabilityRepair();
 
     this._log.info("Event-Driven Indexing is now " + this._enabled);
   },
@@ -1006,6 +1007,13 @@ export var GlodaMsgIndexer = {
           worker: this._worker_fixMissingContacts,
         },
       ],
+
+      [
+        "fixNotability",
+        {
+          worker: this._worker_fixNotability,
+        },
+      ],
     ];
   },
 
@@ -1018,6 +1026,22 @@ export var GlodaMsgIndexer = {
       const job = new IndexingJob("fixMissingContacts", null);
       GlodaIndexer.indexJob(job);
       this._schemaMigrationInitiated = true;
+    }
+  },
+
+  _notabilityRepairInitiated: false,
+  /**
+   * Rescore every message once in a database indexed before the address book
+   *  checks in GlodaFundAttr's optimize were fixed.  A database created since
+   *  is marked as not needing it (GlodaDatastore._createDB).
+   */
+  _considerNotabilityRepair() {
+    if (
+      !this._notabilityRepairInitiated &&
+      !GlodaDatastore._prefBranch.getBoolPref("notabilityRepaired", false)
+    ) {
+      GlodaIndexer.indexJob(new IndexingJob("fixNotability", null));
+      this._notabilityRepairInitiated = true;
     }
   },
 
@@ -1721,6 +1745,80 @@ export var GlodaMsgIndexer = {
 
     // -- mark the schema upgrade, be done
     GlodaDatastore._updateSchemaVersion(GlodaDatastore._schemaVersion);
+    yield GlodaConstants.kWorkDone;
+  },
+
+  /**
+   * How many messages the notability repair loads and rescores at a time.
+   */
+  NOTABILITY_REPAIR_BLOCK_SIZE: 100,
+
+  /**
+   * Store each message's notability as its attribute providers score it now.
+   *  The address book checks in GlodaFundAttr's optimize counted a sender or
+   *  recipient with no card as having one, so mail to the whole department
+   *  stored several hundred points -- which DASCORE weighs as that many weeks
+   *  of recency when it picks which full-text matches a search gets back at
+   *  all.  Rescoring needs only what the database holds, not the messages,
+   *  so it costs far less than reindexing them.
+   *
+   * @param {IndexingJob} aJob
+   * @param {object} aCallbackHandle - The indexer's callback handle.
+   * @yields {integer} GlodaConstants.kWork* instructions for the indexer.
+   */
+  *_worker_fixNotability(aJob, aCallbackHandle) {
+    const ids = [];
+    const queryStmt = GlodaDatastore._createAsyncStatement(
+      "SELECT id FROM messages WHERE deleted = 0 AND folderID IS NOT NULL",
+      true
+    );
+    queryStmt.executeAsync({
+      handleResult(aResultSet) {
+        let row;
+        while ((row = aResultSet.getNextRow())) {
+          ids.push(row.getInt64(0));
+        }
+      },
+      handleError() {},
+      handleCompletion() {
+        GlodaDatastore._asyncCompleted();
+        aCallbackHandle.wrappedCallback();
+      },
+    });
+    queryStmt.finalize();
+    GlodaDatastore._pendingAsyncStatements++;
+    yield GlodaConstants.kWorkAsync;
+
+    let rescored = 0;
+    for (let i = 0; i < ids.length; i += this.NOTABILITY_REPAIR_BLOCK_SIZE) {
+      const query = Gloda.newQuery(GlodaConstants.NOUN_MESSAGE);
+      query.id(...ids.slice(i, i + this.NOTABILITY_REPAIR_BLOCK_SIZE));
+      const collection = query.getCollection(aCallbackHandle);
+      yield GlodaConstants.kWorkAsync;
+
+      for (const message of collection.items) {
+        let notability;
+        try {
+          [notability] = Gloda.scoreNounItems([message]);
+        } catch (ex) {
+          // One message the providers cannot score must not stop the rest,
+          // or the repair would fail the same way every time it is started.
+          this._log.warn("Could not rescore message " + message.id, ex);
+          continue;
+        }
+        if (notability != message.notability) {
+          message.notability = notability;
+          GlodaDatastore.updateMessageNotability(message);
+          rescored++;
+        }
+      }
+      yield GlodaConstants.kWorkSync;
+    }
+
+    this._log.info(
+      `Rescored the notability of ${rescored} of ${ids.length} messages`
+    );
+    GlodaDatastore._prefBranch.setBoolPref("notabilityRepaired", true);
     yield GlodaConstants.kWorkDone;
   },
 

@@ -645,10 +645,15 @@ export var GlodaFundAttr = {
     if (isFromMe) {
       aGlodaMessage.notability += this.NOTABILITY_FROM_ME;
     } else {
+      // With no card this is undefined, not null, hence != here and for each
+      // recipient below. With !== every sender and recipient counted as in
+      // the address book: " undefined" was appended to the indexed names, and
+      // mail to three hundred people stored several hundred points of
+      // notability.
       const authorDisplayName = MailServices.ab.cardForEmailAddress(
         authorIdentity.value
       )?.displayName;
-      if (authorDisplayName !== null) {
+      if (authorDisplayName != null) {
         aGlodaMessage.notability += this.NOTABILITY_FROM_IN_ADDR_BOOK;
         // @testpoint gloda.noun.message.attr.authorMatches
         aGlodaMessage._indexAuthor += " " + authorDisplayName;
@@ -668,7 +673,7 @@ export var GlodaFundAttr = {
         const toDisplayName = MailServices.ab.cardForEmailAddress(
           toIdentity.value
         )?.displayName;
-        if (toDisplayName !== null) {
+        if (toDisplayName != null) {
           involvedAddrBookCount++;
           // @testpoint gloda.noun.message.attr.recipientsMatch
           aGlodaMessage._indexRecipients += " " + toDisplayName;
@@ -699,7 +704,7 @@ export var GlodaFundAttr = {
         const ccDisplayName = MailServices.ab.cardForEmailAddress(
           ccIdentity.value
         )?.displayName;
-        if (ccDisplayName !== null) {
+        if (ccDisplayName != null) {
           involvedAddrBookCount++;
           // @testpoint gloda.noun.message.attr.recipientsMatch
           aGlodaMessage._indexRecipients += " " + ccDisplayName;
@@ -731,7 +736,7 @@ export var GlodaFundAttr = {
         const bccDisplayName = MailServices.ab.cardForEmailAddress(
           bccIdentity.value
         )?.displayName;
-        if (bccDisplayName !== null) {
+        if (bccDisplayName != null) {
           involvedAddrBookCount++;
           // @testpoint gloda.noun.message.attr.recipientsMatch
           aGlodaMessage._indexRecipients += " " + bccDisplayName;

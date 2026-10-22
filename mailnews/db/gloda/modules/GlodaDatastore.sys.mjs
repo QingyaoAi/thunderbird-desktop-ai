@@ -1359,6 +1359,9 @@ export var GlodaDatastore = {
     // has been rebuilt in the event that they need to rebuild dependent data.
     this._datastoreID = this._generateDatastoreID();
     this._prefBranch.setCharPref("id", this._datastoreID);
+    // Nothing in a new database was indexed with the address book checks that
+    // inflated notability, so GlodaMsgIndexer has nothing to rescore.
+    this._prefBranch.setBoolPref("notabilityRepaired", true);
 
     dbConnection.beginTransaction();
     try {
@@ -2646,6 +2649,27 @@ export var GlodaDatastore = {
     );
     this.__defineGetter__("_updateMessageStatement", () => statement);
     return this._updateMessageStatement;
+  },
+
+  get _updateMessageNotabilityStatement() {
+    const statement = this._createAsyncStatement(
+      "UPDATE messages SET notability = ?1 WHERE id = ?2"
+    );
+    this.__defineGetter__("_updateMessageNotabilityStatement", () => statement);
+    return this._updateMessageNotabilityStatement;
+  },
+
+  /**
+   * Update only the notability of the database row associated with the
+   * message, leaving the rest of the row as it was.
+   *
+   * @param {GlodaMessage} aMessage
+   */
+  updateMessageNotability(aMessage) {
+    const stmt = this._updateMessageNotabilityStatement;
+    stmt.bindByIndex(0, aMessage.notability);
+    stmt.bindByIndex(1, aMessage.id);
+    stmt.executeAsync(this.trackAsync());
   },
 
   get _updateMessageTextStatement() {
