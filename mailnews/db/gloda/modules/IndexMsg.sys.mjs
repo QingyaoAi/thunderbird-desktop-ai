@@ -1031,14 +1031,15 @@ export var GlodaMsgIndexer = {
 
   _notabilityRepairInitiated: false,
   /**
-   * Rescore every message once in a database indexed before the address book
-   *  checks in GlodaFundAttr's optimize were fixed.  A database created since
-   *  is marked as not needing it (GlodaDatastore._createDB).
+   * Rescore every message once in a database whose stored notability follows
+   *  older rules than GlodaDatastore._notabilityVersion.  A database created
+   *  since is marked as following the current ones (GlodaDatastore._createDB).
    */
   _considerNotabilityRepair() {
     if (
       !this._notabilityRepairInitiated &&
-      !GlodaDatastore._prefBranch.getBoolPref("notabilityRepaired", false)
+      GlodaDatastore._prefBranch.getIntPref("notabilityVersion", 0) <
+        GlodaDatastore._notabilityVersion
     ) {
       GlodaIndexer.indexJob(new IndexingJob("fixNotability", null));
       this._notabilityRepairInitiated = true;
@@ -1754,13 +1755,15 @@ export var GlodaMsgIndexer = {
   NOTABILITY_REPAIR_BLOCK_SIZE: 100,
 
   /**
-   * Store each message's notability as its attribute providers score it now.
-   *  The address book checks in GlodaFundAttr's optimize counted a sender or
-   *  recipient with no card as having one, so mail to the whole department
-   *  stored several hundred points -- which DASCORE weighs as that many weeks
-   *  of recency when it picks which full-text matches a search gets back at
-   *  all.  Rescoring needs only what the database holds, not the messages,
-   *  so it costs far less than reindexing them.
+   * Store each message's notability as its attribute providers score it now,
+   *  once the rules for it have changed (GlodaDatastore._notabilityVersion).
+   *  The first change was the address book checks in GlodaFundAttr's
+   *  optimize, which counted a sender or recipient with no card as having
+   *  one, so mail to the whole department stored several hundred points --
+   *  which DASCORE weighs as that many weeks of recency when it picks which
+   *  full-text matches a search gets back at all.  Rescoring needs only what
+   *  the database holds, not the messages, so it costs far less than
+   *  reindexing them.
    *
    * @param {IndexingJob} aJob
    * @param {object} aCallbackHandle - The indexer's callback handle.
@@ -1818,7 +1821,10 @@ export var GlodaMsgIndexer = {
     this._log.info(
       `Rescored the notability of ${rescored} of ${ids.length} messages`
     );
-    GlodaDatastore._prefBranch.setBoolPref("notabilityRepaired", true);
+    GlodaDatastore._prefBranch.setIntPref(
+      "notabilityVersion",
+      GlodaDatastore._notabilityVersion
+    );
     yield GlodaConstants.kWorkDone;
   },
 

@@ -57,6 +57,31 @@ export var GlodaFundAttr = {
   NOTABILITY_INVOLVING_ADDR_BOOK_FIRST: 8,
   /** Boost for each additional person involved in my address book. */
   NOTABILITY_INVOLVING_ADDR_BOOK_ADDL: 2,
+  /**
+   * The most the people involved from my address book add: no more than a
+   * star. Uncapped, mail to the whole department outscored mail to me alone
+   * by over a hundred points, and as search ranks a point as a week of
+   * recency, it came before mail years newer.
+   */
+  NOTABILITY_INVOLVING_ADDR_BOOK_MAX: 16,
+
+  /**
+   * What the people involved from my address book add to a message's
+   * notability.
+   *
+   * @param {number} aCount - How many of them there are.
+   * @returns {number}
+   */
+  _involvingAddrBookNotability(aCount) {
+    if (!aCount) {
+      return 0;
+    }
+    return Math.min(
+      this.NOTABILITY_INVOLVING_ADDR_BOOK_FIRST +
+        (aCount - 1) * this.NOTABILITY_INVOLVING_ADDR_BOOK_ADDL,
+      this.NOTABILITY_INVOLVING_ADDR_BOOK_MAX
+    );
+  },
 
   defineAttributes() {
     /* ***** Conversations ***** */
@@ -759,11 +784,9 @@ export var GlodaFundAttr = {
       }
     }
 
-    if (involvedAddrBookCount) {
-      aGlodaMessage.notability +=
-        this.NOTABILITY_INVOLVING_ADDR_BOOK_FIRST +
-        (involvedAddrBookCount - 1) * this.NOTABILITY_INVOLVING_ADDR_BOOK_ADDL;
-    }
+    aGlodaMessage.notability += this._involvingAddrBookNotability(
+      involvedAddrBookCount
+    );
 
     aGlodaMessage.involves = involves;
     aGlodaMessage.recipients = recipients;
@@ -817,11 +840,7 @@ export var GlodaFundAttr = {
         involvedAddrBookCount++;
       }
     }
-    if (involvedAddrBookCount) {
-      score +=
-        this.NOTABILITY_INVOLVING_ADDR_BOOK_FIRST +
-        (involvedAddrBookCount - 1) * this.NOTABILITY_INVOLVING_ADDR_BOOK_ADDL;
-    }
+    score += this._involvingAddrBookNotability(involvedAddrBookCount);
     return score;
   },
 

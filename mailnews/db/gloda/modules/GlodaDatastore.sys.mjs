@@ -811,6 +811,17 @@ export var GlodaDatastore = {
   _schemaVersion: 30,
   // what is the schema in the database right now?
   _actualSchemaVersion: 0,
+
+  /**
+   * Which rules the notability stored with each message follows. Raised when
+   *  they change, so that GlodaMsgIndexer rescores what was stored under the
+   *  old ones; the pref notabilityVersion records the rules a database's
+   *  numbers follow.
+   *
+   * 1: only an address book card counts as the address book.
+   * 2: the people involved from the address book add no more than a star.
+   */
+  _notabilityVersion: 2,
   _schema: {
     tables: {
       // ----- Messages
@@ -1359,9 +1370,9 @@ export var GlodaDatastore = {
     // has been rebuilt in the event that they need to rebuild dependent data.
     this._datastoreID = this._generateDatastoreID();
     this._prefBranch.setCharPref("id", this._datastoreID);
-    // Nothing in a new database was indexed with the address book checks that
-    // inflated notability, so GlodaMsgIndexer has nothing to rescore.
-    this._prefBranch.setBoolPref("notabilityRepaired", true);
+    // Everything in a new database is scored by the current rules, so
+    // GlodaMsgIndexer has nothing to rescore.
+    this._prefBranch.setIntPref("notabilityVersion", this._notabilityVersion);
 
     dbConnection.beginTransaction();
     try {

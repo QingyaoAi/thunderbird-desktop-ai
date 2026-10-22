@@ -153,15 +153,62 @@ add_task(async function test_fix_missing_contacts_and_fallout() {
   );
 });
 
+const VERSION_PREF = "mailnews.database.global.datastore.notabilityVersion";
+
+/**
+ * The notability stored with each of a set's messages.
+ *
+ * @param {SyntheticMessageSet} aMsgSet - Indexed with { augment: true }.
+ * @returns {Promise<number[]>}
+ */
+async function storedNotabilities(aMsgSet) {
+  const ids = aMsgSet.glodaMessages.map(message => message.id).join(", ");
+  const rows = await sqlRun(
+    `SELECT notability FROM messages WHERE id IN (${ids})`
+  );
+  return rows.map(row => row.getInt64(0));
+}
+
+/**
+ * Store a number for each of a set's messages as an older version of the
+ *  rules did, and have the repair rescore them from that version.
+ *
+ * @param {SyntheticMessageSet} aMsgSet
+ * @param {number} aNotability - What the older rules stored.
+ * @param {number} aVersion - Which rules those were.
+ */
+async function repairFrom(aMsgSet, aNotability, aVersion) {
+  const ids = aMsgSet.glodaMessages.map(message => message.id).join(", ");
+  await sqlRun(
+    `UPDATE messages SET notability = ${aNotability} WHERE id IN (${ids})`
+  );
+  nukeGlodaCachesAndCollections();
+  Services.prefs.setIntPref(VERSION_PREF, aVersion);
+
+  GlodaMsgIndexer._notabilityRepairInitiated = false;
+  GlodaMsgIndexer.disable();
+  GlodaMsgIndexer.enable();
+  await waitForGlodaIndexer();
+  Assert.ok(...assertExpectedMessagesIndexed([]));
+  await waitForGlodaDBFlush();
+  Assert.equal(
+    Services.prefs.getIntPref(VERSION_PREF),
+    GlodaDatastore._notabilityVersion,
+    "the repair records the rules it rescored by"
+  );
+}
+
 /**
  * A sender or recipient without an address book card adds no notability, and
  *  a database indexed while each of them counted as having one is rescored
  *  once.
  */
 add_task(async function test_fix_inflated_notability() {
-  const repairedPref = "mailnews.database.global.datastore.notabilityRepaired";
   // A database gloda creates has nothing to repair.
-  Assert.ok(Services.prefs.getBoolPref(repairedPref));
+  Assert.equal(
+    Services.prefs.getIntPref(VERSION_PREF),
+    GlodaDatastore._notabilityVersion
+  );
 
   // - Mail from someone without a card to four people, one with a card.
   const abPeeps = msgGen.makeNamesAndAddresses(1);
@@ -174,29 +221,37 @@ add_task(async function test_fix_inflated_notability() {
   Assert.ok(...assertExpectedMessagesIndexed([msgSet], { augment: true }));
   await waitForGlodaDBFlush();
 
-  const ids = msgSet.glodaMessages.map(message => message.id).join(", ");
-  const storedNotabilities = async () =>
-    (await sqlRun(`SELECT notability FROM messages WHERE id IN (${ids})`)).map(
-      row => row.getInt64(0)
-    );
   // Only the recipient with a card counts, as the first address book contact
   //  involved: 8 points.
-  Assert.deepEqual(await storedNotabilities(), [8, 8]);
+  Assert.deepEqual(await storedNotabilities(msgSet), [8, 8]);
 
-  // - Store what counting everyone gave -- 10 for the sender, 8 + 3 * 2 for
-  //    the recipients -- and forget the messages.
-  await sqlRun(`UPDATE messages SET notability = 24 WHERE id IN (${ids})`);
-  nukeGlodaCachesAndCollections();
-  Services.prefs.setBoolPref(repairedPref, false);
+  // -- Test: what counting everyone gave -- 10 for the sender, 8 + 3 * 2 for
+  //    the recipients -- is put right.
+  await repairFrom(msgSet, 24, 0);
+  Assert.deepEqual(await storedNotabilities(msgSet), [8, 8]);
+});
 
-  // -- Test
-  GlodaMsgIndexer._notabilityRepairInitiated = false;
-  GlodaMsgIndexer.disable();
-  GlodaMsgIndexer.enable();
+/**
+ * However many people from the address book a message involves, they add no
+ *  more than a star -- when it is indexed, and when a database scored without
+ *  that limit is rescored.
+ */
+add_task(async function test_addr_book_involvement_is_capped() {
+  const abPeeps = msgGen.makeNamesAndAddresses(6);
+  for (const peep of abPeeps) {
+    makeABCardForAddressPair(peep);
+  }
+  const [, msgSet] = await messageInjection.makeFoldersWithSets(1, [
+    { count: 1, from: msgGen.makeNameAndAddress(), to: abPeeps },
+  ]);
   await waitForGlodaIndexer();
-  Assert.ok(...assertExpectedMessagesIndexed([]));
+  Assert.ok(...assertExpectedMessagesIndexed([msgSet], { augment: true }));
   await waitForGlodaDBFlush();
 
-  Assert.deepEqual(await storedNotabilities(), [8, 8]);
-  Assert.ok(Services.prefs.getBoolPref(repairedPref));
+  // 8 for the first and 2 for each of the other five would be 18.
+  Assert.deepEqual(await storedNotabilities(msgSet), [16]);
+
+  // -- Test
+  await repairFrom(msgSet, 18, 1);
+  Assert.deepEqual(await storedNotabilities(msgSet), [16]);
 });
