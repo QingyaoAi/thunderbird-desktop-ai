@@ -140,6 +140,32 @@ add_task(async function test_scores_count_age() {
 });
 
 /**
+ * A term of several tokens -- a phrase, or CJK text of more than two
+ * characters, which the tokenizer takes a pair of characters at a time --
+ * gets a score like any other.
+ */
+add_task(async function test_multi_token_terms() {
+  const ustr = unique_string();
+  const ustr2 = unique_string();
+  const cjk = "精品课程";
+  const [, cjkSet, phraseSet] = await messageInjection.makeFoldersWithSets(1, [
+    { count: 1, subject: encodeSubject("关于" + cjk + "复审") },
+    { count: 1, subject: ustr + " " + ustr2 },
+  ]);
+  await waitForGlodaIndexer();
+  Assert.ok(...assertExpectedMessagesIndexed([cjkSet, phraseSet]));
+
+  for (const [query, set] of [
+    [cjk, cjkSet],
+    ['"' + ustr + " " + ustr2 + '"', phraseSet],
+  ]) {
+    const scoreOf = await searchScores(query);
+    Assert.ok(Number.isFinite(scoreOf(set)), `${query} scores a number`);
+  }
+
+});
+
+/**
  * Make sure that the query does not retrieve more than actually matches.
  */
 add_task(async function test_joins_do_not_return_everybody() {
@@ -192,6 +218,17 @@ async function searchScores(aFulltextStr) {
     Assert.greaterOrEqual(index, 0, "the message is in the results");
     return searcher.scores[index];
   };
+}
+
+/**
+ * MIME-encode a subject that is not ASCII, as a mail client would.
+ *
+ * @param {string} aText
+ * @returns {string}
+ */
+function encodeSubject(aText) {
+  const bytes = new TextEncoder().encode(aText);
+  return "=?UTF-8?B?" + btoa(String.fromCharCode(...bytes)) + "?=";
 }
 
 /**

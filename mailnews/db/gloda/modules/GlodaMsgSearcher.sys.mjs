@@ -161,7 +161,23 @@ var COLUMN_MULTIPLE_MATCH_LIMIT = [10, 0, 0, 0, 0];
 function scoreOffsets(aMessage, aContext) {
   let score = 0;
 
-  const termTemplate = aContext.terms.map(_ => 0);
+  // we need a friendlyParseInt because otherwise the radix stuff happens
+  //  because of the extra arguments map parses.  curse you, map!
+  const offsetNums = aContext.stashedColumns[aMessage.id][0]
+    .split(" ")
+    .map(x => parseInt(x));
+
+  // offsets() numbers the query's tokens, not its terms: a phrase is one
+  //  token per word, and a CJK term of three characters or more one per
+  //  pair of them.  Sized by the terms, the counts had no room for those
+  //  tokens, counted them as NaN, and so scored the whole message NaN.
+  //  Every token occurs in a message an AND search finds, so the highest
+  //  number here is the query's count of them.
+  let tokenCount = 0;
+  for (let i = 1; i < offsetNums.length; i += 4) {
+    tokenCount = Math.max(tokenCount, offsetNums[i] + 1);
+  }
+  const termTemplate = new Array(tokenCount).fill(0);
   // for each column, a list of the incidence of each term
   const columnTermIncidence = [
     termTemplate.concat(),
@@ -171,11 +187,6 @@ function scoreOffsets(aMessage, aContext) {
     termTemplate.concat(),
   ];
 
-  // we need a friendlyParseInt because otherwise the radix stuff happens
-  //  because of the extra arguments map parses.  curse you, map!
-  const offsetNums = aContext.stashedColumns[aMessage.id][0]
-    .split(" ")
-    .map(x => parseInt(x));
   for (let i = 0; i < offsetNums.length; i += 4) {
     const columnIndex = offsetNums[i];
     const termIndex = offsetNums[i + 1];
