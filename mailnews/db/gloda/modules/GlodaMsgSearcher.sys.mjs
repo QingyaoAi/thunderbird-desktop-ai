@@ -307,18 +307,18 @@ GlodaMsgSearcher.prototype = {
           continue;
         }
 
-        addTerm(aSearchString.substring(1, endIndex).trim());
+        addTerm(aSearchString.substring(1, endIndex).trim(), field);
         aSearchString = aSearchString.substring(endIndex + 1);
         continue;
       }
 
       const spaceIndex = aSearchString.indexOf(" ");
       if (spaceIndex == -1) {
-        addTerm(aSearchString);
+        addTerm(aSearchString, field);
         break;
       }
 
-      addTerm(aSearchString.substring(0, spaceIndex));
+      addTerm(aSearchString.substring(0, spaceIndex), field);
       aSearchString = aSearchString.substring(spaceIndex + 1);
     }
 
@@ -335,37 +335,47 @@ GlodaMsgSearcher.prototype = {
       stashColumns: [14],
     });
 
-    let fulltextQueryString = "";
+    // Our tokenizer treats anything at/above 0x2000 as CJK for now.
+    const isSingleCJK = text =>
+      text.length == 1 && text.charCodeAt(0) >= 0x2000;
+    const isSearchable = text =>
+      (text.length == 2 &&
+        text.charCodeAt(0) >= 0x2000 &&
+        text.charCodeAt(1) >= 0x2000) ||
+      text.length >= 3;
 
-    for (const [iTerm, term] of this.fulltextTerms.entries()) {
-      if (iTerm) {
-        fulltextQueryString += this.andTerms ? " " : " OR ";
+    const queryParts = [];
+    for (const { text, field } of this.fulltextTerms) {
+      if (field) {
+        // A "field:" prefix restricts the term to one FTS3 column.  FTS3
+        //  takes a column filter only on a bare word, not a quoted one, so
+        //  each word of the term goes in bare, with the characters quoting
+        //  would have kept from being read as query syntax dropped.
+        for (let word of text.split(/[\s"()]+/)) {
+          word = word.replace(/^-+/, "");
+          if (isSingleCJK(word)) {
+            queryParts.push(field + ":" + word + "*");
+          } else if (isSearchable(word)) {
+            queryParts.push(field + ":" + word);
+          }
+        }
+        continue;
       }
-
-      // A "field:" prefix restricts the term to one FTS3 column.
-      const text = term.text;
-      const fieldPrefix = term.field ? term.field + ":" : "";
 
       // Put our term in quotes.  This is needed for the tokenizer to be able
       //  to do useful things.  The exception is people clever enough to use
       //  NEAR.
       if (/^NEAR(\/\d+)?$/.test(text)) {
-        fulltextQueryString += text;
-      } else if (text.length == 1 && text.charCodeAt(0) >= 0x2000) {
+        queryParts.push(text);
+      } else if (isSingleCJK(text)) {
         // This is a single-character CJK search query, so add a wildcard.
-        // Our tokenizer treats anything at/above 0x2000 as CJK for now.
-        fulltextQueryString += fieldPrefix + text + "*";
-      } else if (
-        (text.length == 2 &&
-          text.charCodeAt(0) >= 0x2000 &&
-          text.charCodeAt(1) >= 0x2000) ||
-        text.length >= 3
-      ) {
-        fulltextQueryString += fieldPrefix + '"' + text + '"';
+        queryParts.push(text + "*");
+      } else if (isSearchable(text)) {
+        queryParts.push('"' + text + '"');
       }
     }
 
-    query.fulltextMatches(fulltextQueryString);
+    query.fulltextMatches(queryParts.join(this.andTerms ? " " : " OR "));
     query.limit(this.retrievalLimit);
 
     return query;

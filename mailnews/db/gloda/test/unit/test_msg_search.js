@@ -140,9 +140,31 @@ add_task(async function test_scores_count_age() {
 });
 
 /**
+ * A "field:" prefix limits its term to that field, quoted or not, where an
+ * unprefixed term matches anywhere.
+ */
+add_task(async function test_field_prefixes() {
+  const ustr = unique_string();
+  const [, subjSet, bodySet, fromSet] =
+    await messageInjection.makeFoldersWithSets(1, [
+      { count: 1, subject: ustr },
+      { count: 1, body: { body: ustr } },
+      { count: 1, from: [ustr + " Person", ustr + "@example.com"] },
+    ]);
+  await waitForGlodaIndexer();
+  Assert.ok(...assertExpectedMessagesIndexed([subjSet, bodySet, fromSet]));
+
+  await asyncMsgSearcherExpect("subject:" + ustr, subjSet, 3);
+  await asyncMsgSearcherExpect('subject:"' + ustr + '"', subjSet, 3);
+  await asyncMsgSearcherExpect("body:" + ustr, bodySet, 3);
+  await asyncMsgSearcherExpect("from:" + ustr, fromSet, 3);
+  await asyncMsgSearcherExpect(ustr, subjSet.union(bodySet).union(fromSet), 3);
+});
+
+/**
  * A term of several tokens -- a phrase, or CJK text of more than two
  * characters, which the tokenizer takes a pair of characters at a time --
- * gets a score like any other.
+ * gets a score like any other, and a field prefix restricts CJK text too.
  */
 add_task(async function test_multi_token_terms() {
   const ustr = unique_string();
@@ -163,6 +185,8 @@ add_task(async function test_multi_token_terms() {
     Assert.ok(Number.isFinite(scoreOf(set)), `${query} scores a number`);
   }
 
+  await asyncMsgSearcherExpect("subject:" + cjk, cjkSet, 2);
+  await asyncMsgSearcherExpect("body:" + cjk, [], 2);
 });
 
 /**
