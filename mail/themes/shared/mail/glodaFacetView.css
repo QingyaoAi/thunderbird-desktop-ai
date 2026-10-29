@@ -9,13 +9,17 @@
 
 html,
 body {
+  block-size: 100%;
   margin: 0;
   padding: 0;
 }
 
+/* The page itself never scrolls: the facets and the results each scroll on
+ * their own, and the preview scrolls inside its browser. When the whole page
+ * scrolled, scrolling the results carried the facets and the preview off
+ * with them. */
 body {
-  block-size: 100%;
-  overflow-y: auto;
+  overflow: hidden;
 }
 
 #body {
@@ -35,6 +39,7 @@ body {
 
 #gloda-facet-view {
   display: flex;
+  block-size: 100%;
   background-color: var(--layout-background-0);
   color: var(--layout-color-0);
   align-items: stretch;
@@ -47,6 +52,7 @@ body {
   padding-inline-start: 1em;
   background-color: var(--layout-background-1);
   color: var(--layout-color-1);
+  overflow-y: auto;
 }
 
 #main-column {
@@ -56,7 +62,7 @@ body {
   flex: 0 1 62em;
   min-inline-size: 0;
   padding-inline-start: 1em;
-  min-block-size: 100vh;
+  overflow-y: auto;
 }
 
 #header {

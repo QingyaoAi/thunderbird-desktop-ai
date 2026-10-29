@@ -1372,6 +1372,12 @@
         } else {
           this.style.left = x + "px";
         }
+        // The page doesn't scroll, so a menu hanging off the bottom of the
+        // window could never be reached; lift it to fit.
+        y = Math.min(
+          y,
+          window.innerHeight - this.getBoundingClientRect().height
+        );
         this.style.top = y + "px";
 
         if (variety == "remainder") {
