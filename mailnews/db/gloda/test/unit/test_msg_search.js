@@ -31,7 +31,7 @@ var {
 var { queryExpect } = ChromeUtils.importESModule(
   "resource://testing-common/gloda/GlodaQueryHelper.sys.mjs"
 );
-var { GlodaMsgSearcher } = ChromeUtils.importESModule(
+var { GlodaMsgSearcher, splitSearchTerm } = ChromeUtils.importESModule(
   "resource:///modules/gloda/GlodaMsgSearcher.sys.mjs"
 );
 var { waitForGlodaDBFlush } = ChromeUtils.importESModule(
@@ -187,6 +187,97 @@ add_task(async function test_multi_token_terms() {
 
   await asyncMsgSearcherExpect("subject:" + cjk, cjkSet, 2);
   await asyncMsgSearcherExpect("body:" + cjk, [], 2);
+});
+
+/**
+ * Unquoted CJK text is split into the words it is searched for by, and the
+ * words need not be together: "意大利签证" finds a subject saying
+ * "意大利使领馆正在审核签证申请", whether a function word or an ideographic
+ * space comes between them, or a field is named.  Quoted, it is a phrase
+ * again.  A name the dictionary does not know stays whole, so "韩怡" does not
+ * find 韩 and 怡 apart.
+ */
+add_task(async function test_cjk_words() {
+  const [, apartSet, nameSet, nameApartSet] =
+    await messageInjection.makeFoldersWithSets(1, [
+      { count: 1, subject: encodeSubject("意大利使领馆正在审核签证申请") },
+      { count: 1, subject: encodeSubject("韩怡的报告") },
+      { count: 1, subject: encodeSubject("韩国代表团参观怡和大厦") },
+    ]);
+  await waitForGlodaIndexer();
+  Assert.ok(
+    ...assertExpectedMessagesIndexed([apartSet, nameSet, nameApartSet])
+  );
+
+  await asyncMsgSearcherExpect("意大利签证", apartSet, 3);
+  await asyncMsgSearcherExpect("意大利的签证", apartSet, 3);
+  await asyncMsgSearcherExpect("意大利\u3000签证", apartSet, 3);
+  await asyncMsgSearcherExpect("subject:意大利签证", apartSet, 3);
+  await asyncMsgSearcherExpect('"意大利签证"', [], 3);
+  await asyncMsgSearcherExpect("韩怡", nameSet, 3);
+});
+
+/**
+ * A single CJK character is searched for wherever it comes in the query, not
+ * only last.
+ */
+add_task(async function test_cjk_single_character() {
+  const ustr = unique_string();
+  const [, wangSet, otherSet] = await messageInjection.makeFoldersWithSets(1, [
+    { count: 1, subject: encodeSubject("王老师 " + ustr) },
+    { count: 1, subject: ustr },
+  ]);
+  await waitForGlodaIndexer();
+  Assert.ok(...assertExpectedMessagesIndexed([wangSet, otherSet]));
+
+  await asyncMsgSearcherExpect("王 " + ustr, wangSet, 2);
+});
+
+/**
+ * Of CJK text searched for by its words, a message that has it as typed
+ * scores above one that has the words apart, though a good deal older.
+ */
+add_task(async function test_cjk_phrase_scores_higher() {
+  const [, togetherSet, apartSet] = await messageInjection.makeFoldersWithSets(
+    1,
+    [
+      { count: 1, subject: encodeSubject("研究生招生简章"), age: { weeks: 8 } },
+      {
+        count: 1,
+        subject: encodeSubject("研究生院本科招生"),
+        age: { days: 1 },
+      },
+    ]
+  );
+  await waitForGlodaIndexer();
+  Assert.ok(...assertExpectedMessagesIndexed([togetherSet, apartSet]));
+
+  const scoreOf = await searchScores("研究生招生");
+  Assert.greater(scoreOf(togetherSet), scoreOf(apartSet));
+});
+
+/**
+ * How a term is split into the words it is searched for by.
+ */
+add_task(function test_split_search_term() {
+  for (const [term, words] of [
+    ["意大利签证", ["意大利", "签证"]],
+    ["意大利的签证", ["意大利", "签证"]],
+    ["我的签证", ["签证"]],
+    ["韩怡", ["韩怡"]],
+    ["李飞飞", ["李飞飞"]],
+    ["大使馆", ["大使馆"]],
+    ["签证王晓鹏", ["签证", "王晓鹏"]],
+    ["王晓鹏的邮件", ["王晓鹏", "邮件"]],
+    ["王有才", ["王有才"]],
+    ["护照寄回来了吗", ["护照", "寄回"]],
+    ["签证ITA", ["签证", "ITA"]],
+    ["“签证”", ["签证"]],
+    ["的", ["的"]],
+    ["foo.bar", ["foo.bar"]],
+  ]) {
+    Assert.deepEqual(splitSearchTerm(term), words, term);
+  }
 });
 
 /**

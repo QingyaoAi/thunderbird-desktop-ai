@@ -397,6 +397,34 @@ add_task(async function test_filter_text_multi_word() {
 });
 
 /**
+ * CJK text is matched by its words, as gloda's search matches it: "意大利签证"
+ * finds a subject with 意大利 and 签证 apart, and so does "意大利的签证".
+ */
+add_task(async function test_filter_text_cjk_words() {
+  const folder = await create_folder("QuickFilterBarTextCJKWords");
+  const subject = new TextEncoder().encode("意大利使领馆正在审核签证申请");
+  const [, setApart] = await make_message_sets_in_folders(
+    [folder],
+    [
+      { count: 1 },
+      {
+        count: 1,
+        subject: "=?UTF-8?B?" + btoa(String.fromCharCode(...subject)) + "?=",
+      },
+    ]
+  );
+  await be_in_folder(folder);
+
+  await set_filter_text("意大利签证");
+  assert_messages_in_view(setApart);
+  await set_filter_text("意大利的签证");
+  assert_messages_in_view(setApart);
+  await set_filter_text('"意大利签证"');
+  assert_messages_in_view([]);
+  teardownTest();
+});
+
+/**
  * Verify that the quickfilter bar has OR functionality using
  * | (Pipe character) - Bug 586131
  */

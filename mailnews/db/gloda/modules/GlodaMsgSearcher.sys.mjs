@@ -37,6 +37,167 @@ var FIELD_ALIASES = {
   recipients: "recipients",
 };
 
+/**
+ * A run of text in the scripts written without spaces between words: han,
+ *  hiragana and katakana.  Hangul is left out, as Korean puts spaces between
+ *  its words.  The group makes split() keep the runs it splits at.
+ */
+var CJK_RUN =
+  /([\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\u30fc]+)/u;
+
+/**
+ * Function words a search for CJK text is better off without.  Searching for
+ *  "意大利的签证" must not demand the 的, nor "去意大利" the 去.  Only where
+ *  the segmenter took them for words of their own, and a character only as
+ *  below.
+ *
+ * Particles go wherever they are.
+ */
+var CJK_PARTICLES = new Set("的地得了着吗呢吧啊呀么のはをにがでとへやかも");
+/**
+ * These characters go only where all the single characters around them are
+ *  function words too ("护照寄回来了吗"): many of them are found in people's
+ *  names as well ("王有才"), and the characters of a name the segmenter does
+ *  not know come out single.
+ */
+var CJK_STOP_CHARS = new Set(
+  "过和与及或跟同并在于是把被将给对从向往到由为以之其而且也都就才又还但这那此该" +
+    "我你您他她它们个些去来有没请能"
+);
+var CJK_STOP_WORDS = new Set([
+  "我的",
+  "你的",
+  "您的",
+  "他的",
+  "她的",
+  "它的",
+  "我们",
+  "你们",
+  "他们",
+  "她们",
+  "关于",
+  "有关",
+  "以及",
+  "还有",
+  "一个",
+  "这个",
+  "那个",
+  "什么",
+  "什么时候",
+  "为什么",
+  "哪个",
+  "哪些",
+  "哪里",
+  "怎么",
+  "怎样",
+  "怎么样",
+  "如何",
+  "是否",
+  "是不是",
+  "有没有",
+  "一下",
+]);
+
+var wordSegmenter = new Intl.Segmenter("zh", { granularity: "word" });
+
+/**
+ * Split a run of CJK text into the words a search for it should require.
+ *
+ * Without this, a run went to FTS3 whole, as one phrase, and matched only
+ *  text that had all of it in that order with nothing between: "意大利签证"
+ *  missed a mail saying "意大利使领馆正在审核签证申请".  The segmenter's
+ *  dictionary splits the run into words, which are then required one by
+ *  one.  It splits what it does not know -- most people's names -- into
+ *  single characters, though, and the index cannot find a single character
+ *  well: it holds CJK text as overlapping pairs, so a character can only be
+ *  looked for as the start of a pair, and one that ends its run of text is
+ *  not found at all.  So the single characters are put back together: two
+ *  or more in a row ("韩", "怡") make one word, and one on its own joins the
+ *  word before it ("大使", "馆"), or after it when it comes first ("王",
+ *  "小明").
+ *
+ * @param {string} aRun - CJK characters only.
+ * @returns {string[]} Its words, each a substring of the run; the run itself
+ *   if it is nothing but function words.
+ */
+function splitCJKRun(aRun) {
+  const segments = Array.from(wordSegmenter.segment(aRun), s => s.segment);
+
+  // Runs of words with the function words taken out, each word a list of
+  //  segments: one for a word the segmenter knew, the characters for one it
+  //  did not.
+  const runs = [[]];
+  let chars = [];
+  const endChars = () => {
+    if (chars.some(char => !CJK_STOP_CHARS.has(char))) {
+      runs.at(-1).push(chars);
+    } else if (chars.length) {
+      runs.push([]);
+    }
+    chars = [];
+  };
+  for (const segment of segments) {
+    if (CJK_PARTICLES.has(segment)) {
+      endChars();
+      runs.push([]);
+    } else if (segment.length == 1) {
+      chars.push(segment);
+    } else {
+      endChars();
+      if (CJK_STOP_WORDS.has(segment)) {
+        runs.push([]);
+      } else {
+        runs.at(-1).push([segment]);
+      }
+    }
+  }
+  endChars();
+
+  const words = [];
+  for (const run of runs) {
+    for (let i = 0; i < run.length; i++) {
+      if (run[i].length == 1 && run[i][0].length == 1 && run.length > 1) {
+        if (i > 0) {
+          run[i - 1].push(run[i][0]);
+        } else {
+          run[i + 1].unshift(run[i][0]);
+        }
+        run.splice(i--, 1);
+      }
+    }
+    words.push(...run.map(word => word.join("")));
+  }
+  return words.length ? words : [aRun];
+}
+
+/**
+ * Split a search term into the words a search for it should require: the CJK
+ *  text in it into its words (see splitCJKRun), and away from the text in
+ *  other scripts beside it, which loses the punctuation around it.  A term
+ *  with no CJK text is returned as it is.
+ *
+ * @param {string} aTerm - A term with no whitespace in it.
+ * @returns {string[]}
+ */
+export function splitSearchTerm(aTerm) {
+  const parts = aTerm.split(CJK_RUN);
+  if (parts.length == 1) {
+    return [aTerm];
+  }
+  const words = [];
+  for (const [i, part] of parts.entries()) {
+    if (i % 2) {
+      words.push(...splitCJKRun(part));
+    } else {
+      const trimmed = part.replace(/^[\p{P}\p{S}]+|[\p{P}\p{S}]+$/gu, "");
+      if (trimmed) {
+        words.push(trimmed);
+      }
+    }
+  }
+  return words;
+}
+
 var DASCORE =
   "(((" +
   RANK_USAGE +
@@ -233,6 +394,38 @@ function scoreDate(aMessage) {
 }
 
 /**
+ * What a message earns for each CJK phrase the search split into words (see
+ *  splitCJKRun) that it has as typed, the words together and in order.  The
+ *  words found apart are a weaker match -- before the split they were no
+ *  match at all -- and this keeps them below the text that was asked for
+ *  unless they are a good deal newer.  It is what a subject with every word
+ *  in it earns.
+ */
+var PHRASE_MATCH_SCORE = 20;
+
+/**
+ * Score the message on the split CJK phrases (aContext.phrases) it has as
+ *  typed.  Author and recipients are not loaded with a search's results, and
+ *  are left out.
+ *
+ * @param {GlodaMessage} aMessage
+ * @param {object} aContext
+ */
+function scorePhrases(aMessage, aContext) {
+  let score = 0;
+  for (const phrase of aContext.phrases) {
+    if (
+      aMessage.subject?.includes(phrase) ||
+      aMessage.indexedBodyText?.includes(phrase) ||
+      aMessage.attachmentNames?.some(name => name.includes(phrase))
+    ) {
+      score += PHRASE_MATCH_SCORE;
+    }
+  }
+  return score;
+}
+
+/**
  * The searcher basically looks like a query, but is specialized for fulltext
  *  search against messages.  Most of the explicit specialization involves
  *  crafting a SQL query that attempts to order the matches by likelihood that
@@ -267,12 +460,16 @@ GlodaMsgSearcher.prototype = {
 
   /**
    * Parse the string into terms/phrases by finding matching double-quotes.
-   * Each returned term is `{ text, field }`, where `field` is the
+   * Each returned term is `{ text, field, phrase }`, where `field` is the
    * messagesText column (see FIELD_ALIASES) that a "field:" prefix
-   * restricted the term to, or null for a normal unscoped term.
+   * restricted the term to, or null for a normal unscoped term, and `phrase`
+   * says the term was quoted.
    */
   parseSearchString(aSearchString) {
-    aSearchString = aSearchString.trim();
+    // Any space separates terms, including the ideographic one a Chinese or
+    //  Japanese input method types, which the tokenizer does not take for a
+    //  space at all.
+    aSearchString = aSearchString.replace(/\s/g, " ").trim();
     const terms = [];
 
     /*
@@ -280,9 +477,9 @@ GlodaMsgSearcher.prototype = {
      *
      * In the future this might have other helper logic; it did once before.
      */
-    function addTerm(aTerm, aField) {
+    function addTerm(aTerm, aField, aPhrase = false) {
       if (aTerm) {
-        terms.push({ text: aTerm, field: aField || null });
+        terms.push({ text: aTerm, field: aField || null, phrase: aPhrase });
       }
     }
 
@@ -307,7 +504,7 @@ GlodaMsgSearcher.prototype = {
           continue;
         }
 
-        addTerm(aSearchString.substring(1, endIndex).trim(), field);
+        addTerm(aSearchString.substring(1, endIndex).trim(), field, true);
         aSearchString = aSearchString.substring(endIndex + 1);
         continue;
       }
@@ -335,6 +532,18 @@ GlodaMsgSearcher.prototype = {
       stashColumns: [14],
     });
 
+    query.fulltextMatches(this.buildFulltextQueryString());
+    query.limit(this.retrievalLimit);
+
+    return query;
+  },
+
+  /**
+   * The FTS3 MATCH expression for our terms.
+   *
+   * @returns {string}
+   */
+  buildFulltextQueryString() {
     // Our tokenizer treats anything at/above 0x2000 as CJK for now.
     const isSingleCJK = text =>
       text.length == 1 && text.charCodeAt(0) >= 0x2000;
@@ -345,7 +554,9 @@ GlodaMsgSearcher.prototype = {
       text.length >= 3;
 
     const queryParts = [];
-    for (const { text, field } of this.fulltextTerms) {
+    // [field, character] for each single CJK character a field restricts.
+    const fieldPrefixes = [];
+    for (const { text, field, phrase } of this.fulltextTerms) {
       if (field) {
         // A "field:" prefix restricts the term to one FTS3 column.  FTS3
         //  takes a column filter only on a bare word, not a quoted one, so
@@ -353,10 +564,21 @@ GlodaMsgSearcher.prototype = {
         //  would have kept from being read as query syntax dropped.
         for (let word of text.split(/[\s"()]+/)) {
           word = word.replace(/^-+/, "");
-          if (isSingleCJK(word)) {
-            queryParts.push(field + ":" + word + "*");
-          } else if (isSearchable(word)) {
-            queryParts.push(field + ":" + word);
+          for (const piece of splitSearchTerm(word)) {
+            const chars = Array.from(piece);
+            if (isSingleCJK(piece)) {
+              fieldPrefixes.push([field, piece]);
+            } else if (chars.length > 1 && chars.every(c => c >= "\u2000")) {
+              // FTS3 takes only the first token of a bare word, and the
+              //  tokenizer makes one of each pair of these characters; the
+              //  rest went unrestricted, or unsearched.  So each pair goes
+              //  in as a word of its own.
+              for (let i = 1; i < chars.length; i++) {
+                queryParts.push(field + ":" + chars[i - 1] + chars[i]);
+              }
+            } else if (isSearchable(piece)) {
+              queryParts.push(field + ":" + piece);
+            }
           }
         }
         continue;
@@ -367,18 +589,58 @@ GlodaMsgSearcher.prototype = {
       //  NEAR.
       if (/^NEAR(\/\d+)?$/.test(text)) {
         queryParts.push(text);
-      } else if (isSingleCJK(text)) {
-        // This is a single-character CJK search query, so add a wildcard.
-        queryParts.push(text + "*");
-      } else if (isSearchable(text)) {
-        queryParts.push('"' + text + '"');
+        continue;
+      }
+      // A quoted term is a phrase, wanted as it is; any other is split into
+      //  the words it should match by.
+      for (const word of phrase ? [text] : splitSearchTerm(text)) {
+        if (isSingleCJK(word)) {
+          // This is a single-character CJK search query, so add a wildcard.
+          //  Inside the quotes, as the tokenizer only lets a wildcard follow
+          //  a single character at the very end of the text FTS3 gives it:
+          //  bare, the character was dropped unless it came last.
+          queryParts.push('"' + word + '*"');
+        } else if (isSearchable(word)) {
+          queryParts.push('"' + word + '"');
+        }
       }
     }
 
-    query.fulltextMatches(queryParts.join(this.andTerms ? " " : " OR "));
-    query.limit(this.retrievalLimit);
+    // A field restricts a character only bare, and so only last (see above);
+    //  any others are searched for in every field.
+    const lastPrefix = fieldPrefixes.pop();
+    for (const [, char] of fieldPrefixes) {
+      queryParts.push('"' + char + '*"');
+    }
+    if (lastPrefix) {
+      queryParts.push(lastPrefix[0] + ":" + lastPrefix[1] + "*");
+    }
 
-    return query;
+    return queryParts.join(this.andTerms ? " " : " OR ");
+  },
+
+  /**
+   * The runs of CJK text in our unquoted terms that are searched for as more
+   *  than one word (see scorePhrases).
+   *
+   * @type {string[]}
+   */
+  get splitPhrases() {
+    if (!this._splitPhrases) {
+      this._splitPhrases = [];
+      for (const { text, field, phrase } of this.fulltextTerms) {
+        if (field || phrase) {
+          continue;
+        }
+        const runs = text.split(CJK_RUN).filter((part, i) => i % 2);
+        for (const run of runs) {
+          if (splitCJKRun(run).length > 1) {
+            this._splitPhrases.push(run);
+          }
+        }
+      }
+    }
+    return this._splitPhrases;
   },
 
   getCollection(aListenerOverride, aData) {
@@ -401,8 +663,9 @@ GlodaMsgSearcher.prototype = {
       {
         terms: this.fulltextTerms,
         stashedColumns: aCollection.stashedColumns,
+        phrases: this.splitPhrases,
       },
-      [scoreOffsets, scoreDate]
+      [scoreOffsets, scoreDate, scorePhrases]
     );
     if (this.scores) {
       this.scores = this.scores.concat(newScores);

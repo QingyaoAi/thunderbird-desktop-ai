@@ -12,6 +12,7 @@ const lazy = {};
 ChromeUtils.defineESModuleGetters(lazy, {
   GlodaIndexer: "resource:///modules/gloda/GlodaIndexer.sys.mjs",
   GlodaMsgSearcher: "resource:///modules/gloda/GlodaMsgSearcher.sys.mjs",
+  splitSearchTerm: "resource:///modules/gloda/GlodaMsgSearcher.sys.mjs",
   TagUtils: "resource:///modules/TagUtils.sys.mjs",
   XULStoreUtils: "resource:///modules/XULStoreUtils.sys.mjs",
 });
@@ -1061,7 +1062,8 @@ export var MessageTextFilter = {
    * @returns {string[]} A list of terms.
    */
   _parseSearchString(aSearchString) {
-    aSearchString = aSearchString.trim();
+    // Any space separates terms, the ideographic one included.
+    aSearchString = aSearchString.replace(/\s/g, " ").trim();
     const terms = [];
 
     /*
@@ -1093,8 +1095,17 @@ export var MessageTextFilter = {
         continue;
       }
 
-      const searchTerms = aSearchString.split(" ");
-      searchTerms.forEach(searchTerm => addTerm(searchTerm));
+      // Split CJK text into the words it should match by, as gloda does:
+      //  whole, "意大利签证" matched only a subject with those characters
+      //  together.  Not a term with | in it, whose alternatives would each
+      //  need its words grouped.
+      for (const searchTerm of aSearchString.split(" ")) {
+        if (searchTerm.includes("|")) {
+          addTerm(searchTerm);
+        } else {
+          lazy.splitSearchTerm(searchTerm).forEach(addTerm);
+        }
+      }
       break;
     }
 
