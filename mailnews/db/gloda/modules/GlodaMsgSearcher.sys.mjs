@@ -5,6 +5,7 @@
 import { Gloda } from "resource:///modules/gloda/GlodaPublic.sys.mjs";
 
 import { GlodaConstants } from "resource:///modules/gloda/GlodaConstants.sys.mjs";
+import { GlodaDatastore } from "resource:///modules/gloda/GlodaDatastore.sys.mjs";
 
 /**
  * How much time boost should a 'score point' amount to?  The authoritative,
@@ -14,7 +15,24 @@ import { GlodaConstants } from "resource:///modules/gloda/GlodaConstants.sys.mjs
  */
 var FUZZSCORE_TIMESTAMP_FACTOR = 1000 * 1000 * 60 * 60 * 24 * 7;
 
-var RANK_USAGE = "glodaRank(matchinfo(messagesText), 1.0, 2.0, 2.0, 1.5, 1.5)";
+/**
+ * The weight of each messagesText column -- body, subject, attachment names,
+ *  author, recipients -- both in the ranking that picks which matches are
+ *  retrieved (glodaRank, in DASCORE) and in the one that orders them
+ *  (scoreBM25F).
+ *
+ * These, and BM25F's parameters below, are what found a sought message best
+ *  in 400 simulated searches of a real mailbox of a hundred thousand
+ *  messages (October 2026): two words of a message's subject, three of its
+ *  body, or its sender's name, ranked among everything the search found.
+ *  The weights gloda had, 2 for a subject and 1.5 for a person, let a body
+ *  that repeats a word outrank a subject that has it.  Around these values
+ *  the results hardly change.
+ */
+var COLUMN_WEIGHTS = [1, 20, 20, 5, 5];
+
+var RANK_USAGE =
+  "glodaRank(matchinfo(messagesText), " + COLUMN_WEIGHTS.join(", ") + ")";
 
 /**
  * User-facing field prefixes for multi-field search (e.g. "subject:budget",
@@ -227,9 +245,9 @@ var DASCORE =
  * - Based on the match we retrieve the date and notability for that row from
  *    'messages' using this in conjunction with matchinfo() to provide a score
  *    that we can then use to LIMIT our results.
- * 2) We reissue the MATCH query so that we will be able to use offsets(), but
- *    we intersect the results of this MATCH against our LIMITed results from
- *    step 1.
+ * 2) We reissue the MATCH query so that we will be able to use matchinfo() and
+ *    the lengths of the columns, but we intersect the results of this MATCH
+ *    against our LIMITed results from step 1.
  * - We use 'docid IN (phase 1 query)' to accomplish this because it results in
  *    efficient lookup.  If we just use a join, we get O(mn) performance because
  *    a cartesian join ends up being performed where either we end up performing
@@ -242,16 +260,30 @@ var DASCORE =
  *    probably preferable than the old way because that would have caused lots
  *    of swapping.
  * - This part of the query otherwise resembles the basic gloda query but with
- *    the inclusion of the offsets() invocation.  The messages table lookup
+ *    the inclusion of what scoreBM25F needs.  The messages table lookup
  *    should not involve any disk traffic because the pages should still be
  *    cached (SQLite or OS) from phase 1.  The messagesText lookup is new, and
  *    this is the major disk-seek reduction optimization we are making.  (Since
  *    we avoid this lookup for all of the documents that were excluded by the
- *    LIMIT.)  Since offsets() also needs to retrieve the row from messagesText
+ *    LIMIT.)  Since the column lengths also need the row from messagesText
  *    there is a nice synergy there.
+ * - matchinfo() is a blob, which the row reader does not take, so it comes
+ *    hex-encoded.  Each row has its own counts ('pcy'); the counts over all
+ *    messages ('x'), the same for every row, come once, from a subquery
+ *    SQLite runs once: asked for row by row they made a search slower by
+ *    half.  (offsets() went: nothing reads it any more, and it ran the
+ *    tokenizer over the whole of each message again.)
  */
 var NUEVO_FULLTEXT_SQL =
-  "SELECT messages.*, messagesText.*, offsets(messagesText) AS osets " +
+  "SELECT messages.*, messagesText.*," +
+  " hex(matchinfo(messagesText, 'pcy')) AS minfo," +
+  " (SELECT hex(matchinfo(messagesText, 'x')) FROM messagesText" +
+  " WHERE messagesText MATCH ?1 LIMIT 1) AS ginfo," +
+  " printf('%d %d %d %d %d', octet_length(messagesText.body)," +
+  " octet_length(messagesText.subject)," +
+  " octet_length(messagesText.attachmentNames)," +
+  " octet_length(messagesText.author)," +
+  " octet_length(messagesText.recipients)) AS lengths " +
   "FROM messagesText, messages " +
   "WHERE" +
   " messagesText MATCH ?1 " +
@@ -269,113 +301,170 @@ var NUEVO_FULLTEXT_SQL =
   " AND +messages.folderID IS NOT NULL" +
   " AND +messages.messageKey IS NOT NULL";
 
-function identityFunc(x) {
-  return x;
+/**
+ * BM25F's parameters: k1, how soon more occurrences of a term stop adding to
+ *  a message's score, and b, how far a column's length against the average
+ *  discounts them.  Chosen as COLUMN_WEIGHTS were; Anserini's defaults (0.9
+ *  and 0.4) found the sought message less often.  A k1 this high suits the
+ *  weights, which make one word in a subject twenty occurrences.
+ */
+var BM25F_K1 = 3;
+var BM25F_B = 0.85;
+
+/**
+ * The points a message's text earns for a full BM25F score; it earns a share
+ *  of them (see scoreBM25F).  This sets what the text is worth against a
+ *  message's notability and its age, a point a week.  Chosen as
+ *  COLUMN_WEIGHTS were, scoring a sought message's rank both as it is and
+ *  weighted to recent messages, as people mostly look for those: the more
+ *  of the two counts, the less the date (the scores this replaced, and the
+ *  80 first given here to match them, found the sought message less often).
+ *  Where texts score alike, as for a word everything has, the date still
+ *  decides.
+ */
+var BM25F_SCALE = 320;
+
+/**
+ * The pref the index's statistics are kept in between sessions (see
+ *  loadCollectionStats).
+ */
+var STATS_PREF = "mailnews.database.global.search.bm25fStats";
+
+/**
+ * What stands in for the index's statistics until they are counted, as on a
+ *  profile's first search: about those of a hundred thousand messages.
+ */
+var DEFAULT_STATS = { docs: 100000, avgLengths: [2800, 55, 6, 52, 127] };
+
+/**
+ * The index's statistics, as counted this session or the last: `docs`, the
+ *  number of messages, and `avgLengths`, the mean length of each column.
+ *
+ * @type {?{docs: number, avgLengths: number[]}}
+ */
+var collectionStats = null;
+try {
+  const stored = JSON.parse(Services.prefs.getStringPref(STATS_PREF, "null"));
+  if (stored?.docs > 0 && stored.avgLengths?.length == COLUMN_WEIGHTS.length) {
+    collectionStats = stored;
+  }
+} catch (ex) {
+  // Not stored, or not as we store it: counted again soon enough.
+}
+var collectionStatsPromise = null;
+
+/**
+ * Count the statistics of the index BM25F needs and FTS3 does not keep
+ *  (FTS4's matchinfo() has them): how many messages there are, and the mean
+ *  length of each column, in UTF-8 bytes -- tokens would mean running the
+ *  tokenizer over everything.  It reads every row of the fulltext table, a
+ *  second with a cold cache for a hundred thousand messages, so it runs once
+ *  a session, after a search, and the result is kept for the first searches
+ *  of the next.  It reads FTS3's own table of the text, where octet_length()
+ *  takes a length from the row without reading the text itself.
+ *
+ * @returns {Promise<?object>} The statistics, as collectionStats has them.
+ */
+export function loadCollectionStats() {
+  if (!collectionStatsPromise) {
+    collectionStatsPromise = new Promise(resolve => {
+      let stats = null;
+      const statement = GlodaDatastore._createAsyncStatement(
+        "SELECT count(*), avg(octet_length(c0body))," +
+          " avg(octet_length(c1subject))," +
+          " avg(octet_length(c2attachmentNames))," +
+          " avg(octet_length(c3author))," +
+          " avg(octet_length(c4recipients)) " +
+          "FROM messagesText_content",
+        true
+      );
+      statement.executeAsync({
+        handleResult(aResultSet) {
+          const row = aResultSet.getNextRow();
+          stats = {
+            docs: row.getInt64(0),
+            avgLengths: [1, 2, 3, 4, 5].map(i => row.getDouble(i)),
+          };
+        },
+        handleError(aError) {
+          console.error("Could not count the search index:", aError.message);
+        },
+        handleCompletion() {
+          GlodaDatastore._asyncCompleted();
+          if (stats?.docs > 0) {
+            collectionStats = stats;
+            Services.prefs.setStringPref(STATS_PREF, JSON.stringify(stats));
+          }
+          resolve(collectionStats);
+        },
+      });
+      statement.finalize();
+      GlodaDatastore._pendingAsyncStatements++;
+    });
+  }
+  return collectionStatsPromise;
 }
 
-function oneLessMaxZero(x) {
-  if (x <= 1) {
+/**
+ * Score the message's text by BM25F (Robertson, Zaragoza and Taylor, "Simple
+ *  BM25 extension to multiple weighted fields", 2004): a term's occurrences
+ *  in each column are weighted by the column and discounted by the column's
+ *  length against its average, and only their sum is saturated, once for
+ *  the term.
+ *
+ * The terms are the query's phrases -- a quoted term, a word of CJK text --
+ *  and the counts are matchinfo()'s, for each phrase and column: how often
+ *  it occurs in this message ('pcy'), and in how many messages ('x', its
+ *  third number of three).  That is the IDF's document frequency; FTS3
+ *  counts it only column by column, and the largest of those stands in for
+ *  the count over the whole message.  The column lengths are in UTF-8
+ *  bytes, as the averages are.
+ *
+ * The sum is divided by the most the query could score -- every phrase,
+ *  endlessly often -- so that what the text counts for against notability
+ *  and age does not depend on how rare the query's words are; then scaled by
+ *  BM25F_SCALE.  (So BM25's k1 + 1 factor, the same above and below, is left
+ *  out.)
+ *
+ * @param {GlodaMessage} aMessage
+ * @param {object} aContext - The search's stashedColumns, and the index
+ *   statistics it scores with as `stats`.
+ * @returns {number}
+ */
+function scoreBM25F(aMessage, aContext) {
+  const [matchinfo, globalMatchinfo, lengths] =
+    aContext.stashedColumns[aMessage.id];
+  if (!matchinfo || !globalMatchinfo) {
     return 0;
   }
-  return x - 1;
-}
+  const decode = hex => new Uint32Array(Uint8Array.fromHex(hex).buffer);
+  const info = decode(matchinfo);
+  const globalInfo = decode(globalMatchinfo);
+  const [phraseCount, columnCount] = info;
+  const columnLengths = lengths.split(" ").map(Number);
+  const { docs, avgLengths } = aContext.stats;
 
-function reduceSum(accum, curValue) {
-  return accum + curValue;
-}
-
-/*
- * Columns are: body, subject, attachment names, author, recipients
- */
-
-/**
- * Scores if all search terms match in a column.  We bias against author
- *  slightly and recipient a bit more in this case because a search that
- *  entirely matches just on a person should give a mention of that person
- *  in the subject or attachment a fighting chance.
- * Keep in mind that because of our indexing in the face of address book
- *  contacts (namely, we index the name used in the e-mail as well as the
- *  display name on the address book card associated with the e-mail address)
- *  a contact is going to bias towards matching multiple times.
- */
-var COLUMN_ALL_MATCH_SCORES = [4, 20, 20, 16, 12];
-/**
- * Score for each distinct term that matches in the column.  This is capped
- *  by COLUMN_ALL_SCORES.
- */
-var COLUMN_PARTIAL_PER_MATCH_SCORES = [1, 4, 4, 4, 3];
-/**
- * If a term matches multiple times, what is the marginal score for each
- *  additional match.  We count the total number of matches beyond the
- *  first match for each term.  In other words, if we have 3 terms which
- *  matched 5, 3, and 0 times, then the total from our perspective is
- *  (5 - 1) + (3 - 1) + 0 = 4 + 2 + 0 = 6.  We take the minimum of that value
- *  and the value in COLUMN_MULTIPLE_MATCH_LIMIT and multiply by the value in
- *  COLUMN_MULTIPLE_MATCH_SCORES.
- */
-var COLUMN_MULTIPLE_MATCH_SCORES = [1, 0, 0, 0, 0];
-var COLUMN_MULTIPLE_MATCH_LIMIT = [10, 0, 0, 0, 0];
-
-/**
- * Score the message on its offsets (from stashedColumns).
- */
-function scoreOffsets(aMessage, aContext) {
   let score = 0;
-
-  // we need a friendlyParseInt because otherwise the radix stuff happens
-  //  because of the extra arguments map parses.  curse you, map!
-  const offsetNums = aContext.stashedColumns[aMessage.id][0]
-    .split(" ")
-    .map(x => parseInt(x));
-
-  // offsets() numbers the query's tokens, not its terms: a phrase is one
-  //  token per word, and a CJK term of three characters or more one per
-  //  pair of them.  Sized by the terms, the counts had no room for those
-  //  tokens, counted them as NaN, and so scored the whole message NaN.
-  //  Every token occurs in a message an AND search finds, so the highest
-  //  number here is the query's count of them.
-  let tokenCount = 0;
-  for (let i = 1; i < offsetNums.length; i += 4) {
-    tokenCount = Math.max(tokenCount, offsetNums[i] + 1);
-  }
-  const termTemplate = new Array(tokenCount).fill(0);
-  // for each column, a list of the incidence of each term
-  const columnTermIncidence = [
-    termTemplate.concat(),
-    termTemplate.concat(),
-    termTemplate.concat(),
-    termTemplate.concat(),
-    termTemplate.concat(),
-  ];
-
-  for (let i = 0; i < offsetNums.length; i += 4) {
-    const columnIndex = offsetNums[i];
-    const termIndex = offsetNums[i + 1];
-    columnTermIncidence[columnIndex][termIndex]++;
-  }
-
-  for (let iColumn = 0; iColumn < COLUMN_ALL_MATCH_SCORES.length; iColumn++) {
-    const termIncidence = columnTermIncidence[iColumn];
-    if (termIncidence.every(identityFunc)) {
-      // Bestow all match credit.
-      score += COLUMN_ALL_MATCH_SCORES[iColumn];
-    } else if (termIncidence.some(identityFunc)) {
-      // Bestow partial match credit.
-      score += Math.min(
-        COLUMN_ALL_MATCH_SCORES[iColumn],
-        COLUMN_PARTIAL_PER_MATCH_SCORES[iColumn] *
-          termIncidence.filter(identityFunc).length
-      );
+  let maxScore = 0;
+  for (let iPhrase = 0; iPhrase < phraseCount; iPhrase++) {
+    let tf = 0;
+    let df = 0;
+    for (let iColumn = 0; iColumn < columnCount; iColumn++) {
+      const at = iPhrase * columnCount + iColumn;
+      const lengthRatio = avgLengths[iColumn]
+        ? columnLengths[iColumn] / avgLengths[iColumn]
+        : 1;
+      tf +=
+        (COLUMN_WEIGHTS[iColumn] * info[2 + at]) /
+        (1 - BM25F_B + BM25F_B * lengthRatio);
+      df = Math.max(df, globalInfo[3 * at + 2]);
     }
-    // Bestow multiple match credit.
-    score +=
-      Math.min(
-        termIncidence.map(oneLessMaxZero).reduce(reduceSum, 0),
-        COLUMN_MULTIPLE_MATCH_LIMIT[iColumn]
-      ) * COLUMN_MULTIPLE_MATCH_SCORES[iColumn];
+    // Lucene's IDF, which never goes below zero.
+    const idf = Math.log(1 + (Math.max(docs, df) - df + 0.5) / (df + 0.5));
+    score += (idf * tf) / (BM25F_K1 + tf);
+    maxScore += idf;
   }
-
-  return score;
+  return maxScore ? (score / maxScore) * BM25F_SCALE : 0;
 }
 
 /**
@@ -398,8 +487,7 @@ function scoreDate(aMessage) {
  *  splitCJKRun) that it has as typed, the words together and in order.  The
  *  words found apart are a weaker match -- before the split they were no
  *  match at all -- and this keeps them below the text that was asked for
- *  unless they are a good deal newer.  It is what a subject with every word
- *  in it earns.
+ *  unless they are a good deal newer: some five months.
  */
 var PHRASE_MATCH_SCORE = 20;
 
@@ -527,9 +615,9 @@ GlodaMsgSearcher.prototype = {
       noMagic: true,
       explicitSQL: NUEVO_FULLTEXT_SQL,
       limitClauseAlreadyIncluded: true,
-      // osets is 0-based column number 14 (volatile to column changes)
-      // save the offset column for extra analysis
-      stashColumns: [14],
+      // minfo, ginfo and lengths are 0-based column numbers 14 to 16
+      // (volatile to column changes); save them for scoreBM25F
+      stashColumns: [14, 15, 16],
     });
 
     query.fulltextMatches(this.buildFulltextQueryString());
@@ -648,6 +736,9 @@ GlodaMsgSearcher.prototype = {
       this.listener = aListenerOverride;
     }
 
+    // The statistics this search is scored with, all of it, even if fresher
+    //  ones are counted while it runs.
+    this.stats = collectionStats ?? DEFAULT_STATS;
     this.query = this.buildFulltextQuery();
     this.collection = this.query.getCollection(this, aData);
     this.completed = false;
@@ -663,9 +754,10 @@ GlodaMsgSearcher.prototype = {
       {
         terms: this.fulltextTerms,
         stashedColumns: aCollection.stashedColumns,
+        stats: this.stats,
         phrases: this.splitPhrases,
       },
-      [scoreOffsets, scoreDate, scorePhrases]
+      [scoreBM25F, scoreDate, scorePhrases]
     );
     if (this.scores) {
       this.scores = this.scores.concat(newScores);
@@ -692,5 +784,8 @@ GlodaMsgSearcher.prototype = {
     if (this.listener) {
       this.listener.onQueryCompleted(aCollection);
     }
+    // Once a session, and after the search rather than before it, which
+    //  would wait behind the counting.
+    loadCollectionStats();
   },
 };

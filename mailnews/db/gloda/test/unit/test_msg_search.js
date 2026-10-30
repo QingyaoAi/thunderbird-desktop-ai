@@ -69,21 +69,21 @@ add_task(async function test_fulltext_weighting_by_column() {
 });
 
 /**
- * A term mentioned 3 times in the body is worth more than twice in the subject.
- * (This is because the subject saturates at one occurrence worth 2.0 and the
- * body does not saturate until 10, each worth 1.0.)
+ * A term mentioned 30 times in the body is worth less than twice in the
+ * subject.  (This is because the body saturates at 10 occurrences, each worth
+ * 1, and the subject at one, worth 20.)
  */
 add_task(async function test_fulltext_weighting_saturation() {
   const ustr = unique_string();
   const double_ustr = ustr + " " + ustr;
-  const thrice_ustr = ustr + " " + ustr + " " + ustr;
+  const thirty_ustr = Array(30).fill(ustr).join(" ");
   const [, subjSet, bodySet] = await messageInjection.makeFoldersWithSets(1, [
     { count: 1, subject: double_ustr },
-    { count: 1, body: { body: thrice_ustr } },
+    { count: 1, body: { body: thirty_ustr } },
   ]);
   await waitForGlodaIndexer();
   Assert.ok(...assertExpectedMessagesIndexed([subjSet, bodySet]));
-  await asyncMsgSearcherExpect(ustr, bodySet);
+  await asyncMsgSearcherExpect(ustr, subjSet);
 });
 
 /**
@@ -254,6 +254,53 @@ add_task(async function test_cjk_phrase_scores_higher() {
 
   const scoreOf = await searchScores("研究生招生");
   Assert.greater(scoreOf(togetherSet), scoreOf(apartSet));
+});
+
+/**
+ * BM25F orders what a search finds by its text: a word fewer messages have
+ * counts for more, a word in a shorter body for more than in a longer one,
+ * and in a subject for more than in a body.
+ */
+add_task(async function test_bm25f() {
+  const rare = unique_string();
+  const common = unique_string();
+  const word = unique_string();
+  const filler = unique_string();
+  const longFiller = Array(200).fill(filler).join(" ");
+  const [, rareTwice, commonTwice, commonOnly, shortBody, longBody, inSubject] =
+    await messageInjection.makeFoldersWithSets(1, [
+      {
+        count: 1,
+        subject: filler,
+        body: { body: `${rare} ${rare} ${common}` },
+      },
+      {
+        count: 1,
+        subject: filler,
+        body: { body: `${rare} ${common} ${common}` },
+      },
+      { count: 4, subject: filler, body: { body: common } },
+      { count: 1, subject: filler, body: { body: `${word} ${filler}` } },
+      { count: 1, subject: filler, body: { body: `${word} ${longFiller}` } },
+      { count: 1, subject: word, body: { body: `${filler} ${filler}` } },
+    ]);
+  await waitForGlodaIndexer();
+  Assert.ok(
+    ...assertExpectedMessagesIndexed([
+      rareTwice,
+      commonTwice,
+      commonOnly,
+      shortBody,
+      longBody,
+      inSubject,
+    ])
+  );
+
+  let scoreOf = await searchScores(`${rare} ${common}`);
+  Assert.greater(scoreOf(rareTwice), scoreOf(commonTwice), "rarer word");
+  scoreOf = await searchScores(word);
+  Assert.greater(scoreOf(shortBody), scoreOf(longBody), "shorter body");
+  Assert.greater(scoreOf(inSubject), scoreOf(shortBody), "subject over body");
 });
 
 /**
